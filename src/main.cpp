@@ -1,6 +1,7 @@
 #include <iostream>
 #include <signal.h>
 #include <sys/resource.h>
+#include <unistd.h>
 
 #include "bpforc.h"
 #include "bpftrace.h"
@@ -25,7 +26,8 @@ void usage()
   std::cerr << "    -e 'program'   execute this program" << std::endl;
   std::cerr << "    -h             show this help message" << std::endl;
   std::cerr << "    -l [search]    list probes" << std::endl;
-  std::cerr << "    -p PID         PID for enabling USDT probes" << std::endl;
+  std::cerr << "    -p PID         enable USDT probes on PID" << std::endl;
+  std::cerr << "    -c 'CMD'       run CMD and enable USDT probes on resulting process" << std::endl;
   std::cerr << "    -v             verbose messages" << std::endl << std::endl;
   std::cerr << "EXAMPLES:" << std::endl;
   std::cerr << "bpftrace -l '*sleep*'" << std::endl;
@@ -52,16 +54,28 @@ static void enforce_infinite_rlimit() {
         "\"ulimit -l 8192\" to fix the problem" << std::endl;
 }
 
+bool is_root()
+{
+  if (geteuid() != 0)
+  {
+    std::cerr << "ERROR: bpftrace currently only supports running as the root user." << std::endl;
+    return false;
+  }
+  else
+    return true;
+}
+
 int main(int argc, char *argv[])
 {
   int err;
   Driver driver;
-  char *pid_str = NULL;
+  char *pid_str = nullptr;
+  char *cmd_str = nullptr;
   bool listing = false;
 
   std::string script, search;
   int c;
-  while ((c = getopt(argc, argv, "de:hlp:v")) != -1)
+  while ((c = getopt(argc, argv, "de:hlp:vc:")) != -1)
   {
     switch (c)
     {
@@ -84,6 +98,9 @@ int main(int argc, char *argv[])
       case 'l':
         listing = true;
         break;
+      case 'c':
+        cmd_str = optarg;
+        break;
       default:
         usage();
         return 1;
@@ -97,9 +114,19 @@ int main(int argc, char *argv[])
     return 1;
   }
 
+  if (cmd_str && pid_str)
+  {
+    std::cerr << "USAGE: Cannot use both -c and -p." << std::endl;
+    usage();
+    return 1;
+  }
+
   // Listing probes
   if (listing)
   {
+    if (!is_root())
+      return 1;
+
     if (optind == argc-1)
       list_probes(argv[optind]);
     else if (optind == argc)
@@ -133,6 +160,9 @@ int main(int argc, char *argv[])
     err = driver.parse_str(script);
   }
 
+  if (!is_root())
+    return 1;
+
   if (err)
     return err;
 
@@ -151,6 +181,9 @@ int main(int argc, char *argv[])
   // - provide PID in USDT probe specification as a way to override -p.
   if (pid_str)
     bpftrace.pid_ = atoi(pid_str);
+
+  if (cmd_str)
+    bpftrace.cmd_ = cmd_str;
 
   TracepointFormatParser::parse(driver.root_);
 
