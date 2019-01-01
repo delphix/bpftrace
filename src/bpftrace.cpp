@@ -82,24 +82,33 @@ int BPFtrace::add_probe(ast::Probe &p)
           attach_point->func.find("[") != std::string::npos &&
           attach_point->func.find("]") != std::string::npos))
     {
-      std::string file_name;
+      std::set<std::string> matches;
       switch (probetype(attach_point->provider))
       {
         case ProbeType::kprobe:
         case ProbeType::kretprobe:
-          file_name = "/sys/kernel/debug/tracing/available_filter_functions";
+          matches = find_wildcard_matches(attach_point->target,
+                                          attach_point->func,
+                                          "/sys/kernel/debug/tracing/available_filter_functions");
           break;
+        case ProbeType::uprobe:
+        case ProbeType::uretprobe:
+        {
+            auto symbol_stream = std::istringstream(extract_func_symbols_from_path(attach_point->target));
+            matches = find_wildcard_matches("", attach_point->func, symbol_stream);
+            break;
+        }
         case ProbeType::tracepoint:
-          file_name = "/sys/kernel/debug/tracing/available_events";
+          matches = find_wildcard_matches(attach_point->target,
+                                          attach_point->func,
+                                          "/sys/kernel/debug/tracing/available_events");
           break;
         default:
           std::cerr << "Wildcard matches aren't available on probe type '"
                     << attach_point->provider << "'" << std::endl;
           return 1;
       }
-      auto matches = find_wildcard_matches(attach_point->target,
-                                           attach_point->func,
-                                           file_name);
+
       attach_funcs.insert(attach_funcs.end(), matches.begin(), matches.end());
     }
     else
@@ -126,7 +135,7 @@ int BPFtrace::add_probe(ast::Probe &p)
   return 0;
 }
 
-std::set<std::string> BPFtrace::find_wildcard_matches(const std::string &prefix, const std::string &func, const std::string &file_name)
+std::set<std::string> BPFtrace::find_wildcard_matches(const std::string &prefix, const std::string &func, std::istream &symbol_name_stream)
 {
   // Turn glob into a regex
   auto regex_str = "(" + std::regex_replace(func, std::regex("\\*"), "[^\\s]*") + ")";
@@ -136,16 +145,9 @@ std::set<std::string> BPFtrace::find_wildcard_matches(const std::string &prefix,
   std::regex func_regex(regex_str);
   std::smatch match;
 
-  std::ifstream file(file_name);
-  if (file.fail())
-  {
-    std::cerr << strerror(errno) << ": " << file_name << std::endl;
-    return std::set<std::string>();
-  }
-
   std::string line;
   std::set<std::string> matches;
-  while (std::getline(file, line))
+  while (std::getline(symbol_name_stream, line))
   {
     if (std::regex_search(line, match, func_regex))
     {
@@ -156,6 +158,26 @@ std::set<std::string> BPFtrace::find_wildcard_matches(const std::string &prefix,
     }
   }
   return matches;
+}
+
+std::set<std::string> BPFtrace::find_wildcard_matches(const std::string &prefix, const std::string &func, const std::string &file_name)
+{
+  std::ifstream file(file_name);
+  if (file.fail())
+  {
+    throw std::runtime_error("Could not read symbols from \"" + file_name + "\", err=" + std::to_string(errno));
+  }
+
+  std::stringstream symbol_name_stream;
+  std::string line;
+  while (file >> line)
+  {
+    symbol_name_stream << line << std::endl;
+  }
+
+  file.close();
+
+  return find_wildcard_matches(prefix, func, symbol_name_stream);
 }
 
 int BPFtrace::num_probes() const
@@ -586,8 +608,10 @@ int BPFtrace::print_map_ident(const std::string &ident, uint32_t top, uint32_t d
   {
     IMap &map = *mapmap.second.get();
     if (map.name_ == ident) {
-      if (map.type_.type == Type::hist)
+      if (map.type_.type == Type::hist || map.type_.type == Type::lhist)
         err = print_map_hist(map, top, div);
+      else if (map.type_.type == Type::avg || map.type_.type == Type::stats)
+          err = print_map_stats(map);
       else
         err = print_map(map, top, div);
       return err;
@@ -676,7 +700,8 @@ int BPFtrace::zero_map(IMap &map)
   std::vector<uint8_t> old_key;
   try
   {
-    if (map.type_.type == Type::hist)
+    if (map.type_.type == Type::hist || map.type_.type == Type::lhist ||
+        map.type_.type == Type::stats || map.type_.type == Type::avg)
       // hist maps have 8 extra bytes for the bucket number
       old_key = find_empty_key(map, map.key_.size() + 8);
     else
@@ -698,10 +723,16 @@ int BPFtrace::zero_map(IMap &map)
     old_key = key;
   }
 
-  uint64_t zero = 0;
+  int value_size = map.type_.size;
+  if (map.type_.type == Type::count || map.type_.type == Type::sum ||
+      map.type_.type == Type::min || map.type_.type == Type::max ||
+      map.type_.type == Type::avg || map.type_.type == Type::hist ||
+      map.type_.type == Type::lhist || map.type_.type == Type::stats )
+    value_size *= ncpus_;
+  std::vector<uint8_t> zero(value_size, 0);
   for (auto &key : keys)
   {
-    int err = bpf_update_elem(map.mapfd_, key.data(), &zero, BPF_EXIST);
+    int err = bpf_update_elem(map.mapfd_, key.data(), zero.data(), BPF_EXIST);
 
     if (err)
     {
@@ -733,8 +764,8 @@ int BPFtrace::print_map(IMap &map, uint32_t top, uint32_t div)
   while (bpf_get_next_key(map.mapfd_, old_key.data(), key.data()) == 0)
   {
     int value_size = map.type_.size;
-    if (map.type_.type == Type::count ||
-        map.type_.type == Type::sum || map.type_.type == Type::min || map.type_.type == Type::max)
+    if (map.type_.type == Type::count || map.type_.type == Type::sum ||
+        map.type_.type == Type::min || map.type_.type == Type::max)
       value_size *= ncpus_;
     auto value = std::vector<uint8_t>(value_size);
     int err = bpf_lookup_elem(map.mapfd_, key.data(), value.data());
@@ -920,8 +951,8 @@ int BPFtrace::print_map_hist(IMap &map, uint32_t top, uint32_t div)
 
 int BPFtrace::print_map_stats(IMap &map)
 {
-  // A hist-map adds an extra 8 bytes onto the end of its key for storing
-  // the bucket number.
+  // stats() and avg() maps add an extra 8 bytes onto the end of their key for
+  // storing the bucket number.
 
   std::vector<uint8_t> old_key;
   try
@@ -972,8 +1003,12 @@ int BPFtrace::print_map_stats(IMap &map)
     assert(map_elem.second.size() == 2);
     uint64_t count = map_elem.second.at(0);
     uint64_t total = map_elem.second.at(1);
-    assert(count != 0);
-    total_counts_by_key.push_back({map_elem.first, total / count});
+    uint64_t value = 0;
+
+    if (count != 0)
+      value = total / count;
+
+    total_counts_by_key.push_back({map_elem.first, value});
   }
   std::sort(total_counts_by_key.begin(), total_counts_by_key.end(), [&](auto &a, auto &b)
   {
@@ -988,11 +1023,15 @@ int BPFtrace::print_map_stats(IMap &map)
 
     uint64_t count = value.at(0);
     uint64_t total = value.at(1);
+    uint64_t average = 0;
+
+    if (count != 0)
+      average = total / count;
 
     if (map.type_.type == Type::stats)
-      std::cout << "count " << count << ", average " << total / count << ", total " << total << std::endl;
+      std::cout << "count " << count << ", average " <<  average << ", total " << total << std::endl;
     else
-      std::cout << total / count << std::endl;
+      std::cout << average << std::endl;
   }
 
   std::cout << std::endl;
@@ -1264,16 +1303,30 @@ uint64_t BPFtrace::max_value(const std::vector<uint8_t> &value, int ncpus)
   return max;
 }
 
-uint64_t BPFtrace::min_value(const std::vector<uint8_t> &value, int ncpus)
+int64_t BPFtrace::min_value(const std::vector<uint8_t> &value, int ncpus)
 {
-  uint64_t val, max = 0;
+  int64_t val, max = 0, retval;
   for (int i=0; i<ncpus; i++)
   {
-    val = *(uint64_t*)(value.data() + i*sizeof(uint64_t*));
+    val = *(int64_t*)(value.data() + i*sizeof(int64_t*));
     if (val > max)
       max = val;
   }
-  return (0xffffffff - max);
+
+  /*
+   * This is a hack really until the code generation for the min() function
+   * is sorted out. The way it is currently implemented doesn't allow >
+   * 32 bit quantities and also means we have to do gymnastics with the return
+   * value owing to the way it is stored (i.e., 0xffffffff - val).
+   */
+  if (max == 0) /* If we have applied the zero() function */
+    retval = max;
+  else if ((0xffffffff - max) <= 0) /* A negative 32 bit value */
+    retval =  0 - (max - 0xffffffff);
+  else
+    retval =  0xffffffff - max; /* A positive 32 bit value */
+
+  return retval;
 }
 
 std::vector<uint8_t> BPFtrace::find_empty_key(IMap &map, size_t size) const
@@ -1443,6 +1496,16 @@ uint64_t BPFtrace::resolve_uname(const std::string &name, const std::string &pat
   addr = read_address_from_output(result);
 
   return addr;
+}
+
+std::string BPFtrace::extract_func_symbols_from_path(const std::string &path)
+{
+  // TODO: switch from objdump to library call, perhaps bcc_resolve_symname()
+  std::string call_str = std::string("objdump -tT ") + path +
+    + " | " + "grep \"F .text\" | grep -oE '[^[:space:]]+$'";
+
+  const char *call = call_str.c_str();
+  return exec_system(call);
 }
 
 std::string BPFtrace::exec_system(const char* cmd)
