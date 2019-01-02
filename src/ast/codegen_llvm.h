@@ -28,6 +28,7 @@ public:
     { }
 
   void visit(Integer &integer) override;
+  void visit(PositionalParameter &param) override;
   void visit(String &string) override;
   void visit(Builtin &builtin) override;
   void visit(Call &call) override;
@@ -66,6 +67,7 @@ private:
   IRBuilderBPF b_;
   DataLayout layout_;
   Value *expr_ = nullptr;
+  std::function<void()> expr_deleter_; // intentionally empty
   Value *ctx_;
   AttachPoint *current_attach_point_ = nullptr;
   BPFtrace &bpftrace_;

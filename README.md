@@ -255,8 +255,9 @@ Variables:
 - `retval` - Return value from function being traced
 - `func` - Name of the function currently being traced
 - `probe` - Full name of the probe
-- `curtask` - Current task_struct as a u64.
-- `rand` - Random number of type u32.
+- `curtask` - Current task_struct as a u64
+- `rand` - Random number of type u32
+- `$1`, `$2`, ... etc. - Positional parameters to the bpftrace program
 
 Functions:
 - `hist(int n)` - Produce a log2 histogram of values of `n`
@@ -268,7 +269,7 @@ Functions:
 - `avg(int n)` - Average this value
 - `stats(int n)` - Return the count, average, and total for this value
 - `delete(@x)` - Delete the map element passed in as an argument
-- `str(char *s)` - Returns the string pointed to by `s`
+- `str(char *s [, int length])` - Returns the string pointed to by `s`
 - `printf(char *fmt, ...)` - Print formatted to stdout
 - `print(@x[, int top [, int div]])` - Print a map, with optional top entry count and divisor
 - `clear(@x)` - Delete all key/values from a map

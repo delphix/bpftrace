@@ -29,6 +29,8 @@ void usage()
   std::cerr << "    -p PID         enable USDT probes on PID" << std::endl;
   std::cerr << "    -c 'CMD'       run CMD and enable USDT probes on resulting process" << std::endl;
   std::cerr << "    -v             verbose messages" << std::endl << std::endl;
+  std::cerr << "ENVIRONMENT:" << std::endl;
+  std::cerr << "    BPFTRACE_STRLEN    [default: 64] bytes on BPF stack per str()" << std::endl << std::endl;
   std::cerr << "EXAMPLES:" << std::endl;
   std::cerr << "bpftrace -l '*sleep*'" << std::endl;
   std::cerr << "    list probes containing \"sleep\"" << std::endl;
@@ -107,6 +109,11 @@ int main(int argc, char *argv[])
     }
   }
 
+  if (argc == 1) {
+    usage();
+    return 1;
+  }
+
   if (bt_verbose && (bt_debug != DebugLevel::kNone))
   {
     // TODO: allow both
@@ -140,23 +147,14 @@ int main(int argc, char *argv[])
 
   if (script.empty())
   {
-    // There should only be 1 non-option argument (the script file)
-    if (optind != argc-1)
-    {
-      usage();
-      return 1;
-    }
+    // Script file
     char *file_name = argv[optind];
     err = driver.parse_file(file_name);
+    optind++;
   }
   else
   {
     // Script is provided as a command line argument
-    if (optind != argc)
-    {
-      usage();
-      return 1;
-    }
     err = driver.parse_str(script);
   }
 
@@ -172,9 +170,39 @@ int main(int argc, char *argv[])
 
   BPFtrace bpftrace;
 
+  // positional parameters
+  while (optind < argc) {
+    bpftrace.add_param(argv[optind]);
+    optind++;
+  }
+
   // defaults
   bpftrace.join_argnum_ = 16;
   bpftrace.join_argsize_ = 1024;
+
+  bpftrace.strlen_ = 64;
+  if(const char* env_p = std::getenv("BPFTRACE_STRLEN")) {
+    uint64_t proposed;
+    std::istringstream stringstream(env_p);
+    if (!(stringstream >> proposed)) {
+      std::cerr << "Env var 'BPFTRACE_STRLEN' did not contain a valid uint64_t, or was zero-valued." << std::endl;
+      return 1;
+    }
+
+    // in practice, the largest buffer I've seen fit into the BPF stack was 240 bytes.
+    // I've set the bar lower, in case your program has a deeper stack than the one from my tests,
+    // in the hope that you'll get this instructive error instead of getting the BPF verifier's error.
+    if (proposed > 200) {
+      // the verifier errors you would encounter when attempting larger allocations would be:
+      // >240=  <Looks like the BPF stack limit of 512 bytes is exceeded. Please move large on stack variables into BPF per-cpu array map.>
+      // ~1024= <A call to built-in function 'memset' is not supported.>
+      std::cerr << "'BPFTRACE_STRLEN' " << proposed << " exceeds the current maximum of 200 bytes." << std::endl
+      << "This limitation is because strings are currently stored on the 512 byte BPF stack." << std::endl
+      << "Long strings will be pursued in: https://github.com/iovisor/bpftrace/issues/305" << std::endl;
+      return 1;
+    }
+    bpftrace.strlen_ = proposed;
+  }
 
   // PID is currently only used for USDT probes that need enabling. Future work:
   // - make PID a filter for all probe types: pass to perf_event_open(), etc.

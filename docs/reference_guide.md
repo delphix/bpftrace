@@ -14,6 +14,7 @@ This is a work in progress. If something is missing, check the bpftrace source t
     - [4. `-l`: Listing Probes](#4--l-listing-probes)
     - [5. `-d`: Debug Output](#5--d-debug-output)
     - [6. `-v`: Verbose Output](#6--v-verbose-output)
+    - [7. Env: `BPFTRACE_STRLEN`](#7-env-bpftrace_strlen)
 - [Language](#language)
     - [1. `{...}`: Action Blocks](#1--action-blocks)
     - [2. `/.../`: Filtering](#2--filtering)
@@ -22,7 +23,6 @@ This is a work in progress. If something is missing, check the bpftrace source t
     - [5. `? :`: ternary operators](#5---ternary-operators)
     - [6. `if () {...} else {...}`: if-else statements](#6-if---else--if-else-statements)
     - [7. `unroll () {...}`: unroll](#7-unroll---unroll)
-
 - [Probes](#probes)
     - [1. `kprobe`/`kretprobe`: Dynamic Tracing, Kernel-Level](#1-kprobekretprobe-dynamic-tracing-kernel-level)
     - [2. `kprobe`/`kretprobe`: Dynamic Tracing, Kernel-Level Arguments](#2-kprobekretprobe-dynamic-tracing-kernel-level-arguments)
@@ -45,6 +45,7 @@ This is a work in progress. If something is missing, check the bpftrace source t
     - [6. `nsecs`: Timestamps and Time Deltas](#6-nsecs-timestamps-and-time-deltas)
     - [7. `stack`: Stack Traces, Kernel](#7-stack-stack-traces-kernel)
     - [8. `ustack`: Stack Traces, User](#8-ustack-stack-traces-user)
+    - [9. `$1`, ..., `$N`: Positional Parameters](#9-1--n-positional-parameters)
 - [Functions](#functions)
     - [1. Builtins](#1-builtins-1)
     - [2. `printf()`: Print Formatted](#2-printf-Printing)
@@ -323,6 +324,18 @@ iscsid is sleeping.
 ```
 
 This includes `Bytecode:` and then the eBPF bytecode after it was compiled from the llvm assembly.
+
+## 7. Env: `BPFTRACE_STRLEN`
+
+Default: 64
+
+Number of bytes allocated on the BPF stack for the string returned by str().
+
+Make this larger if you wish to read bigger strings with str().
+
+Beware that the BPF stack is small (512 bytes), and that you pay the toll again inside printf() (whilst it composes a perf event output buffer). So in practice you can only grow this to about 200 bytes.
+
+Support for even larger strings is [being discussed](https://github.com/iovisor/bpftrace/issues/305).
 
 # Language
 
@@ -909,6 +922,7 @@ That would fire once for every 1000000 cache misses. This usually indicates the 
 - `curtask` - Current task struct as a u64
 - `rand` - Random number as a u32
 - `cgroup` - Cgroup ID of the current process
+- `$1`, `$2`, ..., `$N`. - Positional parameters for the bpftrace program
 
 Many of these are discussed in other sections (use search).
 
@@ -1155,6 +1169,73 @@ __libc_start_main+231
 
 Note that for this example to work, bash had to be recompiled with frame pointers.
 
+## 9. `$1`, ..., `$N`: Positional Parameters
+
+Syntax: `$1`, `$2`, ..., `$N`
+
+These are the positional parameters to the bpftrace program, also referred to as command line arguments. If the parameter is numeric (entirerly digits), it can be used as a number. If it is non-numeric, it must be used as a string in the `str()` call. If a parameter is used that was not provided, it will default to zero for numeric context, and "" for string context.
+
+This allows scripts to be written that use basic arguments to change their behavior. If you develop a script that requires more complex argument processing, it may be better suited for bcc instead, which supports Python's argparse and completely custom argument processing.
+
+One-liner example:
+
+```
+# bpftrace -e 'BEGIN { printf("I got %d, %s\n", $1, str($2)); }' 42 "hello"
+Attaching 1 probe...
+I got 42, hello
+```
+
+Script example, bsize.d:
+
+```
+#!/usr/local/bin/bpftrace
+
+BEGIN
+{
+	printf("Tracing block I/O sizes > %d bytes\n", $1);
+}
+
+tracepoint:block:block_rq_issue
+/args->bytes > $1/
+{
+	@ = hist(args->bytes);
+}
+```
+
+When run with a 65536 argument:
+
+```
+# ./bsize.bt 65536
+Attaching 2 probes...
+Tracing block I/O sizes > 65536 bytes
+^C
+
+@:
+[512K, 1M)             1 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+
+```
+
+It has passed the argument in as $1, and used it as a filter.
+
+With no arguments, $1 defaults to zero:
+
+```
+# ./bsize.bt
+Attaching 2 probes...
+Tracing block I/O sizes > 0 bytes
+^C
+
+@:
+[4K, 8K)             115 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+[8K, 16K)             35 |@@@@@@@@@@@@@@@                                     |
+[16K, 32K)             5 |@@                                                  |
+[32K, 64K)             3 |@                                                   |
+[64K, 128K)            1 |                                                    |
+[128K, 256K)           0 |                                                    |
+[256K, 512K)           0 |                                                    |
+[512K, 1M)             1 |                                                    |
+```
+
 # Functions
 
 ## 1. Builtins
@@ -1162,7 +1243,7 @@ Note that for this example to work, bash had to be recompiled with frame pointer
 - `printf(char *fmt, ...)` - Print formatted
 - `time(char *fmt)` - Print formatted time
 - `join(char *arr[])` - Print the array
-- `str(char *s)` - Returns the string pointed to by s
+- `str(char *s [, int length])` - Returns the string pointed to by s
 - `sym(void *p)` - Resolve kernel address
 - `usym(void *p)` - Resolve user space address
 - `kaddr(char *name)` - Resolve kernel symbol name
@@ -1233,9 +1314,14 @@ tbl
 
 ## 5. `str()`: Strings
 
-Syntax: `str(char *s)`
+Syntax: `str(char *s [, int length])`
 
-Returns the string pointer to by s. This was used in the earlier printf() example, since arg0 to sys_execve() is <tt>const char *filename</tt>:
+Returns the string pointed to by s. `length` can be used to limit the size of the read, and/or introduce a null-terminator.  
+By default, the string will have size 64 bytes (tuneable using [env var `BPFTRACE_STRLEN`](#7-env-bpftrace_strlen)).
+
+Examples:
+
+We can take the arg0 of sys_execve() (a <tt>const char *filename</tt>), and read the string to which it points. This string can be provided as an argument to printf():
 
 ```
 # bpftrace -e 'kprobe:sys_execve { printf("%s called %s\n", comm, str(arg0)); }'
@@ -1249,6 +1335,27 @@ man called /usr/sbin/preconv
 man called /usr/bin/preconv
 man called /apps/nflx-bash-utils/bin/tbl
 [...]
+```
+
+We can trace strings that are displayed in a bash shell. Some length tuning is employed, because:
+
+- sys_enter_write()'s `args->buf` does not point to null-terminated strings
+  - we use the length parameter to limit how many bytes to read of the pointed-to string
+- sys_enter_write()'s `args->buf` contains messages larger than 64 bytes
+  - we increase BPFTRACE_STRLEN to accommodate the large messages
+
+```
+# BPFTRACE_STRLEN=200 bpftrace -e 'tracepoint:syscalls:sys_enter_write /pid == 23506/ { printf("<%s>\n", str(args->buf, args->count)); }'
+# type pwd into terminal 23506
+<p>
+<w>
+<d>
+# press enter in terminal 23506
+<
+>
+</home/anon
+>
+<anon@anon-VirtualBox:~$ >
 ```
 
 ## 6. `sym()`: Symbol resolution, kernel-level
