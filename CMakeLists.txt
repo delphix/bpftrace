@@ -26,6 +26,7 @@ if (OFFLINE_BUILDS)
   include(ExternalProject)
   ExternalProject_Add(bcc
     GIT_REPOSITORY https://github.com/iovisor/bcc
+    GIT_TAG v0.8.0
     STEP_TARGETS build update
     EXCLUDE_FROM_ALL 1
     UPDATE_DISCONNECTED 1
@@ -35,6 +36,7 @@ else()
   include(ExternalProject)
   ExternalProject_Add(bcc
     GIT_REPOSITORY https://github.com/iovisor/bcc
+    GIT_TAG v0.8.0
     STEP_TARGETS build update
     EXCLUDE_FROM_ALL 1
     BUILD_COMMAND ${CMAKE_COMMAND} --build . --target bcc-static
