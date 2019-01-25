@@ -11,6 +11,7 @@ add_executable(bpftrace
   resolve_cgroupid.cpp
   tracepoint_format_parser.cpp
   types.cpp
+  utils.cpp
   list.cpp
 )
 
@@ -19,12 +20,13 @@ if(HAVE_NAME_TO_HANDLE_AT)
 endif(HAVE_NAME_TO_HANDLE_AT)
 target_link_libraries(bpftrace arch ast parser resources)
 
-ExternalProject_Get_Property(bcc source_dir binary_dir)
-target_include_directories(bpftrace PUBLIC ${source_dir}/src/cc)
-target_link_libraries(bpftrace ${binary_dir}/src/cc/libbpf.a)
-target_link_libraries(bpftrace ${binary_dir}/src/cc/libbcc-loader-static.a)
-target_link_libraries(bpftrace ${binary_dir}/src/cc/libbcc.a)
-target_link_libraries(bpftrace ${binary_dir}/src/cc/frontends/clang/libclang_frontend.a)
+if (STATIC_LINKING)
+  target_link_libraries(bpftrace ${LIBBCC_LIBRARIES})
+  target_link_libraries(bpftrace ${LIBBPF_LIBRARY_STATIC})
+  target_link_libraries(bpftrace ${LIBBCC_LOADER_LIBRARY_STATIC})
+else()
+  target_link_libraries(bpftrace ${LIBBCC_LIBRARIES})
+endif()
 target_link_libraries(bpftrace ${LIBELF_LIBRARIES})
 
 install(TARGETS bpftrace DESTINATION bin)
@@ -34,3 +36,12 @@ if (KERNEL_HEADERS_DIR)
 MESSAGE(STATUS "Using KERNEL_HEADERS_DIR=${KERNEL_HEADERS_DIR}")
 target_compile_definitions(bpftrace PUBLIC KERNEL_HEADERS_DIR="${KERNEL_HEADERS_DIR}")
 endif()
+
+execute_process(
+  COMMAND git describe --abbrev=4 --dirty --always --tags
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  OUTPUT_VARIABLE BPFTRACE_VERSION
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+
+add_definitions("-DBPFTRACE_VERSION=\"${BPFTRACE_VERSION}\"")

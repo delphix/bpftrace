@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include "utils.h"
 
 #include "types.h"
 
@@ -56,7 +57,7 @@ public:
 
 class Builtin : public Expression {
 public:
-  explicit Builtin(std::string ident) : ident(ident) { }
+  explicit Builtin(std::string ident) : ident(is_deprecated(ident)) {}
   std::string ident;
   int probe_id;
 
@@ -65,8 +66,8 @@ public:
 
 class Call : public Expression {
 public:
-  explicit Call(std::string &func) : func(func), vargs(nullptr) { }
-  Call(std::string &func, ExpressionList *vargs) : func(func), vargs(vargs) { }
+  explicit Call(std::string &func) : func(is_deprecated(func)), vargs(nullptr) { }
+  Call(std::string &func, ExpressionList *vargs) : func(is_deprecated(func)), vargs(vargs) { }
   std::string func;
   ExpressionList *vargs;
 
@@ -204,19 +205,19 @@ public:
 class AttachPoint : public Node {
 public:
   explicit AttachPoint(const std::string &provider)
-    : provider(provider) { }
+    : provider(probetypeName(provider)) { }
   AttachPoint(const std::string &provider,
               const std::string &func)
-    : provider(provider), func(func), need_expansion(true) { }
+    : provider(probetypeName(provider)), func(func), need_expansion(true) { }
   AttachPoint(const std::string &provider,
               const std::string &target,
               const std::string &func,
               bool need_expansion)
-    : provider(provider), target(target), func(func), need_expansion(need_expansion) { }
+    : provider(probetypeName(provider)), target(target), func(func), need_expansion(need_expansion) { }
   AttachPoint(const std::string &provider,
               const std::string &target,
               int freq)
-    : provider(provider), target(target), freq(freq), need_expansion(true) { }
+    : provider(probetypeName(provider)), target(target), freq(freq), need_expansion(true) { }
 
   std::string provider;
   std::string target;

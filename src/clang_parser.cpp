@@ -2,26 +2,14 @@
 #include <iostream>
 #include <string.h>
 #include <sys/utsname.h>
-
-#include "frontends/clang/kbuild_helper.h"
+#include <sys/stat.h>
 
 #include "ast.h"
 #include "bpftrace.h"
 #include "clang_parser.h"
 #include "types.h"
-
-extern "C" const char __stddef_max_align_t_h[];
-extern "C" const unsigned __stddef_max_align_t_h_len;
-extern "C" const char float_h[];
-extern "C" const unsigned float_h_len;
-extern "C" const char limits_h[];
-extern "C" const unsigned limits_h_len;
-extern "C" const char stdarg_h[];
-extern "C" const unsigned stdarg_h_len;
-extern "C" const char stddef_h[];
-extern "C" const unsigned stddef_h_len;
-extern "C" const char stdint_h[];
-extern "C" const unsigned stdint_h_len;
+#include "utils.h"
+#include "headers.h"
 
 namespace bpftrace {
 
@@ -134,11 +122,21 @@ static bool is_dir(const std::string& path)
   return S_ISDIR(buf.st_mode);
 }
 
-static std::pair<bool, std::string> get_kernel_path_info(const std::string &kdir)
+static std::string get_kernel_root_dir(const struct utsname& utsname)
 {
+#ifdef KERNEL_HEADERS_DIR
+  return KERNEL_HEADERS_DIR;
+#endif
+
+  const char *kpath_env = ::getenv("BPFTRACE_KERNEL_SOURCE");
+  if (kpath_env)
+    return kpath_env;
+
+  std::string kdir = std::string("/lib/modules/") + utsname.release;
   if (is_dir(kdir + "/build") && is_dir(kdir + "/source"))
-    return std::make_pair(true, "source");
-  return std::make_pair(false, "build");
+    return kdir + "/source";
+  else
+    return kdir + "/build";
 }
 
 void ClangParser::parse(ast::Program *program, StructMap &structs)
@@ -186,33 +184,12 @@ void ClangParser::parse(ast::Program *program, StructMap &structs)
     },
   };
 
+  std::vector<std::string> kflags;
   struct utsname utsname;
   uname(&utsname);
-  const char *kpath_env = ::getenv("BPFTRACE_KERNEL_SOURCE");
-  const char *kpath_fixed =
-  #ifdef KERNEL_HEADERS_DIR
-    kpath_env ? kpath_env : KERNEL_HEADERS_DIR;
-  #else
-    kpath_env;
-  #endif
-  std::string kdir = kpath_fixed ?
-    std::string(kpath_fixed) :
-    std::string("/lib/modules/") + utsname.release;
-
-  auto kpath_info = get_kernel_path_info(kdir);
-  auto kpath = kpath_fixed ?
-    kdir :
-    kdir + "/" + kpath_info.second;
-  bool has_kpath_source = kpath_fixed ? false : kpath_info.first;
-
-  std::vector<std::string> kflags;
-
-  ebpf::DirStack dstack(kpath);
-  if (dstack.ok())
-  {
-    ebpf::KBuildHelper kbuild_helper(kdir, has_kpath_source);
-    kbuild_helper.get_flags(utsname.machine, &kflags);
-  }
+  auto kpath = get_kernel_root_dir(utsname);
+  if (is_dir(kpath))
+    kflags = get_kernel_cflags(utsname.machine, kpath);
 
   std::vector<const char *> args =
   {

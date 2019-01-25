@@ -20,9 +20,10 @@ This is a work in progress. If something is missing, check the bpftrace source t
     - [2. `/.../`: Filtering](#2--filtering)
     - [3. `//`, `/*`: Comments](#3---comments)
     - [4. `->`: C Struct Navigation](#4---c-struct-navigation)
-    - [5. `? :`: ternary operators](#5---ternary-operators)
-    - [6. `if () {...} else {...}`: if-else statements](#6-if---else--if-else-statements)
-    - [7. `unroll () {...}`: unroll](#7-unroll---unroll)
+    - [5. `struct`: Struct Declaration](#5-struct-struct-declaration)
+    - [6. `? :`: ternary operators](#6---ternary-operators)
+    - [7. `if () {...} else {...}`: if-else statements](#7-if---else--if-else-statements)
+    - [8. `unroll () {...}`: unroll](#8-unroll---unroll)
 - [Probes](#probes)
     - [1. `kprobe`/`kretprobe`: Dynamic Tracing, Kernel-Level](#1-kprobekretprobe-dynamic-tracing-kernel-level)
     - [2. `kprobe`/`kretprobe`: Dynamic Tracing, Kernel-Level Arguments](#2-kprobekretprobe-dynamic-tracing-kernel-level-arguments)
@@ -43,7 +44,7 @@ This is a work in progress. If something is missing, check the bpftrace source t
     - [4. `count()`: Frequency Counting](#4-count-frequency-counting)
     - [5. `hist()`, `lhist()`: Histograms](#5-hist-lhist-histograms)
     - [6. `nsecs`: Timestamps and Time Deltas](#6-nsecs-timestamps-and-time-deltas)
-    - [7. `stack`: Stack Traces, Kernel](#7-stack-stack-traces-kernel)
+    - [7. `kstack`: Stack Traces, Kernel](#7-kstack-stack-traces-kernel)
     - [8. `ustack`: Stack Traces, User](#8-ustack-stack-traces-user)
     - [9. `$1`, ..., `$N`: Positional Parameters](#9-1--n-positional-parameters)
 - [Functions](#functions)
@@ -52,7 +53,7 @@ This is a work in progress. If something is missing, check the bpftrace source t
     - [3. `time()`: Time](#3-time-time)
     - [4. `join()`: Join](#4-join-join)
     - [5. `str()`: Strings](#5-str-strings)
-    - [6. `sym()`: Symbol Resolution, Kernel-Level](#6-str-symbol-resolution-kernel-level)
+    - [6. `ksym()`: Symbol Resolution, Kernel-Level](#6-str-symbol-resolution-kernel-level)
     - [7. `usym()`: Symbol Resolution, User-Level](#7-usym-symbol-resolution-user-level)
     - [8. `kaddr()`: Address Resolution, Kernel-Level](#8-kaddr-address-resolution-kernel-level)
     - [9. `uaddr()`: Address Resolution, User-Level](#9-uaddr-address-resolution-user-level)
@@ -227,6 +228,17 @@ tracepoint:syscalls:sys_exit_nanosleep
 kprobe:nanosleep_copyout
 kprobe:hrtimer_nanosleep
 [...]
+```
+
+The `-v` option when listing tracepoints will show their arguments for use from the args builtin. For example:
+
+```
+# bpftrace -lv tracepoint:syscalls:sys_enter_open
+tracepoint:syscalls:sys_enter_open
+    int __syscall_nr;
+    const char * filename;
+    int flags;
+    umode_t mode;
 ```
 
 ## 5. `-d`: Debug Output
@@ -441,7 +453,22 @@ open path: retrans_time_ms
 
 This uses dynamic tracing of the `vfs_open()` kernel function, via the short script path.bt. Some kernel headers needed to be included to understand the `path` and `dentry` structs.
 
-## 5. `? :`: ternary operators
+## 5. `struct`: Struct Declaration
+
+Example:
+
+```
+// from fs/namei.c:
+struct nameidata {
+        struct path     path;
+        struct qstr     last;
+        // [...]
+};
+```
+
+You can define your own structs when needed. In some cases, kernel structs are not declared in the kernel headers package, and are declared manually in bpftrace tools (or partial structs are: enough to reach the member to dereference).
+
+## 6. `? :`: ternary operators
 
 Example:
 
@@ -454,7 +481,7 @@ Attaching 1 probe...
 @error[0]: 78
 ```
 
-## 6. `if () {...} else {...}`: if-else statements
+## 7. `if () {...} else {...}`: if-else statements
 
 Example:
 
@@ -467,7 +494,7 @@ Attaching 1 probe...
 @reads: 80
 ```
 
-## 7. `unroll () {...}`: Unroll
+## 8. `unroll () {...}`: Unroll
 
 Example:
 
@@ -691,7 +718,7 @@ block I/O created by 28941
 Example:
 
 ```
-# bpftrace-tp -e 'tracepoint:syscalls:sys_enter_open { printf("%s %s\n", comm, str(args->filename)); }'
+# bpftrace -e 'tracepoint:syscalls:sys_enter_open { printf("%s %s\n", comm, str(args->filename)); }'
 Attaching 1 probe...
 irqbalance /proc/interrupts
 irqbalance /proc/stat
@@ -913,7 +940,7 @@ That would fire once for every 1000000 cache misses. This usually indicates the 
 - `nsecs` - Nanosecond timestamp
 - `cpu` - Processor ID
 - `comm` - Process name
-- `stack` - Kernel stack trace
+- `kstack` - Kernel stack trace
 - `ustack` - User stack trace
 - `arg0`, `arg1`, ..., `argN`. - Arguments to the traced function
 - `retval` - Return value from traced function
@@ -1036,16 +1063,16 @@ at 1438 ms: sleep
 ^C
 ```
 
-## 7. `stack`: Stack Traces, Kernel
+## 7. `kstack`: Stack Traces, Kernel
 
-Syntax: `stack`
+Syntax: `kstack`
 
 These are implemented using BPF stack maps.
 
 Examples:
 
 ```
-# bpftrace -e 'kprobe:ip_output { @[stack] = count(); }'
+# bpftrace -e 'kprobe:ip_output { @[kstack] = count(); }'
 Attaching 1 probe...
 [...]
 @[
@@ -1244,7 +1271,7 @@ Tracing block I/O sizes > 0 bytes
 - `time(char *fmt)` - Print formatted time
 - `join(char *arr[])` - Print the array
 - `str(char *s [, int length])` - Returns the string pointed to by s
-- `sym(void *p)` - Resolve kernel address
+- `ksym(void *p)` - Resolve kernel address
 - `usym(void *p)` - Resolve user space address
 - `kaddr(char *name)` - Resolve kernel symbol name
 - `uaddr(char *name)` - Resolve user-level symbol name
@@ -1253,7 +1280,7 @@ Tracing block I/O sizes > 0 bytes
 - `exit()` - Quit bpftrace
 - `cgroupid(char *path)` - Resolve cgroup ID
 
-Some of these are asynchronous: the kernel queues the event, but some time later (milliseconds) it is processed in user-space. The asynchronous actions are: <tt>printf()</tt>, <tt>time()</tt>, and <tt>join()</tt>. Both <tt>sym()</tt> and <tt>usym()</tt>, as well as the variables <tt>stack</tt> and </tt>ustack</tt>, record addresses synchronously, but then do symbol translation asynchronously.
+Some of these are asynchronous: the kernel queues the event, but some time later (milliseconds) it is processed in user-space. The asynchronous actions are: <tt>printf()</tt>, <tt>time()</tt>, and <tt>join()</tt>. Both <tt>ksym()</tt> and <tt>usym()</tt>, as well as the variables <tt>kstack</tt> and </tt>ustack</tt>, record addresses synchronously, but then do symbol translation asynchronously.
 
 A selection of these are discussed in the following sections.
 
@@ -1316,7 +1343,7 @@ tbl
 
 Syntax: `str(char *s [, int length])`
 
-Returns the string pointed to by s. `length` can be used to limit the size of the read, and/or introduce a null-terminator.  
+Returns the string pointed to by s. `length` can be used to limit the size of the read, and/or introduce a null-terminator.
 By default, the string will have size 64 bytes (tuneable using [env var `BPFTRACE_STRLEN`](#7-env-bpftrace_strlen)).
 
 Examples:
@@ -1358,14 +1385,14 @@ We can trace strings that are displayed in a bash shell. Some length tuning is e
 <anon@anon-VirtualBox:~$ >
 ```
 
-## 6. `sym()`: Symbol resolution, kernel-level
+## 6. `ksym()`: Symbol resolution, kernel-level
 
-Syntax: `sym(addr)`
+Syntax: `ksym(addr)`
 
 Examples:
 
 ```
-# ./build/src/bpftrace -e 'kprobe:do_nanosleep { printf("%s\n", sym(reg("ip"))); }'
+# ./build/src/bpftrace -e 'kprobe:do_nanosleep { printf("%s\n", ksym(reg("ip"))); }'
 Attaching 1 probe...
 do_nanosleep
 do_nanosleep
@@ -1428,7 +1455,7 @@ Syntax: `reg(char *name)`
 Examples:
 
 ```
-# ./src/bpftrace -e 'kprobe:tcp_sendmsg { @[sym(reg("ip"))] = count(); }'
+# ./src/bpftrace -e 'kprobe:tcp_sendmsg { @[ksym(reg("ip"))] = count(); }'
 Attaching 1 probe...
 ^C
 
@@ -1758,18 +1785,20 @@ Attaching 1 probe...
 ^C
 
 @bytes:
-[0, 1]                 7 |@@@@@@@@@@@@@                                       |
-[2, 4)                 3 |@@@@@                                               |
-[4, 8)                 8 |@@@@@@@@@@@@@@                                      |
-[8, 16)                9 |@@@@@@@@@@@@@@@@                                    |
-[16, 32)               0 |                                                    |
-[32, 64)               1 |@                                                   |
-[64, 128)              1 |@                                                   |
-[128, 256)             0 |                                                    |
-[256, 512)             3 |@@@@@                                               |
-[512, 1k)              0 |                                                    |
-[1k, 2k)              12 |@@@@@@@@@@@@@@@@@@@@@@                              |
-[2k, 4k)              28 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+(..., 0)             117 |@@@@@@@@@@@@                                        |
+[0]                    5 |                                                    |
+[1]                  325 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@                  |
+[2, 4)                 6 |                                                    |
+[4, 8)                 3 |                                                    |
+[8, 16)              495 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+[16, 32)              35 |@@@                                                 |
+[32, 64)              25 |@@                                                  |
+[64, 128)             21 |@@                                                  |
+[128, 256)             1 |                                                    |
+[256, 512)             3 |                                                    |
+[512, 1K)              2 |                                                    |
+[1K, 2K)               1 |                                                    |
+[2K, 4K)               2 |                                                    |
 ```
 
 ### 8.2. Power-Of-2 By Key:
@@ -1786,11 +1815,18 @@ Attaching 1 probe...
 [2, 4)                 9 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
 
 @bytes[snmpd]:
-[0, 1]                 1 |@@@@                                                |
+[1]                    1 |@@@@                                                |
 [2, 4)                 0 |                                                    |
 [4, 8)                 0 |                                                    |
 [8, 16)                4 |@@@@@@@@@@@@@@@@@@                                  |
 [16, 32)              11 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+
+@bytes[irqbalance]:
+(..., 0)              15 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@               |
+[0]                    0 |                                                    |
+[1]                    0 |                                                    |
+[2, 4)                 0 |                                                    |
+[4, 8)                21 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
 ```
 
 ## 9. `lhist()`: Linear Histogram
@@ -1898,18 +1934,20 @@ Attaching 1 probe...
 ^C
 
 @bytes:
-[0, 1]                 7 |@@@@@@@@@@@@@                                       |
-[2, 4)                 3 |@@@@@                                               |
-[4, 8)                 8 |@@@@@@@@@@@@@@                                      |
-[8, 16)                9 |@@@@@@@@@@@@@@@@                                    |
-[16, 32)               0 |                                                    |
-[32, 64)               1 |@                                                   |
-[64, 128)              1 |@                                                   |
-[128, 256)             0 |                                                    |
-[256, 512)             3 |@@@@@                                               |
-[512, 1k)              0 |                                                    |
-[1k, 2k)              12 |@@@@@@@@@@@@@@@@@@@@@@                              |
-[2k, 4k)              28 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+(..., 0)             117 |@@@@@@@@@@@@                                        |
+[0]                    5 |                                                    |
+[1]                  325 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@                  |
+[2, 4)                 6 |                                                    |
+[4, 8)                 3 |                                                    |
+[8, 16)              495 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+[16, 32)              35 |@@@                                                 |
+[32, 64)              25 |@@                                                  |
+[64, 128)             21 |@@                                                  |
+[128, 256)             1 |                                                    |
+[256, 512)             3 |                                                    |
+[512, 1K)              2 |                                                    |
+[1K, 2K)               1 |                                                    |
+[2K, 4K)               2 |                                                    |
 ```
 
 Histograms can also be printed on-demand, using the <tt>print()</tt> function. Eg:

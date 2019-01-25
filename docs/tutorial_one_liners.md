@@ -91,7 +91,7 @@ Attaching 1 probe...
 This summarizes the return value of the sys_read() kernel function for PID 18644, printing it as a histogram.
 
 - /.../: This is a filter (aka predicate), which acts as a filter for the action. The action is only executed if the filtered expression is true, in this case, only for the process ID 18644. Boolean operators are supported ("&&", "||").
-- retval: This is the return value of the function. For sys_read(), this is either -1 (error) or the number of bytes successfully read.
+- ret: This is the return value of the function. For sys_read(), this is either -1 (error) or the number of bytes successfully read.
 - @: This is a map similar to the previous lesson, but without any keys ([]) this time, and the name "bytes" which decorates the output.
 - hist(): This is a map function which summarizes the argument as a power-of-2 histogram. The output shows rows that begin with interval notation, where, for example `[128, 256)` means that the value is: 128 <= value < 256. The next number is the count of occurrences, and then an ASCII histogram is printed to visualize that count. The histogram can be used to study multi-modal distributions.
 - Other map functions include lhist() (linear hist), count(), sum(), avg(), min(), and max().
@@ -190,7 +190,7 @@ Count process-level events for five seconds, printing a summary.
 # Lesson 9. Profile On-CPU Kernel Stacks
 
 ```
-# bpftrace -e 'profile:hz:99 { @[stack] = count(); }'
+# bpftrace -e 'profile:hz:99 { @[kstack] = count(); }'
 Attaching 1 probe...
 ^C
 
@@ -215,12 +215,12 @@ secondary_startup_64+165
 Profile kernel stacks at 99 Hertz, printing a frequency count.
 
 - profile:hz:99: This fires on all CPUs at 99 Hertz. Why 99 and not 100 or 1000? We want frequent enough to catch both the big and small picture of execution, but not too frequent as to perturb performance. 100 Hertz is enough. But we don't want 100 exactly, as sampling may occur in lockstep with other timed activities, hence 99.
-- stack: Returns the kernel stack trace. This is used as a key for the map, so that it can be frequency counted. The output of this is ideal to be visualized as a flame graph. There is also `ustack` for the user-level stack trace.
+- kstack: Returns the kernel stack trace. This is used as a key for the map, so that it can be frequency counted. The output of this is ideal to be visualized as a flame graph. There is also `ustack` for the user-level stack trace.
 
 # Lesson 10. Scheduler Tracing
 
 ```
-# bpftrace -e 'tracepoint:sched:sched_switch { @[stack] = count(); }'
+# bpftrace -e 'tracepoint:sched:sched_switch { @[kstack] = count(); }'
 ^C
 [...]
 
@@ -248,8 +248,8 @@ This counts stack traces that led to context switching (off-CPU) events. The abo
 
 - sched: The sched category has tracepoints for different kernel CPU scheduler events: sched_switch, sched_wakeup, sched_migrate_task, etc.
 - sched_switch: This probe fires when a thread leaves CPU. This will be a blocking event: eg, waiting on I/O, a timer, paging/swapping, or a lock.
-- stack: A kernel stack trace.
-- sched_switch fires in thread context, so that the stack refers to the thread who is leaving. As you use other probe types, pay attention to context, as comm, pid, stack, etc, may not refer to the target of the probe.
+- kstack: A kernel stack trace.
+- sched_switch fires in thread context, so that the stack refers to the thread who is leaving. As you use other probe types, pay attention to context, as comm, pid, kstack, etc, may not refer to the target of the probe.
 
 # Lesson 11. Block I/O Tracing
 

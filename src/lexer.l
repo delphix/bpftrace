@@ -49,7 +49,7 @@ path   :(\\.|[_\-\./a-zA-Z0-9])*:
 <COMMENT>"*/"           BEGIN(INITIAL);
 <COMMENT>"EOF"          driver.error(loc, std::string("end of file during comment"));
 
-pid|tid|cgroup|uid|gid|nsecs|cpu|comm|stack|ustack|arg[0-9]|retval|func|probe|curtask|rand|ctx|username|args {
+pid|tid|cgroup|uid|gid|nsecs|cpu|comm|kstack|stack|ustack|arg[0-9]|retval|func|probe|curtask|rand|ctx|username|args {
                           return Parser::make_BUILTIN(yytext, loc); }
 {path}                  { return Parser::make_PATH(yytext, loc); }
 {map}                   { return Parser::make_MAP(yytext, loc); }
@@ -111,7 +111,7 @@ pid|tid|cgroup|uid|gid|nsecs|cpu|comm|stack|ustack|arg[0-9]|retval|func|probe|cu
 
 struct|union            { BEGIN(STRUCT); buffer = std::string(yytext); open_brackets = 0; }
 <STRUCT>"{"             { BEGIN(STRUCT); buffer += std::string(yytext); open_brackets++; }
-<STRUCT>"}"             { buffer += std::string(yytext);
+<STRUCT>"}"|"};"        { buffer += std::string(yytext);
                           if (open_brackets == 1)
                           {
                             BEGIN(INITIAL); return Parser::make_STRUCT(buffer, loc);

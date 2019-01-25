@@ -42,6 +42,15 @@ BPFtrace::~BPFtrace()
     int status;
     waitpid(pid, &status, 0);
   }
+
+  for (const auto& pair : pid_sym_)
+  {
+    if (pair.second)
+      bcc_free_symcache(pair.second, pair.first);
+  }
+
+  if (ksyms_)
+    bcc_free_symcache(ksyms_, -1);
 }
 
 int BPFtrace::add_probe(ast::Probe &p)
@@ -78,10 +87,7 @@ int BPFtrace::add_probe(ast::Probe &p)
     }
 
     std::vector<std::string> attach_funcs;
-    if (attach_point->need_expansion && (
-          attach_point->func.find("*") != std::string::npos ||
-          attach_point->func.find("[") != std::string::npos &&
-          attach_point->func.find("]") != std::string::npos))
+    if (attach_point->need_expansion && has_wildcard(attach_point->func))
     {
       std::set<std::string> matches;
       switch (probetype(attach_point->provider))
@@ -383,10 +389,10 @@ std::vector<std::unique_ptr<IPrintable>> BPFtrace::get_arg_values(const std::vec
           std::make_unique<PrintableCString>(
             reinterpret_cast<char *>(arg_data+arg.offset)));
         break;
-      case Type::sym:
+      case Type::ksym:
         arg_values.push_back(
           std::make_unique<PrintableString>(
-            resolve_sym(*reinterpret_cast<uint64_t*>(arg_data+arg.offset))));
+            resolve_ksym(*reinterpret_cast<uint64_t*>(arg_data+arg.offset))));
         break;
       case Type::usym:
         arg_values.push_back(
@@ -414,7 +420,7 @@ std::vector<std::unique_ptr<IPrintable>> BPFtrace::get_arg_values(const std::vec
             resolve_probe(
               *reinterpret_cast<uint64_t*>(arg_data+arg.offset))));
         break;
-      case Type::stack:
+      case Type::kstack:
         arg_values.push_back(
           std::make_unique<PrintableString>(
             get_stack(
@@ -567,7 +573,7 @@ int BPFtrace::setup_perf_events()
     return -1;
   }
 
-  std::vector<int> cpus = ebpf::get_online_cpus();
+  std::vector<int> cpus = get_online_cpus();
   online_cpus_ = cpus.size();
   for (int cpu : cpus)
   {
@@ -872,12 +878,12 @@ int BPFtrace::print_map(IMap &map, uint32_t top, uint32_t div)
 
     std::cout << map.name_ << map.key_.argument_value_list(*this, key) << ": ";
 
-    if (map.type_.type == Type::stack)
+    if (map.type_.type == Type::kstack)
       std::cout << get_stack(*(uint64_t*)value.data(), false, 8);
     else if (map.type_.type == Type::ustack)
       std::cout << get_stack(*(uint64_t*)value.data(), true, 8);
-    else if (map.type_.type == Type::sym)
-      std::cout << resolve_sym(*(uintptr_t*)value.data());
+    else if (map.type_.type == Type::ksym)
+      std::cout << resolve_ksym(*(uintptr_t*)value.data());
     else if (map.type_.type == Type::usym)
       std::cout << resolve_usym(*(uintptr_t*)value.data(), *(uint64_t*)(value.data() + 8));
     else if (map.type_.type == Type::inet)
@@ -1114,12 +1120,20 @@ int BPFtrace::print_hist(const std::vector<uint64_t> &values, uint32_t div) cons
     std::ostringstream header;
     if (i == 0)
     {
-      header << "[0, 1]";
+      header << "(..., 0)";
+    }
+    else if (i == 1)
+    {
+      header << "[0]";
+    }
+    else if (i == 2)
+    {
+      header << "[1]";
     }
     else
     {
-      header << "[" << hist_index_label(i);
-      header << ", " << hist_index_label(i+1) << ")";
+      header << "[" << hist_index_label(i-2);
+      header << ", " << hist_index_label(i-2+1) << ")";
     }
 
     int max_width = 52;
@@ -1153,10 +1167,6 @@ int BPFtrace::print_lhist(const std::vector<uint64_t> &values, int min, int max,
   if (max_index == -1)
     return 0;
 
-  std::ostringstream lt;
-  lt << "(...," << lhist_index_label(min) << "]";
-  std::ostringstream gt;
-
   // trim empty values
   int start_value = -1;
   int end_value = 0;
@@ -1181,9 +1191,9 @@ int BPFtrace::print_lhist(const std::vector<uint64_t> &values, int min, int max,
     int bar_width = values.at(i)/(float)max_value*max_width;
     std::ostringstream header;
     if (i == 0) {
-      header << "(...," << lhist_index_label(min) << "]";
+      header << "(..., " << lhist_index_label(min) << ")";
     } else if (i == (buckets + 1)) {
-      header << "[" << lhist_index_label(max) << ",...)";
+      header << "[" << lhist_index_label(max) << ", ...)";
     } else {
       header << "[" << lhist_index_label((i - 1) * step + min);
       header << ", " << lhist_index_label(i * step + min) << ")";
@@ -1425,7 +1435,7 @@ std::string BPFtrace::get_stack(uint64_t stackidpid, bool ustack, int indent)
     if (addr == 0)
       break;
     if (!ustack)
-      stack << padding << resolve_sym(addr, true) << std::endl;
+      stack << padding << resolve_ksym(addr, true) << std::endl;
     else
       stack << padding << resolve_usym(addr, pid, true) << std::endl;
   }
@@ -1476,16 +1486,19 @@ std::vector<std::string> BPFtrace::split_string(std::string &str, char split_by)
   return elems;
 }
 
-std::string BPFtrace::resolve_sym(uintptr_t addr, bool show_offset)
+std::string BPFtrace::resolve_ksym(uintptr_t addr, bool show_offset)
 {
-  struct bcc_symbol sym;
+  struct bcc_symbol ksym;
   std::ostringstream symbol;
 
-  if (ksyms_.resolve_addr(addr, &sym))
+  if (!ksyms_)
+    ksyms_ = bcc_symcache_new(-1, nullptr);
+
+  if (bcc_symcache_resolve(ksyms_, addr, &ksym) == 0)
   {
-    symbol << sym.name;
+    symbol << ksym.name;
     if (show_offset)
-      symbol << "+" << sym.offset;
+      symbol << "+" << ksym.offset;
   }
   else
   {
@@ -1593,7 +1606,7 @@ std::string BPFtrace::resolve_inet(int af, uint64_t inet)
 
 std::string BPFtrace::resolve_usym(uintptr_t addr, int pid, bool show_offset)
 {
-  struct bcc_symbol sym;
+  struct bcc_symbol usym;
   std::ostringstream symbol;
   struct bcc_symbol_option symopts;
   void *psyms;
@@ -1614,18 +1627,16 @@ std::string BPFtrace::resolve_usym(uintptr_t addr, int pid, bool show_offset)
     psyms = pid_sym_[pid];
   }
 
-  if (((ProcSyms *)psyms)->resolve_addr(addr, &sym))
+  if (bcc_symcache_resolve(psyms, addr, &usym) == 0)
   {
-    symbol << sym.name;
+    symbol << usym.name;
     if (show_offset)
-      symbol << "+" << sym.offset;
+      symbol << "+" << usym.offset;
   }
   else
   {
     symbol << (void*)addr;
   }
-
-  // TODO: deal with process exit and clearing its psyms entry
 
   return symbol.str();
 }

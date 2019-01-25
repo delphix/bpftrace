@@ -43,10 +43,10 @@ std::string typestr(Type t)
     case Type::max:      return "max";      break;
     case Type::avg:      return "avg";      break;
     case Type::stats:    return "stats";    break;
-    case Type::stack:    return "stack";    break;
+    case Type::kstack:   return "kstack";    break;
     case Type::ustack:   return "ustack";   break;
     case Type::string:   return "string";   break;
-    case Type::sym:      return "sym";      break;
+    case Type::ksym:      return "ksym";      break;
     case Type::usym:     return "usym";     break;
     case Type::inet:     return "inet";     break;
     case Type::cast:     return "cast";     break;

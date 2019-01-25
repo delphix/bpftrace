@@ -31,17 +31,9 @@ std::string replace_all(const std::string &str, const std::string &from,
     return result;
 }
 
-bool search_probe(const std::string &probe, const std::string& search)
+inline bool search_probe(const std::string &probe, const std::regex& re)
 {
   try {
-    std::string glob = "*";
-    std::string regex = ".*";
-    std::string s = replace_all(search,glob,regex);
-    glob = "?";
-    regex = ".";
-    s = replace_all(s,glob,regex);
-    s = "^" + s + "$";
-    std::regex  re(s, std::regex::icase | std::regex::grep | std::regex::nosubs);
     if (std::regex_search(probe, re))
       return false;
     else
@@ -65,16 +57,80 @@ void list_dir(const std::string path, std::vector<std::string> &files)
   closedir(dp);
 }
 
+void list_probes_from_list(const std::vector<ProbeListItem> &probes_list,
+                           const std::string &probetype, const std::string &search,
+                           const std::regex& re)
+{
+  std::string probe;
+
+  for (auto &probeListItem : probes_list)
+  {
+    probe = probetype + ":" + probeListItem.path + ":";
+
+    if (!search.empty())
+    {
+      if (search_probe(probe, re))
+        continue;
+    }
+
+    std::cout << probe  << std::endl;
+  }
+}
+
+void print_tracepoint_args(const std::string &category, const std::string &event)
+{
+  std::string format_file_path = tp_path + "/" + category + "/" + event + "/format";
+  std::ifstream format_file(format_file_path.c_str());
+  std::regex re("^	field:.*;$", std::regex::icase | std::regex::grep | std::regex::nosubs |
+                                     std::regex::optimize);
+  std::string line;
+
+  if (format_file.fail())
+  {
+    std::cerr << "ERROR: tracepoint format file not found: " << format_file_path << std::endl;
+    return;
+  }
+
+  // Skip lines until the first empty line
+  do {
+    getline(format_file, line);
+  } while (line.length() > 0);
+
+  for (; getline(format_file, line); )
+  {
+    try {
+      if (std::regex_match(line, re))
+      {
+        unsigned idx = line.find(":") + 1;
+        line = line.substr(idx);
+        idx = line.find(";") + 1;
+        line = line.substr(0, idx);
+        std::cout << "    " << line << std::endl;
+      }
+    } catch(std::regex_error& e) {
+      return;
+    }
+  }
+}
+
 void list_probes(const std::string &search)
 {
   unsigned int i, j;
   std::string line, probe;
+  std::string glob = "*";
+  std::string regex = ".*";
+  std::string s = replace_all(search,glob,regex);
+  glob = "?";
+  regex = ".";
+  s = replace_all(s,glob,regex);
+  s = "^" + s + "$";
+  std::regex re(s, std::regex::icase | std::regex::grep | std::regex::nosubs | std::regex::optimize);
 
   // software
-  // TODO: add here
+  list_probes_from_list(SW_PROBE_LIST, "software", search, re);
 
   // hardware
-  // TODO: add here
+  list_probes_from_list(HW_PROBE_LIST, "hardware", search, re);
 
   // tracepoints
   std::vector<std::string> cats = std::vector<std::string>();
@@ -93,16 +149,22 @@ void list_probes(const std::string &search)
 
       if (!search.empty())
       {
-        if (search_probe(probe, search))
+        if (search_probe(probe, re))
           continue;
       }
 
       std::cout << probe << std::endl;
+      if (bt_verbose)
+        print_tracepoint_args(cats[i], events[j]);
     }
   }
 
+  // Optimization: If the search expression starts with "t" (tracepoint) there is
+  // no need to search for kprobes.
+  if (search.rfind("t", 0) == 0)
+      return;
+
   // kprobes
-  std::cout << std::endl;
   std::ifstream file(kprobe_path);
   if (file.fail())
   {
@@ -121,7 +183,7 @@ void list_probes(const std::string &search)
 
     if (!search.empty())
     {
-      if (search_probe(probe, search))
+      if (search_probe(probe, re))
         continue;
     }
 
