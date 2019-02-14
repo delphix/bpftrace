@@ -14,7 +14,8 @@ This is a work in progress. If something is missing, check the bpftrace source t
     - [4. `-l`: Listing Probes](#4--l-listing-probes)
     - [5. `-d`: Debug Output](#5--d-debug-output)
     - [6. `-v`: Verbose Output](#6--v-verbose-output)
-    - [7. Env: `BPFTRACE_STRLEN`](#7-env-bpftrace_strlen)
+    - [7. Other Options](#7-other-options)
+    - [8. Env: `BPFTRACE_STRLEN`](#8-env-bpftrace_strlen)
 - [Language](#language)
     - [1. `{...}`: Action Blocks](#1--action-blocks)
     - [2. `/.../`: Filtering](#2--filtering)
@@ -62,6 +63,8 @@ This is a work in progress. If something is missing, check the bpftrace source t
     - [12. `exit()`: Exit](#12-exit-exit)
     - [13. `cgroupid()`: Resolve cgroup ID](#13-cgroupid-resolve-cgroup-id)
     - [14. `ntop()`: Convert IP address data to text](#14-ntop-convert-ip-address-data-to-text)
+    - [15. `kstack()`: Stack Traces, Kernel](#15-kstack-stack-traces-kernel)
+    - [16. `ustack()`: Stack Traces, User](#16-ustack-stack-traces-user)
 - [Map Functions](#map-functions)
     - [1. Builtins](#1-builtins-2)
     - [2. `count()`: Count](#2-count-count)
@@ -106,12 +109,19 @@ USAGE:
     bpftrace [options] -e 'program'
 
 OPTIONS:
-    -l [search]    list probes
+    -B MODE        output buffering mode ('line', 'full', or 'none')
+    -d             debug info dry run
+    -dd            verbose debug info dry run
     -e 'program'   execute this program
-    -p PID    PID for enabling USDT probes
-    -v    verbose messages
-    -d    debug info dry run
-   -dd    verbose debug info dry run
+    -h             show this help message
+    -l [search]    list probes
+    -p PID         enable USDT probes on PID
+    -c 'CMD'       run CMD and enable USDT probes on resulting process
+    -v             verbose messages
+    --version      bpftrace version
+
+ENVIRONMENT:
+    BPFTRACE_STRLEN    [default: 64] bytes on BPF stack per str()
 
 EXAMPLES:
 bpftrace -l '*sleep*'
@@ -337,7 +347,16 @@ iscsid is sleeping.
 
 This includes `Bytecode:` and then the eBPF bytecode after it was compiled from the llvm assembly.
 
-## 7. Env: `BPFTRACE_STRLEN`
+## 7. Other Options
+
+The -v option prints the bpftrace version:
+
+```
+# bpftrace --version
+bpftrace v0.8-90-g585e-dirty
+```
+
+## 8. Env: `BPFTRACE_STRLEN`
 
 Default: 64
 
@@ -757,8 +776,12 @@ Syntax:
 
 ```
 usdt:binary_path:probe_name
+usdt:binary_path:[probe_namespace]:probe_name
 usdt:library_path:probe_name
+usdt:library_path:[probe_namespace]:probe_name
 ```
+
+Where the `probe_namespace` is optional, and will default to the basename of the binary or library path.
 
 Examples:
 
@@ -771,6 +794,22 @@ hi
 hi
 hi
 ^C
+```
+The basename of a path will be used for the namespace of a probe. If it doesn't match, the probe won't be found.
+In this example, the function name `loop` is in the namespace `tick`. If we rename the binary to `tock`, it won't be found:
+
+```
+mv /root/tick /root/tock
+bpftrace -e 'usdt:/root/tock:loop { printf("hi\n"); }'
+Attaching 1 probe...
+Error finding location for probe: usdt:/root/tock:loop
+```
+
+The probe namespace can be manually specified, between the path and probe function name. This allows for the probe to be
+found, regardless of the name of the binary:
+
+```
+bpftrace -e 'usdt:/root/tock:tick:loop { printf("hi\n"); }'
 ```
 
 ## 8. `usdt`: Static Tracing, User-Level Arguments
@@ -1067,7 +1106,7 @@ at 1438 ms: sleep
 
 Syntax: `kstack`
 
-These are implemented using BPF stack maps.
+This builtin is an alias to [`kstack()`](#15-kstack-stack-traces-kernel).
 
 Examples:
 
@@ -1076,48 +1115,48 @@ Examples:
 Attaching 1 probe...
 [...]
 @[
-ip_output+1
-tcp_transmit_skb+1308
-tcp_write_xmit+482
-tcp_release_cb+225
-release_sock+64
-tcp_sendmsg+49
-sock_sendmsg+48
-sock_write_iter+135
-__vfs_write+247
-vfs_write+179
-sys_write+82
-entry_SYSCALL_64_fastpath+30
+    ip_output+1
+    tcp_transmit_skb+1308
+    tcp_write_xmit+482
+    tcp_release_cb+225
+    release_sock+64
+    tcp_sendmsg+49
+    sock_sendmsg+48
+    sock_write_iter+135
+    __vfs_write+247
+    vfs_write+179
+    sys_write+82
+    entry_SYSCALL_64_fastpath+30
 ]: 1708
 @[
-ip_output+1
-tcp_transmit_skb+1308
-tcp_write_xmit+482
-__tcp_push_pending_frames+45
-tcp_sendmsg_locked+2637
-tcp_sendmsg+39
-sock_sendmsg+48
-sock_write_iter+135
-__vfs_write+247
-vfs_write+179
-sys_write+82
-entry_SYSCALL_64_fastpath+30
+    ip_output+1
+    tcp_transmit_skb+1308
+    tcp_write_xmit+482
+    __tcp_push_pending_frames+45
+    tcp_sendmsg_locked+2637
+    tcp_sendmsg+39
+    sock_sendmsg+48
+    sock_write_iter+135
+    __vfs_write+247
+    vfs_write+179
+    sys_write+82
+    entry_SYSCALL_64_fastpath+30
 ]: 9048
 @[
-ip_output+1
-tcp_transmit_skb+1308
-tcp_write_xmit+482
-tcp_tasklet_func+348
-tasklet_action+241
-__do_softirq+239
-irq_exit+174
-do_IRQ+74
-ret_from_intr+0
-cpuidle_enter_state+159
-do_idle+389
-cpu_startup_entry+111
-start_secondary+398
-secondary_startup_64+165
+    ip_output+1
+    tcp_transmit_skb+1308
+    tcp_write_xmit+482
+    tcp_tasklet_func+348
+    tasklet_action+241
+    __do_softirq+239
+    irq_exit+174
+    do_IRQ+74
+    ret_from_intr+0
+    cpuidle_enter_state+159
+    do_idle+389
+    cpu_startup_entry+111
+    start_secondary+398
+    secondary_startup_64+165
 ]: 11430
 ```
 
@@ -1125,7 +1164,7 @@ secondary_startup_64+165
 
 Syntax: `ustack`
 
-These are implemented using BPF stack maps.
+This builtin is an alias to [`ustack()`](#16-ustack-stack-traces-user).
 
 Examples:
 
@@ -1135,62 +1174,62 @@ Attaching 1 probe...
 ^C
 
 @[
-__open_nocancel+65
-command_word_completion_function+3604
-rl_completion_matches+370
-bash_default_completion+540
-attempt_shell_completion+2092
-gen_completion_matches+82
-rl_complete_internal+288
-rl_complete+145
-_rl_dispatch_subseq+647
-_rl_dispatch+44
-readline_internal_char+479
-readline_internal_charloop+22
-readline_internal+23
-readline+91
-yy_readline_get+152
-yy_readline_get+429
-yy_getc+13
-shell_getc+469
-read_token+251
-yylex+192
-yyparse+777
-parse_command+126
-read_command+207
-reader_loop+391
-main+2409
-__libc_start_main+231
-0x61ce258d4c544155
+    __open_nocancel+65
+    command_word_completion_function+3604
+    rl_completion_matches+370
+    bash_default_completion+540
+    attempt_shell_completion+2092
+    gen_completion_matches+82
+    rl_complete_internal+288
+    rl_complete+145
+    _rl_dispatch_subseq+647
+    _rl_dispatch+44
+    readline_internal_char+479
+    readline_internal_charloop+22
+    readline_internal+23
+    readline+91
+    yy_readline_get+152
+    yy_readline_get+429
+    yy_getc+13
+    shell_getc+469
+    read_token+251
+    yylex+192
+    yyparse+777
+    parse_command+126
+    read_command+207
+    reader_loop+391
+    main+2409
+    __libc_start_main+231
+    0x61ce258d4c544155
 ]: 9
 @[
-__open_nocancel+65
-command_word_completion_function+3604
-rl_completion_matches+370
-bash_default_completion+540
-attempt_shell_completion+2092
-gen_completion_matches+82
-rl_complete_internal+288
-rl_complete+89
-_rl_dispatch_subseq+647
-_rl_dispatch+44
-readline_internal_char+479
-readline_internal_charloop+22
-readline_internal+23
-readline+91
-yy_readline_get+152
-yy_readline_get+429
-yy_getc+13
-shell_getc+469
-read_token+251
-yylex+192
-yyparse+777
-parse_command+126
-read_command+207
-reader_loop+391
-main+2409
-__libc_start_main+231
-0x61ce258d4c544155
+    __open_nocancel+65
+    command_word_completion_function+3604
+    rl_completion_matches+370
+    bash_default_completion+540
+    attempt_shell_completion+2092
+    gen_completion_matches+82
+    rl_complete_internal+288
+    rl_complete+89
+    _rl_dispatch_subseq+647
+    _rl_dispatch+44
+    readline_internal_char+479
+    readline_internal_charloop+22
+    readline_internal+23
+    readline+91
+    yy_readline_get+152
+    yy_readline_get+429
+    yy_getc+13
+    shell_getc+469
+    read_token+251
+    yylex+192
+    yyparse+777
+    parse_command+126
+    read_command+207
+    reader_loop+391
+    main+2409
+    __libc_start_main+231
+    0x61ce258d4c544155
 ]: 18
 ```
 
@@ -1279,8 +1318,16 @@ Tracing block I/O sizes > 0 bytes
 - `system(char *fmt)` - Execute shell command
 - `exit()` - Quit bpftrace
 - `cgroupid(char *path)` - Resolve cgroup ID
+- `kstack([int level])` - Kernel stack trace
+- `ustack([int level])` - User stack trace
+- `ntop(int af, int addr)` - Convert IP address data to text
 
-Some of these are asynchronous: the kernel queues the event, but some time later (milliseconds) it is processed in user-space. The asynchronous actions are: <tt>printf()</tt>, <tt>time()</tt>, and <tt>join()</tt>. Both <tt>ksym()</tt> and <tt>usym()</tt>, as well as the variables <tt>kstack</tt> and </tt>ustack</tt>, record addresses synchronously, but then do symbol translation asynchronously.
+Some of these are asynchronous: the kernel queues the event, but some time
+later (milliseconds) it is processed in user-space. The asynchronous actions
+are: <tt>printf()</tt>, <tt>time()</tt>, and <tt>join()</tt>. Both
+<tt>ksym()</tt> and <tt>usym()</tt>, as well as the variables <tt>kstack</tt>
+and </tt>ustack</tt>, record addresses synchronously, but then do symbol
+translation asynchronously.
 
 A selection of these are discussed in the following sections.
 
@@ -1498,7 +1545,7 @@ Attaching 2 probes...
 @opens: 119
 ```
 
-## 13. `cgroupid`: Resolve cgroup ID
+## 13. `cgroupid()`: Resolve cgroup ID
 
 Syntax: `cgroupid(char *path)`
 
@@ -1521,7 +1568,7 @@ And in other terminal:
 # cat /etc/shadow
 ```
 
-## 14. `ntop`: Convert IP address data to text
+## 14. `ntop()`: Convert IP address data to text
 
 Syntax: `ntop(int af, int addr)`
 
@@ -1554,6 +1601,169 @@ And initiate a connection to this (or any) address in another terminal:
 ```
 curl 169.254.0.1
 ```
+
+## 15. `kstack()`: Stack Traces, Kernel
+
+Syntax: `kstack([int limit])`
+
+These are implemented using BPF stack maps.
+
+Examples:
+
+```
+# bpftrace -e 'kprobe:ip_output { @[kstack()] = count(); }'
+Attaching 1 probe...
+[...]
+@[
+    ip_output+1
+    tcp_transmit_skb+1308
+    tcp_write_xmit+482
+    tcp_release_cb+225
+    release_sock+64
+    tcp_sendmsg+49
+    sock_sendmsg+48
+    sock_write_iter+135
+    __vfs_write+247
+    vfs_write+179
+    sys_write+82
+    entry_SYSCALL_64_fastpath+30
+]: 1708
+@[
+    ip_output+1
+    tcp_transmit_skb+1308
+    tcp_write_xmit+482
+    __tcp_push_pending_frames+45
+    tcp_sendmsg_locked+2637
+    tcp_sendmsg+39
+    sock_sendmsg+48
+    sock_write_iter+135
+    __vfs_write+247
+    vfs_write+179
+    sys_write+82
+    entry_SYSCALL_64_fastpath+30
+]: 9048
+@[
+    ip_output+1
+    tcp_transmit_skb+1308
+    tcp_write_xmit+482
+    tcp_tasklet_func+348
+    tasklet_action+241
+    __do_softirq+239
+    irq_exit+174
+    do_IRQ+74
+    ret_from_intr+0
+    cpuidle_enter_state+159
+    do_idle+389
+    cpu_startup_entry+111
+    start_secondary+398
+    secondary_startup_64+165
+]: 11430
+```
+
+Sampling only three frames from the stack (limit = 3):
+
+```
+# bpftrace -e 'kprobe:ip_output { @[kstack(3)] = count(); }'
+Attaching 1 probe...
+[...]
+@[
+    ip_output+1
+    tcp_transmit_skb+1308
+    tcp_write_xmit+482
+]: 22186
+```
+
+## 16. `ustack()`: Stack Traces, User
+
+Syntax: `ustack([int level])`
+
+This builtin is an alias to `ustack()` (see).
+
+Examples:
+
+```
+# bpftrace -e 'kprobe:do_sys_open /comm == "bash"/ { @[ustack()] = count(); }'
+Attaching 1 probe...
+^C
+
+@[
+    __open_nocancel+65
+    command_word_completion_function+3604
+    rl_completion_matches+370
+    bash_default_completion+540
+    attempt_shell_completion+2092
+    gen_completion_matches+82
+    rl_complete_internal+288
+    rl_complete+145
+    _rl_dispatch_subseq+647
+    _rl_dispatch+44
+    readline_internal_char+479
+    readline_internal_charloop+22
+    readline_internal+23
+    readline+91
+    yy_readline_get+152
+    yy_readline_get+429
+    yy_getc+13
+    shell_getc+469
+    read_token+251
+    yylex+192
+    yyparse+777
+    parse_command+126
+    read_command+207
+    reader_loop+391
+    main+2409
+    __libc_start_main+231
+    0x61ce258d4c544155
+]: 9
+@[
+    __open_nocancel+65
+    command_word_completion_function+3604
+    rl_completion_matches+370
+    bash_default_completion+540
+    attempt_shell_completion+2092
+    gen_completion_matches+82
+    rl_complete_internal+288
+    rl_complete+89
+    _rl_dispatch_subseq+647
+    _rl_dispatch+44
+    readline_internal_char+479
+    readline_internal_charloop+22
+    readline_internal+23
+    readline+91
+    yy_readline_get+152
+    yy_readline_get+429
+    yy_getc+13
+    shell_getc+469
+    read_token+251
+    yylex+192
+    yyparse+777
+    parse_command+126
+    read_command+207
+    reader_loop+391
+    main+2409
+    __libc_start_main+231
+    0x61ce258d4c544155
+]: 18
+```
+
+Sampling only three frames from the stack (limit = 6):
+
+```
+# bpftrace -e 'kprobe:do_sys_open /comm == "bash"/ { @[ustack(6)] = count(); }'
+Attaching 1 probe...
+^C
+
+@[
+    __open_nocancel+65
+    command_word_completion_function+3604
+    rl_completion_matches+370
+    bash_default_completion+540
+    attempt_shell_completion+2092
+    gen_completion_matches+82
+]: 27
+```
+
+Note that for this example to work, bash had to be recompiled with frame pointers.
 
 # Map Functions
 

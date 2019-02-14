@@ -142,7 +142,7 @@ CallInst *IRBuilderBPF::CreateBpfPseudoCall(Map &map)
   return CreateBpfPseudoCall(mapfd);
 }
 
-CallInst *IRBuilderBPF::CreateGetJoinMap(Value *ctx)
+CallInst *IRBuilderBPF::CreateGetJoinMap(Value *ctx __attribute__((unused)))
 {
   Value *map_ptr = CreateBpfPseudoCall(bpftrace_.join_map_->mapfd_);
   AllocaInst *key = CreateAllocaBPF(getInt32Ty(), "key");
@@ -229,13 +229,12 @@ void IRBuilderBPF::CreateMapUpdateElem(Map &map, AllocaInst *key, Value *val)
       Instruction::IntToPtr,
       getInt64(BPF_FUNC_map_update_elem),
       update_func_ptr_type);
-  CallInst *call = CreateCall(update_func, {map_ptr, key, val, flags}, "update_elem");
+  CreateCall(update_func, {map_ptr, key, val, flags}, "update_elem");
 }
 
 void IRBuilderBPF::CreateMapDeleteElem(Map &map, AllocaInst *key)
 {
   Value *map_ptr = CreateBpfPseudoCall(map);
-  Value *flags = getInt64(0);
 
   // int map_delete_elem(&map, &key)
   // Return: 0 on success or negative error
@@ -248,7 +247,7 @@ void IRBuilderBPF::CreateMapDeleteElem(Map &map, AllocaInst *key)
       Instruction::IntToPtr,
       getInt64(BPF_FUNC_map_delete_elem),
       delete_func_ptr_type);
-  CallInst *call = CreateCall(delete_func, {map_ptr, key}, "delete_elem");
+  CreateCall(delete_func, {map_ptr, key}, "delete_elem");
 }
 
 void IRBuilderBPF::CreateProbeRead(AllocaInst *dst, size_t size, Value *src)
@@ -264,7 +263,7 @@ void IRBuilderBPF::CreateProbeRead(AllocaInst *dst, size_t size, Value *src)
       Instruction::IntToPtr,
       getInt64(BPF_FUNC_probe_read),
       proberead_func_ptr_type);
-  CallInst *call = CreateCall(proberead_func, {dst, getInt64(size), src}, "probe_read");
+  CreateCall(proberead_func, {dst, getInt64(size), src}, "probe_read");
 }
 
 CallInst *IRBuilderBPF::CreateProbeReadStr(AllocaInst *dst, size_t size, Value *src)
@@ -338,6 +337,7 @@ Value *IRBuilderBPF::CreateUSDTReadArgument(Value *ctx, struct bcc_usdt_argument
 Value *IRBuilderBPF::CreateUSDTReadArgument(Value *ctx, AttachPoint *attach_point, int arg_num, Builtin &builtin)
 {
   struct bcc_usdt_argument argument;
+  std::string provider_ns;
 
   void *usdt = bcc_usdt_new_frompath(attach_point->target.c_str());
   if (usdt == nullptr) {
@@ -345,10 +345,14 @@ Value *IRBuilderBPF::CreateUSDTReadArgument(Value *ctx, AttachPoint *attach_poin
     exit(-1);
   }
 
-  std::string provider = GetProviderFromPath(attach_point->target);
-  if (bcc_usdt_get_argument(usdt, provider.c_str(), attach_point->func.c_str(), 0, arg_num, &argument) != 0) {
+  if(attach_point->ns != "")
+    provider_ns = attach_point->ns;
+  else
+    provider_ns = GetProviderFromPath(attach_point->target);
+
+  if (bcc_usdt_get_argument(usdt, provider_ns.c_str(), attach_point->func.c_str(), 0, arg_num, &argument) != 0) {
     std::cerr << "couldn't get argument " << arg_num << " for " << attach_point->target << ":"
-              << provider << ":" << attach_point->func << std::endl;
+              << provider_ns << ":" << attach_point->func << std::endl;
     exit(-2);
   }
 
@@ -482,9 +486,9 @@ CallInst *IRBuilderBPF::CreateGetRandom()
   return CreateCall(getrandom_func, {}, "get_random");
 }
 
-CallInst *IRBuilderBPF::CreateGetStackId(Value *ctx, bool ustack)
+CallInst *IRBuilderBPF::CreateGetStackId(Value *ctx, bool ustack, size_t limit)
 {
-  Value *map_ptr = CreateBpfPseudoCall(bpftrace_.stackid_map_->mapfd_);
+  Value *map_ptr = CreateBpfPseudoCall(bpftrace_.stackid_maps_[limit]->mapfd_);
 
   int flags = 0;
   if (ustack)

@@ -180,8 +180,8 @@ class Unroll : public Statement {
 public:
   Unroll(long int var, StatementList *stmts) : var(var), stmts(stmts) {}
 
-  StatementList *stmts;
   long int var = 0;
+  StatementList *stmts;
 
   void accept(Visitor &v) override;
 };
@@ -216,11 +216,18 @@ public:
     : provider(probetypeName(provider)), target(target), func(func), need_expansion(need_expansion) { }
   AttachPoint(const std::string &provider,
               const std::string &target,
+              const std::string &ns,
+              const std::string &func,
+              bool need_expansion)
+    : provider(probetypeName(provider)), target(target), ns(ns), func(func), need_expansion(need_expansion) { }
+  AttachPoint(const std::string &provider,
+              const std::string &target,
               int freq)
     : provider(probetypeName(provider)), target(target), freq(freq), need_expansion(true) { }
 
   std::string provider;
   std::string target;
+  std::string ns;
   std::string func;
   int freq = 0;
   bool need_expansion = false;

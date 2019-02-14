@@ -130,6 +130,7 @@ int BPFtrace::add_probe(ast::Probe &p)
       probe.attach_point = func;
       probe.type = probetype(attach_point->provider);
       probe.orig_name = p.name();
+      probe.ns = attach_point->ns;
       probe.name = attach_point->name(func);
       probe.freq = attach_point->freq;
       probe.loc = 0;
@@ -192,7 +193,7 @@ int BPFtrace::num_probes() const
   return special_probes_.size() + probes_.size();
 }
 
-void perf_event_printer(void *cb_cookie, void *data, int size)
+void perf_event_printer(void *cb_cookie, void *data, int size __attribute__((unused)))
 {
   auto bpftrace = static_cast<BPFtrace*>(cb_cookie);
   auto printf_id = *static_cast<uint64_t*>(data);
@@ -429,7 +430,7 @@ std::vector<std::unique_ptr<IPrintable>> BPFtrace::get_arg_values(const std::vec
             get_stack(
               *reinterpret_cast<uint64_t*>(arg_data+arg.offset),
               false,
-              8)));
+              arg.type.stack_size, 8)));
         break;
       case Type::ustack:
         arg_values.push_back(
@@ -437,7 +438,7 @@ std::vector<std::unique_ptr<IPrintable>> BPFtrace::get_arg_values(const std::vec
             get_stack(
               *reinterpret_cast<uint64_t*>(arg_data+arg.offset),
               true,
-              8)));
+              arg.type.stack_size, 8)));
         break;
       default:
         std::cerr << "invalid argument type" << std::endl;
@@ -473,7 +474,7 @@ std::string BPFtrace::get_param(size_t i)
   return "0";
 }
 
-void perf_event_lost(void *cb_cookie, uint64_t lost)
+void perf_event_lost(void *cb_cookie __attribute__((unused)), uint64_t lost)
 {
   printf("Lost %lu events\n", lost);
 }
@@ -883,9 +884,9 @@ int BPFtrace::print_map(IMap &map, uint32_t top, uint32_t div)
     std::cout << map.name_ << map.key_.argument_value_list(*this, key) << ": ";
 
     if (map.type_.type == Type::kstack)
-      std::cout << get_stack(*(uint64_t*)value.data(), false, 8);
+      std::cout << get_stack(*(uint64_t*)value.data(), false, map.type_.stack_size, 8);
     else if (map.type_.type == Type::ustack)
-      std::cout << get_stack(*(uint64_t*)value.data(), true, 8);
+      std::cout << get_stack(*(uint64_t*)value.data(), true, map.type_.stack_size, 8);
     else if (map.type_.type == Type::ksym)
       std::cout << resolve_ksym(*(uintptr_t*)value.data());
     else if (map.type_.type == Type::usym)
@@ -1349,7 +1350,7 @@ uint64_t BPFtrace::reduce_value(const std::vector<uint8_t> &value, int ncpus)
   uint64_t sum = 0;
   for (int i=0; i<ncpus; i++)
   {
-    sum += *(uint64_t*)(value.data() + i*sizeof(uint64_t*));
+    sum += *(const uint64_t*)(value.data() + i*sizeof(uint64_t*));
   }
   return sum;
 }
@@ -1359,7 +1360,7 @@ uint64_t BPFtrace::max_value(const std::vector<uint8_t> &value, int ncpus)
   uint64_t val, max = 0;
   for (int i=0; i<ncpus; i++)
   {
-    val = *(uint64_t*)(value.data() + i*sizeof(uint64_t*));
+    val = *(const uint64_t*)(value.data() + i*sizeof(uint64_t*));
     if (val > max)
       max = val;
   }
@@ -1371,7 +1372,7 @@ int64_t BPFtrace::min_value(const std::vector<uint8_t> &value, int ncpus)
   int64_t val, max = 0, retval;
   for (int i=0; i<ncpus; i++)
   {
-    val = *(int64_t*)(value.data() + i*sizeof(int64_t*));
+    val = *(const int64_t*)(value.data() + i*sizeof(int64_t*));
     if (val > max)
       max = val;
   }
@@ -1418,12 +1419,12 @@ std::vector<uint8_t> BPFtrace::find_empty_key(IMap &map, size_t size) const
   throw std::runtime_error("Could not find empty key");
 }
 
-std::string BPFtrace::get_stack(uint64_t stackidpid, bool ustack, int indent)
+std::string BPFtrace::get_stack(uint64_t stackidpid, bool ustack, size_t limit, int indent)
 {
   uint32_t stackid = stackidpid & 0xffffffff;
   int pid = stackidpid >> 32;
-  auto stack_trace = std::vector<uint64_t>(MAX_STACK_SIZE);
-  int err = bpf_lookup_elem(stackid_map_->mapfd_, &stackid, stack_trace.data());
+  auto stack_trace = std::vector<uint64_t>(limit);
+  int err = bpf_lookup_elem(stackid_maps_[limit]->mapfd_, &stackid, stack_trace.data());
   if (err)
   {
     std::cerr << "Error looking up stack id " << stackid << " (pid " << pid << "): " << err << std::endl;
@@ -1616,8 +1617,8 @@ std::string BPFtrace::resolve_usym(uintptr_t addr, int pid, bool show_offset)
   void *psyms;
 
   // TODO: deal with these:
-  symopts = {.use_debug_file = false,
-	     .check_debug_file_crc = false,
+  symopts = {.use_debug_file = true,
+	     .check_debug_file_crc = true,
 	     .use_symbol_type = BCC_SYM_ALL_TYPES};
 
   if (pid_sym_.find(pid) == pid_sym_.end())
@@ -1673,14 +1674,14 @@ void BPFtrace::sort_by_key(std::vector<SizedType> key_args,
       {
         std::stable_sort(values_by_key.begin(), values_by_key.end(), [&](auto &a, auto &b)
         {
-          return *(uint64_t*)(a.first.data() + arg_offset) < *(uint64_t*)(b.first.data() + arg_offset);
+          return *(const uint64_t*)(a.first.data() + arg_offset) < *(const uint64_t*)(b.first.data() + arg_offset);
         });
       }
       else if (arg.size == 4)
       {
         std::stable_sort(values_by_key.begin(), values_by_key.end(), [&](auto &a, auto &b)
         {
-          return *(uint32_t*)(a.first.data() + arg_offset) < *(uint32_t*)(b.first.data() + arg_offset);
+          return *(const uint32_t*)(a.first.data() + arg_offset) < *(const uint32_t*)(b.first.data() + arg_offset);
         });
       }
       else
@@ -1694,8 +1695,8 @@ void BPFtrace::sort_by_key(std::vector<SizedType> key_args,
     {
       std::stable_sort(values_by_key.begin(), values_by_key.end(), [&](auto &a, auto &b)
       {
-        return strncmp((char*)(a.first.data() + arg_offset),
-                       (char*)(b.first.data() + arg_offset),
+        return strncmp((const char*)(a.first.data() + arg_offset),
+                       (const char*)(b.first.data() + arg_offset),
                        STRING_SIZE) < 0;
       });
     }
