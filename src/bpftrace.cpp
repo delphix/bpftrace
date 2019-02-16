@@ -1421,13 +1421,15 @@ std::vector<uint8_t> BPFtrace::find_empty_key(IMap &map, size_t size) const
 
 std::string BPFtrace::get_stack(uint64_t stackidpid, bool ustack, size_t limit, int indent)
 {
-  uint32_t stackid = stackidpid & 0xffffffff;
+  int32_t stackid = stackidpid & 0xffffffff;
   int pid = stackidpid >> 32;
   auto stack_trace = std::vector<uint64_t>(limit);
   int err = bpf_lookup_elem(stackid_maps_[limit]->mapfd_, &stackid, stack_trace.data());
   if (err)
   {
-    std::cerr << "Error looking up stack id " << stackid << " (pid " << pid << "): " << err << std::endl;
+    // ignore EFAULT errors: eg, kstack used but no kernel stack
+    if (stackid != -EFAULT)
+      std::cerr << "Error looking up stack id " << stackid << " (pid " << pid << "): " << err << std::endl;
     return "";
   }
 
@@ -1634,7 +1636,10 @@ std::string BPFtrace::resolve_usym(uintptr_t addr, int pid, bool show_offset)
 
   if (bcc_symcache_resolve(psyms, addr, &usym) == 0)
   {
-    symbol << usym.name;
+    if (demangle_cpp_symbols)
+      symbol << usym.demangle_name;
+    else
+      symbol << usym.name;
     if (show_offset)
       symbol << "+" << usym.offset;
   }
