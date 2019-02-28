@@ -60,7 +60,7 @@ void CodegenLLVM::visit(Builtin &builtin)
   }
   else if (builtin.ident == "kstack" || builtin.ident == "ustack")
   {
-    Value *stackid = b_.CreateGetStackId(ctx_, builtin.ident == "ustack", builtin.type.stack_size);
+    Value *stackid = b_.CreateGetStackId(ctx_, builtin.ident == "ustack", builtin.type.stack_type);
     // Kernel stacks should not be differentiated by tid, since the kernel
     // address space is the same between pids (and when aggregating you *want*
     // to be able to correlate between pids in most cases). User-space stacks
@@ -685,7 +685,7 @@ void CodegenLLVM::visit(Call &call)
   }
   else if (call.func == "kstack" || call.func == "ustack")
   {
-    Value *stackid = b_.CreateGetStackId(ctx_, call.func == "ustack", call.type.stack_size);
+    Value *stackid = b_.CreateGetStackId(ctx_, call.func == "ustack", call.type.stack_type);
     // Kernel stacks should not be differentiated by tid, since the kernel
     // address space is the same between pids (and when aggregating you *want*
     // to be able to correlate between pids in most cases). User-space stacks
@@ -715,6 +715,12 @@ void CodegenLLVM::visit(Map &map)
 
 void CodegenLLVM::visit(Variable &var)
 {
+  if (variables_.count(var.ident) == 0)
+  {
+    AllocaInst *val = b_.CreateAllocaBPFInit(var.type, var.ident);
+    variables_[var.ident] = val;
+  }
+
   if (!var.type.IsArray())
   {
     expr_ = b_.CreateLoad(variables_[var.ident]);
@@ -1249,14 +1255,12 @@ void CodegenLLVM::visit(Probe &probe)
     BasicBlock *entry = BasicBlock::Create(module_->getContext(), "entry", func);
     b_.SetInsertPoint(entry);
 
-    variables_.clear(); // make sure variables are local to the probe
-
     ctx_ = func->arg_begin();
 
     if (probe.pred) {
       probe.pred->accept(*this);
     }
-
+    variables_.clear();
     for (Statement *stmt : *probe.stmts) {
       stmt->accept(*this);
     }
@@ -1320,6 +1324,7 @@ void CodegenLLVM::visit(Probe &probe)
         if (probe.pred) {
           probe.pred->accept(*this);
         }
+        variables_.clear();
         for (Statement *stmt : *probe.stmts) {
           stmt->accept(*this);
         }
