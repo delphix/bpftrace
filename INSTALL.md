@@ -1,7 +1,7 @@
-# BPFtrace Install
+# bpftrace Install
 
 - [Linux Kernel Requirements](#linux-kernel-requirements)
-- [Building BPFtrace](#building-bpftrace)
+- [Building bpftrace](#building-bpftrace)
   - [Ubuntu](#ubuntu)
   - [Fedora](#fedora)
   - [Amazon Linux](#amazon-linux)
@@ -33,9 +33,9 @@ CONFIG_HAVE_EBPF_JIT=y
 CONFIG_BPF_EVENTS=y
 ```
 
-# Building BPFtrace
+# Building bpftrace
 
-BPFtrace's build system will download `gtest` at build time. If you don't want that or don't want tests, you can use the `make bpftrace` target.
+bpftrace's build system will download `gtest` at build time. If you don't want that or don't want tests, you can use the `make bpftrace` target.
 
 ## Ubuntu
 
@@ -63,7 +63,7 @@ sudo apt-get install -y bison cmake flex g++ git libelf-dev zlib1g-dev libfl-dev
 sudo apt-get install clang-6.0 libclang-6.0-dev libclang-common-6.0-dev libclang1-6.0 libllvm6.0 llvm-6.0 llvm-6.0-dev llvm-6.0-runtime
 git clone https://github.com/iovisor/bpftrace
 cd bpftrace
-mkdir build; cd build; cmake -DCMAKE_BUILD_TYPE=DEBUG ..
+mkdir build; cd build; cmake -DCMAKE_BUILD_TYPE=Release ..
 make -j8
 make install
 ```
@@ -78,7 +78,7 @@ You'll want the newest kernel possible (see kernel requirements), eg, by using F
 sudo dnf install -y bison flex cmake make git gcc-c++ elfutils-libelf-devel zlib-devel llvm-devel clang-devel bcc-devel
 git clone https://github.com/iovisor/bpftrace
 cd bpftrace
-mkdir build; cd build; cmake -DCMAKE_BUILD_TYPE=DEBUG ..
+mkdir build; cd build; cmake -DCMAKE_BUILD_TYPE=Release ..
 make -j8
 make install
 ```
@@ -137,16 +137,16 @@ The bpftrace binary will be in installed in /usr/local/bin/bpftrace, and tools i
 
 ## Using Docker
 
-There are currently problems with BPFtrace string comparisons when using the Docker build. The regular build is recommended for now.
+There are currently problems with bpftrace string comparisons when using the Docker build. The regular build is recommended for now.
 
 Building inside a Docker container will produce a statically linked bpftrace executable.
 
 `./build.sh`
 
-There are some more fine-grained options if you find yourself building BPFtrace a lot:
+There are some more fine-grained options if you find yourself building bpftrace a lot:
 - `./build-docker-image.sh` - builds just the `bpftrace-builder` Docker image
-- `./build-debug.sh` - builds BPFtrace with debugging information (requires `./build-docker-image.sh` to have already been run)
-- `./build-release.sh` - builds BPFtrace in a release configuration (requires `./build-docker-image.sh` to have already been run)
+- `./build-debug.sh` - builds bpftrace with debugging information (requires `./build-docker-image.sh` to have already been run)
+- `./build-release.sh` - builds bpftrace in a release configuration (requires `./build-docker-image.sh` to have already been run)
 
 `./build.sh` is equivalent to `./build-docker-image.sh && ./build-release.sh`
 
@@ -160,7 +160,7 @@ Use specific OS build sections listed earlier if available (Ubuntu, Docker).
 - CMake
 - Flex
 - Bison
-- LLVM & Clang 5.0 (or 6.0) development packages
+- LLVM & Clang 5.0+ development packages
 - BCC development package
 - LibElf
 - Kernel requirements described earlier
@@ -171,13 +171,13 @@ Use specific OS build sections listed earlier if available (Ubuntu, Docker).
 git clone https://github.com/iovisor/bpftrace
 mkdir -p bpftrace/build
 cd bpftrace/build
-cmake -DCMAKE_BUILD_TYPE=Debug ../
+cmake -DCMAKE_BUILD_TYPE=Release ../
 make
 ```
 
-By default bpftrace will be built as a dynamically linked executable. If a statically linked executable would be preferred and your system has the required libraries installed, the CMake option `-DSTATIC_LINKING:BOOL=ON` can be used. Building bpftrace using the Docker method below will always result in a statically linked executable.
+By default bpftrace will be built as a dynamically linked executable. If a statically linked executable would be preferred and your system has the required libraries installed, the CMake option `-DSTATIC_LINKING:BOOL=ON` can be used. Building bpftrace using the Docker method below will always result in a statically linked executable. A debug build of bpftrace can be set up with `cmake -DCMAKE_BUILD_TYPE=Debug ../`.
 
-The latest versions of BCC and Google Test will be downloaded on each build. To speed up builds and only download their sources on the first run, use the CMake option `-DOFFLINE_BUILDS:BOOL=ON`.
+The latest version of Google Test will be downloaded on each build. To speed up builds and only download its source on the first run, use the CMake option `-DOFFLINE_BUILDS:BOOL=ON`.
 
 To test that the build works, you can try running the test suite, and a one-liner:
 
