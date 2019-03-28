@@ -474,6 +474,9 @@ void SemanticAnalyser::visit(Map &map)
     if (map.vargs) {
       for (Expression *expr : *map.vargs) {
         expr->accept(*this);
+        // promote map key to 64-bit:
+        if (!expr->type.IsArray())
+          expr->type.size = 8;
         key.args_.push_back(expr->type);
       }
     }
@@ -540,10 +543,7 @@ void SemanticAnalyser::visit(Binop &binop)
       err_ << "comparing '" << lhs << "' ";
       err_ << "with '" << rhs << "'" << std::endl;
     }
-    else if (lhs == Type::string && !(binop.left->is_literal || binop.right->is_literal)) {
-      err_ << "Comparison between two variables of ";
-      err_ << "type string is not allowed" << std::endl;
-    }
+
     else if (lhs != Type::integer &&
              binop.op != Parser::token::EQ &&
              binop.op != Parser::token::NE) {
