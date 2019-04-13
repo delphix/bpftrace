@@ -45,6 +45,12 @@ void CodegenLLVM::visit(String &string)
   expr_ = buf;
 }
 
+void CodegenLLVM::visit(Identifier &identifier)
+{
+  std::cerr << "unknown identifier \"" << identifier.ident << "\"" << std::endl;
+  abort();
+}
+
 void CodegenLLVM::visit(Builtin &builtin)
 {
   if (builtin.ident == "nsecs")
@@ -1150,6 +1156,9 @@ void CodegenLLVM::visit(Predicate &pred)
       parent);
 
   pred.expr->accept(*this);
+
+  // allow unop casts in predicates:
+  expr_ = b_.CreateIntCast(expr_, b_.getInt64Ty(), false);
 
   expr_ = b_.CreateICmpEQ(expr_, b_.getInt64(0), "predcond");
 
