@@ -1,5 +1,7 @@
 #include <clang-c/Index.h>
 #include <iostream>
+#include <unordered_map>
+#include <unordered_set>
 #include <string.h>
 #include <sys/utsname.h>
 #include <sys/stat.h>
@@ -12,6 +14,9 @@
 #include "headers.h"
 
 namespace bpftrace {
+
+std::unordered_map<std::string, CXCursor> indirect_structs;
+std::unordered_set<std::string> unvisited_indirect_structs;
 
 static std::string get_clang_string(CXString string)
 {
@@ -30,8 +35,9 @@ static CXCursor get_indirect_field_parent_struct(CXCursor c)
 {
   CXCursor parent = clang_getCursorSemanticParent(c);
 
-  while (!clang_Cursor_isNull(parent) && clang_Cursor_isAnonymous(parent))
-     parent = clang_getCursorSemanticParent(parent);
+  while (!clang_Cursor_isNull(parent) && indirect_structs.count(get_clang_string(clang_getTypeSpelling(clang_getCanonicalType(clang_getCursorType(parent))))) > 0) {
+    parent = clang_getCursorSemanticParent(parent);
+  }
 
   return parent;
 }
@@ -51,6 +57,39 @@ static int get_indirect_field_offset(CXCursor c)
   offset = clang_Type_getOffsetOf(clang_getCursorType(parent), ident.c_str()) / 8;
 
   return offset;
+}
+
+// NOTE(mmarchini): as suggested in http://clang-developers.42468.n3.nabble.com/Extracting-macro-information-using-libclang-the-C-Interface-to-Clang-td4042648.html#message4042666
+static bool translateMacro(CXCursor cursor, std::string &name, std::string &value)
+{
+  CXToken* tokens    = nullptr;
+  unsigned numTokens = 0;
+  CXTranslationUnit transUnit = clang_Cursor_getTranslationUnit(cursor);
+  CXSourceRange srcRange  = clang_getCursorExtent(cursor);
+  clang_tokenize(transUnit, srcRange, &tokens, &numTokens);
+  for (unsigned n=0; n<numTokens; n++)
+  {
+    auto tokenText = clang_getTokenSpelling(transUnit, tokens[n]);
+    if (n == 0)
+    {
+      value.clear();
+      name = clang_getCString(tokenText);
+      if (name[0] == '_')
+        break;
+    }
+    else
+    {
+      CXTokenKind tokenKind = clang_getTokenKind(tokens[n]);
+      if (tokenKind != CXToken_Comment)
+      {
+        const char* text = clang_getCString(tokenText);
+        if (text)
+          value += text;
+      }
+    }
+  }
+  clang_disposeTokens(transUnit, tokens, numTokens);
+  return value.length() != 0;
 }
 
 static SizedType get_sized_type(CXType clang_type)
@@ -172,7 +211,7 @@ static std::tuple<std::string, std::string> get_kernel_dirs(const struct utsname
   return std::make_tuple(ksrc, kobj);
 }
 
-void ClangParser::parse(ast::Program *program, StructMap &structs)
+void ClangParser::parse(ast::Program *program, BPFtrace &bpftrace)
 {
   auto input = program->c_definitions;
   if (input.size() == 0)
@@ -245,7 +284,7 @@ void ClangParser::parse(ast::Program *program, StructMap &structs)
       "definitions.h",
       &args[0], args.size(),
       unsaved_files, sizeof(unsaved_files)/sizeof(CXUnsavedFile),
-      CXTranslationUnit_None,
+      CXTranslationUnit_DetailedPreprocessingRecord,
       &translation_unit);
   if (error)
   {
@@ -253,44 +292,80 @@ void ClangParser::parse(ast::Program *program, StructMap &structs)
     std::cerr << "Input (" << input.size() << "): " << input << std::endl;
   }
 
+  indirect_structs.clear();
+  unvisited_indirect_structs.clear();
+
   CXCursor cursor = clang_getTranslationUnitCursor(translation_unit);
 
-  clang_visitChildren(
-      cursor,
-      [](CXCursor c, CXCursor parent, CXClientData client_data)
-      {
-        auto &structs = *static_cast<StructMap*>(client_data);
+  bool iterate = true;
 
-        if (clang_getCursorKind(parent) != CXCursor_StructDecl &&
-            clang_getCursorKind(parent) != CXCursor_UnionDecl)
-          return CXChildVisit_Recurse;
-
-        if (clang_getCursorKind(c) == CXCursor_FieldDecl)
+  do {
+    clang_visitChildren(
+        cursor,
+        [](CXCursor c, CXCursor parent, CXClientData client_data)
         {
-          auto struct_name = get_parent_struct_name(c);
-          auto ident = get_clang_string(clang_getCursorSpelling(c));
-          auto offset = clang_Cursor_getOffsetOfField(c) / 8;
-          auto type = clang_getCanonicalType(clang_getCursorType(c));
+          if (clang_getCursorKind(c) == CXCursor_MacroDefinition)
+          {
+            std::string macro_name;
+            std::string macro_value;
+            if (translateMacro(c, macro_name, macro_value)) {
+              auto &macros = static_cast<BPFtrace*>(client_data)->macros_;
+              macros[macro_name] = macro_value;
+            }
+            return CXChildVisit_Recurse;
+          }
+
+          if (clang_getCursorKind(parent) != CXCursor_StructDecl &&
+              clang_getCursorKind(parent) != CXCursor_UnionDecl)
+            return CXChildVisit_Recurse;
 
           auto ptype = clang_getCanonicalType(clang_getCursorType(parent));
           auto ptypestr = get_clang_string(clang_getTypeSpelling(ptype));
           auto ptypesize = clang_Type_getSizeOf(ptype);
 
-          if(clang_Cursor_isAnonymous(parent))
-            offset = get_indirect_field_offset(c);
+          if (clang_getCursorKind(c) == CXCursor_StructDecl ||
+              clang_getCursorKind(c) == CXCursor_UnionDecl) {
+            auto struct_name = get_clang_string(clang_getTypeSpelling(clang_getCanonicalType(clang_getCursorType(c))));
+            indirect_structs[struct_name] = c;
+            unvisited_indirect_structs.insert(struct_name);
 
-          if (struct_name == "")
-            struct_name = ptypestr;
-          remove_struct_prefix(struct_name);
+            return CXChildVisit_Continue;
+          }
 
-          structs[struct_name].fields[ident].offset = offset;
-          structs[struct_name].fields[ident].type = get_sized_type(type);
-          structs[struct_name].size = ptypesize;
-        }
+          if (clang_getCursorKind(c) == CXCursor_FieldDecl)
+          {
+            auto &structs = static_cast<BPFtrace*>(client_data)->structs_;
+            auto struct_name = get_parent_struct_name(c);
+            auto ident = get_clang_string(clang_getCursorSpelling(c));
+            auto offset = clang_Cursor_getOffsetOfField(c) / 8;
+            auto type = clang_getCanonicalType(clang_getCursorType(c));
+            auto typestr = get_clang_string(clang_getTypeSpelling(type));
 
-        return CXChildVisit_Recurse;
-      },
-      &structs);
+            if (indirect_structs.count(typestr))
+              indirect_structs.erase(typestr);
+
+            if(indirect_structs.count(ptypestr))
+              offset = get_indirect_field_offset(c);
+
+            if (struct_name == "")
+              struct_name = ptypestr;
+            remove_struct_prefix(struct_name);
+
+            structs[struct_name].fields[ident].offset = offset;
+            structs[struct_name].fields[ident].type = get_sized_type(type);
+            structs[struct_name].size = ptypesize;
+          }
+
+          return CXChildVisit_Recurse;
+        },
+        &bpftrace);
+    if (unvisited_indirect_structs.size()) {
+      cursor = indirect_structs[*unvisited_indirect_structs.begin()];
+      unvisited_indirect_structs.erase(unvisited_indirect_structs.begin());
+    } else {
+      iterate = false;
+    }
+  } while (iterate);
 
   clang_disposeTranslationUnit(translation_unit);
   clang_disposeIndex(index);

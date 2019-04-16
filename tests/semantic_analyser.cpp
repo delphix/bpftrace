@@ -16,8 +16,9 @@ void test(BPFtrace &bpftrace, Driver &driver, const std::string &input, int expe
   ASSERT_EQ(driver.parse_str(input), 0);
 
   ClangParser clang;
-  clang.parse(driver.root_, bpftrace.structs_);
+  clang.parse(driver.root_, bpftrace);
 
+  ASSERT_EQ(driver.parse_str(input), 0);
   std::stringstream out;
   ast::SemanticAnalyser semantics(driver.root_, bpftrace, out);
   std::stringstream msg;
@@ -27,7 +28,7 @@ void test(BPFtrace &bpftrace, Driver &driver, const std::string &input, int expe
 
 void test(BPFtrace &bpftrace, const std::string &input, int expected_result=0)
 {
-  Driver driver;
+  Driver driver(bpftrace);
   test(bpftrace, driver, input, expected_result);
 }
 
@@ -40,7 +41,7 @@ void test(Driver &driver, const std::string &input, int expected_result=0)
 void test(const std::string &input, int expected_result=0)
 {
   BPFtrace bpftrace;
-  Driver driver;
+  Driver driver(bpftrace);
   test(bpftrace, driver, input, expected_result);
 }
 
@@ -347,7 +348,8 @@ TEST(semantic_analyser, variables_are_local)
 
 TEST(semantic_analyser, variable_type)
 {
-  Driver driver;
+  BPFtrace bpftrace;
+  Driver driver(bpftrace);
   test(driver, "kprobe:f { $x = 1 }", 0);
   SizedType st(Type::integer, 8);
   auto assignment = static_cast<ast::AssignVarStatement*>(driver.root_->probes->at(0)->stmts->at(0));
@@ -363,7 +365,8 @@ TEST(semantic_analyser, unroll)
 
 TEST(semantic_analyser, map_integer_sizes)
 {
-  Driver driver;
+  BPFtrace bpftrace;
+  Driver driver(bpftrace);
   std::string structs = "struct type1 { int x; }";
   test(driver, structs + "kprobe:f { $x = ((type1)0).x; @x = $x; }", 0);
 
@@ -665,7 +668,8 @@ TEST(semantic_analyser, field_access_sub_struct)
 
 TEST(semantic_analyser, field_access_is_internal)
 {
-  Driver driver;
+  BPFtrace bpftrace;
+  Driver driver(bpftrace);
   std::string structs = "struct type1 { int x; }";
 
   test(driver, structs + "kprobe:f { $x = ((type1)0).x }", 0);
@@ -697,6 +701,12 @@ TEST(semantic_analyser, positional_parameters)
   // $1 won't be defined, will be tested more in runtime.
   test("kprobe:f { printf(\"%d\", $1); }", 0);
   test("kprobe:f { printf(\"%s\", str($1)); }", 0);
+}
+
+TEST(semantic_analyser, macros)
+{
+  test("#define A 1\nkprobe:f { printf(\"%d\", A); }", 0);
+  test("#define A A\nkprobe:f { printf(\"%d\", A); }", 1);
 }
 
 } // namespace semantic_analyser
