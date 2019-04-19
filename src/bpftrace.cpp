@@ -15,6 +15,12 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#ifdef HAVE_BCC_ELF_FOREACH_SYM
+#include <linux/elf.h>
+
+#include "bcc_elf.h"
+#endif
+
 #include "bcc_syms.h"
 #include "perf_reader.h"
 
@@ -145,6 +151,8 @@ int BPFtrace::add_probe(ast::Probe &p)
 
 std::set<std::string> BPFtrace::find_wildcard_matches(const std::string &prefix, const std::string &func, std::istream &symbol_name_stream)
 {
+  if (!has_wildcard(func))
+    return std::set<std::string>({func});
   // Turn glob into a regex
   auto regex_str = "(" + std::regex_replace(func, std::regex("\\*"), "[^\\s]*") + ")";
   if (prefix != "")
@@ -170,6 +178,8 @@ std::set<std::string> BPFtrace::find_wildcard_matches(const std::string &prefix,
 
 std::set<std::string> BPFtrace::find_wildcard_matches(const std::string &prefix, const std::string &func, const std::string &file_name)
 {
+  if (!has_wildcard(func))
+    return std::set<std::string>({func});
   std::ifstream file(file_name);
   if (file.fail())
   {
@@ -1556,25 +1566,47 @@ uint64_t BPFtrace::resolve_cgroupid(const std::string &path)
 
 uint64_t BPFtrace::resolve_uname(const std::string &name, const std::string &path)
 {
-  uint64_t addr = 0;
-
-  // TODO: switch from objdump to library call, perhaps bcc_resolve_symname()
+#ifdef HAVE_BCC_ELF_FOREACH_SYM
+  bcc_symbol sym;
+  int err = bcc_resolve_symname(path.c_str(), name.c_str(), 0, 0, nullptr, &sym);
+  if (err)
+    throw std::runtime_error("Could not resolve symbol: " + path + ":" + name);
+  return sym.offset;
+#else
   std::string call_str = std::string("objdump -tT ") + path + " | grep -w " + name;
   const char *call = call_str.c_str();
   auto result = exec_system(call);
-  addr = read_address_from_output(result);
+  return read_address_from_output(result);
+#endif
+}
 
-  return addr;
+int add_symbol(const char *symname, uint64_t start, uint64_t size, void *payload) {
+  auto syms = static_cast<std::ostringstream*>(payload);
+  *syms << std::string(symname) << std::endl;
+  return 0;
 }
 
 std::string BPFtrace::extract_func_symbols_from_path(const std::string &path)
 {
-  // TODO: switch from objdump to library call, perhaps bcc_resolve_symname()
+#ifdef HAVE_BCC_ELF_FOREACH_SYM
+  bcc_symbol_option symbol_option = {
+    .use_debug_file = 1,
+    .check_debug_file_crc = 1,
+    .use_symbol_type = (1 << STT_FUNC) | (1 << STT_GNU_IFUNC)
+  };
+
+  std::ostringstream syms;
+  int err = bcc_elf_foreach_sym(path.c_str(), add_symbol, &symbol_option, &syms);
+  if (err)
+    throw std::runtime_error("Could not list function symbols: " + path);
+
+  return syms.str();
+#else
   std::string call_str = std::string("objdump -tT ") + path +
     + " | " + "grep \"F .text\" | grep -oE '[^[:space:]]+$'";
-
   const char *call = call_str.c_str();
   return exec_system(call);
+#endif
 }
 
 uint64_t BPFtrace::read_address_from_output(std::string output)
