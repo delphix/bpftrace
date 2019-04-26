@@ -30,6 +30,8 @@ static std::vector<DeprecatedName> DEPRECATED_LIST =
 
 
 bool has_wildcard(const std::string &str);
+std::vector<std::string> split_string(const std::string &str, char delimiter);
+bool wildcard_match(const std::string &str, std::vector<std::string> &tokens, bool start_wildcard, bool end_wildcard);
 std::vector<int> get_online_cpus();
 std::vector<int> get_possible_cpus();
 std::vector<std::string> get_kernel_cflags(
@@ -39,6 +41,7 @@ std::vector<std::string> get_kernel_cflags(
 std::string is_deprecated(std::string &str);
 std::string exec_system(const char* cmd);
 std::string resolve_binary_path(const std::string& cmd);
+void cat_file(const char *filename);
 
 // trim from end of string (right)
 inline std::string& rtrim(std::string& s)

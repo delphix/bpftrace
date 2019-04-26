@@ -153,25 +153,31 @@ std::set<std::string> BPFtrace::find_wildcard_matches(const std::string &prefix,
 {
   if (!has_wildcard(func))
     return std::set<std::string>({func});
-  // Turn glob into a regex
-  auto regex_str = "(" + std::regex_replace(func, std::regex("\\*"), "[^\\s]*") + ")";
-  if (prefix != "")
-    regex_str = prefix + ":" + regex_str;
-  regex_str = "^" + regex_str;
-  std::regex func_regex(regex_str);
-  std::smatch match;
+  bool start_wildcard = func[0] == '*';
+  bool end_wildcard = func[func.length() - 1] == '*';
+
+  std::vector<std::string> tokens = split_string(func, '*');
+  tokens.erase(std::remove(tokens.begin(), tokens.end(), ""), tokens.end());
 
   std::string line;
   std::set<std::string> matches;
+  std::string full_prefix = prefix.empty() ? "" : (prefix + ":");
   while (std::getline(symbol_name_stream, line))
   {
-    if (std::regex_search(line, match, func_regex))
-    {
-      assert(match.size() == 2);
-      // skip the ".part.N" kprobe variants, as they can't be traced:
-      if (std::strstr(match.str(1).c_str(), ".part.") == NULL)
-        matches.insert(match[1]);
+    if (!full_prefix.empty()) {
+      if (line.find(full_prefix, 0) != 0)
+        continue;
+      line = line.substr(full_prefix.length());
     }
+
+    if (!wildcard_match(line, tokens, start_wildcard, end_wildcard))
+      continue;
+
+    // skip the ".part.N" kprobe variants, as they can't be traced:
+    if (line.find(".part.") != std::string::npos)
+      continue;
+
+    matches.insert(line);
   }
   return matches;
 }
@@ -260,6 +266,13 @@ void perf_event_printer(void *cb_cookie, void *data, int size __attribute__((unu
       return;
     }
     printf("%s", timestr);
+    return;
+  }
+  else if (printf_id == asyncactionint(AsyncAction::cat))
+  {
+    uint64_t cat_id = (uint64_t)*(static_cast<uint64_t*>(data) + sizeof(uint64_t) / sizeof(uint64_t));
+    auto filename = bpftrace->cat_args_[cat_id].c_str();
+    cat_file(filename);
     return;
   }
   else if (printf_id == asyncactionint(AsyncAction::join))
@@ -532,6 +545,8 @@ std::unique_ptr<AttachedProbe> BPFtrace::attach_probe(Probe &probe, const BpfOrc
 
 int BPFtrace::run(std::unique_ptr<BpfOrc> bpforc)
 {
+  int wait_for_tracing_pipe;
+
   auto r_special_probes = special_probes_.rbegin();
   for (; r_special_probes != special_probes_.rend(); ++r_special_probes)
   {
@@ -550,7 +565,7 @@ int BPFtrace::run(std::unique_ptr<BpfOrc> bpforc)
   {
     auto args = split_string(cmd_, ' ');
     args[0] = resolve_binary_path(args[0]);  // does path lookup on executable
-    int pid = spawn_child(args);
+    int pid = spawn_child(args, &wait_for_tracing_pipe);
     if (pid < 0)
     {
       std::cerr << "Failed to spawn child=" << cmd_ << std::endl;
@@ -573,6 +588,21 @@ int BPFtrace::run(std::unique_ptr<BpfOrc> bpforc)
     if (attached_probe == nullptr)
       return -1;
     attached_probes_.push_back(std::move(attached_probe));
+  }
+
+  // Kick the child to execute the command.
+  if (cmd_.size())
+  {
+    char bf;
+
+    int ret = write(wait_for_tracing_pipe, &bf, 1);
+    if (ret < 0)
+    {
+      perror("unable to write to 'go' pipe");
+      return ret;
+    }
+
+    close(wait_for_tracing_pipe);
   }
 
   if (bt_verbose)
@@ -1234,10 +1264,11 @@ int BPFtrace::print_lhist(const std::vector<uint64_t> &values, int min, int max,
   return 0;
 }
 
-int BPFtrace::spawn_child(const std::vector<std::string>& args)
+int BPFtrace::spawn_child(const std::vector<std::string>& args, int *notify_trace_start_pipe_fd)
 {
   static const int maxargs = 256;
   char* argv[maxargs];
+  int wait_for_tracing_pipe[2];
 
   // Convert vector of strings into raw array of C-strings for execve(2)
   int idx = 0;
@@ -1255,6 +1286,12 @@ int BPFtrace::spawn_child(const std::vector<std::string>& args)
   }
   argv[idx] = nullptr;  // must be null terminated
 
+  if (pipe(wait_for_tracing_pipe) < 0)
+  {
+    perror("failed to create 'go' pipe");
+    return -1;
+  }
+
   // Fork and exec
   int ret = fork();
   if (ret == 0)
@@ -1265,6 +1302,21 @@ int BPFtrace::spawn_child(const std::vector<std::string>& args)
     if (prctl(PR_SET_PDEATHSIG, SIGTERM))
       perror("prctl(PR_SET_PDEATHSIG)");
 
+    // Closing the parent's end and wait until the
+    // parent tells us to go. Set the child's end
+    // to be closed on exec.
+    close(wait_for_tracing_pipe[1]);
+    fcntl(wait_for_tracing_pipe[0], F_SETFD, FD_CLOEXEC);
+
+    char bf;
+
+    ret = read(wait_for_tracing_pipe[0], &bf, 1);
+    if (ret != 1)
+    {
+      perror("failed to read 'go' pipe");
+      return -1;
+    }
+
     if (execve(argv[0], argv, environ))
     {
       perror("execve");
@@ -1273,6 +1325,7 @@ int BPFtrace::spawn_child(const std::vector<std::string>& args)
   }
   else if (ret > 0)
   {
+    *notify_trace_start_pipe_fd = wait_for_tracing_pipe[1];
     return ret;
   }
   else
@@ -1490,17 +1543,6 @@ std::string BPFtrace::resolve_uid(uintptr_t addr)
   file.close();
 
   return username;
-}
-
-std::vector<std::string> BPFtrace::split_string(std::string &str, char split_by)
-{
-  std::vector<std::string> elems;
-  std::stringstream ss(str);
-  std::string value;
-  while(std::getline(ss, value, split_by)) {
-      elems.push_back(value);
-  }
-  return elems;
 }
 
 std::string BPFtrace::resolve_ksym(uintptr_t addr, bool show_offset)
