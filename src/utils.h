@@ -5,15 +5,26 @@
 #include <vector>
 #include <iostream>
 #include <sys/utsname.h>
+#include <sstream>
+#include <signal.h>
 
 namespace bpftrace {
 
-typedef std::tuple<std::string, std::string> usdt_probe_pair;
+typedef enum _USDT_TUPLE_ORDER_ { USDT_PATH_INDEX, USDT_PROVIDER_INDEX, USDT_FNAME_INDEX } usdt_probe_entry_enum;
+typedef std::tuple<std::string, std::string, std::string> usdt_probe_entry;
+typedef std::vector<usdt_probe_entry> usdt_probe_list;
 
 class USDTHelper
 {
 public:
-  static usdt_probe_pair find(void *ctx, int pid, std::string name);
+  static usdt_probe_entry find(int pid, std::string target, std::string provider, std::string name);
+  static usdt_probe_list probes_for_provider(std::string provider);
+  static usdt_probe_list probes_for_pid(int pid);
+  static usdt_probe_list probes_for_path(std::string path);
+  static std::istringstream probe_stream(int pid, std::string target);
+private:
+  static void read_probes_for_pid(int pid);
+  static void read_probes_for_path(std::string path);
 };
 
 struct DeprecatedName

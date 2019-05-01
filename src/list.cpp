@@ -1,4 +1,3 @@
-#include <signal.h>
 #include <sys/types.h>
 #include <dirent.h>
 #include <fstream>
@@ -9,10 +8,9 @@
 #include <vector>
 #include <string>
 
-#include "bcc_usdt.h"
-
 #include "list.h"
 #include "bpftrace.h"
+#include "utils.h"
 
 namespace bpftrace {
 
@@ -43,14 +41,6 @@ void list_dir(const std::string path, std::vector<std::string> &files)
     files.push_back(std::string(dep->d_name));
 
   closedir(dp);
-}
-
-typedef std::tuple<std::string, std::string, std::string> usdt_entry;
-static std::vector<usdt_entry> usdt_probes;
-
-void usdt_each(struct bcc_usdt *usdt)
-{
-  usdt_probes.emplace_back(usdt->provider, usdt->name, usdt->bin_path);
 }
 
 void list_probes_from_list(const std::vector<ProbeListItem> &probes_list,
@@ -145,26 +135,28 @@ void list_probes(const std::string &search_input, int pid)
   list_probes_from_list(HW_PROBE_LIST, "hardware", search, re);
 
   // usdt
-  if (pid > 0) {
-    void *ctx = bcc_usdt_new_frompid(pid, nullptr);
-    if (ctx == nullptr) {
-      std::cerr << "failed to initialize usdt context for pid: " << pid << std::endl;
-      if (kill(pid, 0) == -1 && errno == ESRCH) {
-        std::cerr << "hint: process not running" << std::endl;
-      }
-      return;
-    }
-    bcc_usdt_foreach(ctx, usdt_each);
-    for (const auto &u : usdt_probes) {
-      std::string probe = "usdt:" + std::get<2>(u) + ":" + std::get<1>(u);
-      if (!search.empty())
-      {
-        if (search_probe(probe, re))
-          continue;
-      }
+  usdt_probe_list usdt_probes;
+  bool usdt_path_list = false;
+  if (pid > 0)
+  {
+    // PID takes precedence over path, so path from search expression will be ignored if pid specified
+    usdt_probes = USDTHelper::probes_for_pid(pid);
+  } else {
+    // If the *full* path is provided as part of the search expression parse it out and use it
+    std::string usdt_path = search.substr(search.find(":")+1, search.size());
+    usdt_path_list = usdt_path.find(":") == std::string::npos;
+    usdt_path = usdt_path.substr(0, usdt_path.find(":"));
+    usdt_probes = USDTHelper::probes_for_path(usdt_path);
+  }
+
+  for (auto const& usdt_probe : usdt_probes)
+  {
+    std::string path     = std::get<USDT_PATH_INDEX>(usdt_probe);
+    std::string provider = std::get<USDT_PROVIDER_INDEX>(usdt_probe);
+    std::string fname    = std::get<USDT_FNAME_INDEX>(usdt_probe);
+    std::string probe    = "usdt:" + path + ":" + provider + ":" + fname;
+    if (usdt_path_list || search.empty() || !search_probe(probe, re))
       std::cout << probe << std::endl;
-    }
-    bcc_usdt_close(ctx);
   }
 
   // tracepoints
