@@ -40,6 +40,7 @@ This is a work in progress. If something is missing, check the bpftrace source t
     - [10. `interval`: Timed Output](#10-interval-timed-output)
     - [11. `software`: Pre-defined Software Events](#11-software-pre-defined-software-events)
     - [12. `hardware`: Pre-defined Hardware Events](#12-hardware-pre-defined-hardware-events)
+    - [13. `BEGIN`/`END`: Built-in events](#13-beginend-built-in-events)
 - [Variables](#variables)
     - [1. Builtins](#1-builtins)
     - [2. `@`, `$`: Basic Variables](#2---basic-variables)
@@ -1046,6 +1047,17 @@ bpftrace -e 'hardware:cache-misses:1000000 { @[pid] = count(); }'
 
 That would fire once for every 1000000 cache misses. This usually indicates the last level cache (LLC).
 
+## 13. `BEGIN`/`END`: Built-in events
+
+Syntax:
+
+```
+BEGIN
+END
+```
+
+These are special built-in events provided by the bpftrace runtime. `BEGIN` is triggered before all other probes are attached. `END` is triggered after all other probes are detached.
+
 # Variables
 
 ## 1. Builtins
@@ -1160,7 +1172,7 @@ This is provided by the count() function: see the [Count](#2-count-count) sectio
 
 ## 5. `hist()`, `lhist()`: Histograms
 
-These are provided by the hist() and lhist() functions. See the [Log2 Histogram](#8-log2-histogram) and [Linear Histogram](#9-linear-histogram) sections.
+These are provided by the hist() and lhist() functions. See the [Log2 Histogram](#8-hist-log2-histogram) and [Linear Histogram](#9-lhist-linear-histogram) sections.
 
 ## 6. `nsecs`: Timestamps and Time Deltas
 
