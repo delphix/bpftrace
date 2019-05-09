@@ -57,7 +57,7 @@ This is a work in progress. If something is missing, check the bpftrace source t
     - [3. `time()`: Time](#3-time-time)
     - [4. `join()`: Join](#4-join-join)
     - [5. `str()`: Strings](#5-str-strings)
-    - [6. `ksym()`: Symbol Resolution, Kernel-Level](#6-str-symbol-resolution-kernel-level)
+    - [6. `ksym()`: Symbol Resolution, Kernel-Level](#6-ksym-symbol-resolution-kernel-level)
     - [7. `usym()`: Symbol Resolution, User-Level](#7-usym-symbol-resolution-user-level)
     - [8. `kaddr()`: Address Resolution, Kernel-Level](#8-kaddr-address-resolution-kernel-level)
     - [9. `uaddr()`: Address Resolution, User-Level](#9-uaddr-address-resolution-user-level)
@@ -588,7 +588,7 @@ Attaching 1 probe...
 @[kprobe:vfs_read]: 13369
 ```
 
-## 10. Array Access
+## 10. `[]`: Array Access
 
 You may access one-dimensional constant arrays with the array acccess operator `[]`.
 
