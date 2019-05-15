@@ -34,6 +34,7 @@ void usage()
   std::cerr << "    -l [search]    list probes" << std::endl;
   std::cerr << "    -p PID         enable USDT probes on PID" << std::endl;
   std::cerr << "    -c 'CMD'       run CMD and enable USDT probes on resulting process" << std::endl;
+  std::cerr << "    --unsafe       allow unsafe builtin functions" << std::endl;
   std::cerr << "    -v             verbose messages" << std::endl;
   std::cerr << "    -V, --version  bpftrace version" << std::endl << std::endl;
   std::cerr << "ENVIRONMENT:" << std::endl;
@@ -57,9 +58,27 @@ static void enforce_infinite_rlimit() {
   rl.rlim_cur = rl.rlim_max;
   err = setrlimit(RLIMIT_MEMLOCK, &rl);
   if (err)
-    std::cerr << std::strerror(err)<<": couldn't set RLIMIT for bpftrace. " <<
-        "If your program is not loading, you can try " <<
+    std::cerr << std::strerror(err)<<": couldn't set RLIMIT_MEMLOCK for " <<
+        "bpftrace. If your program is not loading, you can try " <<
         "\"ulimit -l 8192\" to fix the problem" << std::endl;
+}
+
+static void cap_memory_limits() {
+  struct rlimit rl = {};
+  int err;
+  uint64_t memory_limit_bytes = 1 * 1024 * 1024 * 1024;
+
+  // this is a safety measure for issue #528 "LLVM ERROR: out of memory",
+  // and caps bpftrace memory to 1 Gbyte. This may be removed once the LLVM
+  // issue has been fixed, and this is no longer deemed necessary.
+  rl.rlim_max = memory_limit_bytes;
+  rl.rlim_cur = rl.rlim_max;
+  err = setrlimit(RLIMIT_AS, &rl);
+  err += setrlimit(RLIMIT_RSS, &rl);
+  if (err)
+    std::cerr << std::strerror(err)<<": couldn't set RLIMIT_AS and " <<
+        "RLIMIT_RSS for bpftrace (these are a temporary precaution to stop " <<
+        "accidental large program loads, and are not required" << std::endl;
 }
 
 bool is_root()
@@ -89,6 +108,7 @@ int main(int argc, char *argv[])
   char *pid_str = nullptr;
   char *cmd_str = nullptr;
   bool listing = false;
+  bool safe_mode = true;
   std::string script, search, file_name;
   int c;
 
@@ -96,6 +116,7 @@ int main(int argc, char *argv[])
   option long_options[] = {
     option{"help", no_argument, nullptr, 'h'},
     option{"version", no_argument, nullptr, 'V'},
+    option{"unsafe", no_argument, nullptr, 'u'},
     option{nullptr, 0, nullptr, 0},  // Must be last
   };
   while ((c = getopt_long(
@@ -137,6 +158,9 @@ int main(int argc, char *argv[])
       case 'c':
         cmd_str = optarg;
         break;
+      case 'u':
+        safe_mode = false;
+        break;
       case 'h':
         usage();
         return 0;
@@ -170,6 +194,8 @@ int main(int argc, char *argv[])
 
   BPFtrace bpftrace;
   Driver driver(bpftrace);
+
+  bpftrace.safe_mode = safe_mode;
 
   // PID is currently only used for USDT probes that need enabling. Future work:
   // - make PID a filter for all probe types: pass to perf_event_open(), etc.
@@ -229,6 +255,8 @@ int main(int argc, char *argv[])
   // FIXME (mmarchini): maybe we don't want to always enforce an infinite
   // rlimit?
   enforce_infinite_rlimit();
+
+  cap_memory_limits();
 
   // positional parameters
   while (optind < argc) {
