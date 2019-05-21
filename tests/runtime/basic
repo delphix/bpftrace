@@ -15,7 +15,7 @@ TIMEOUT 1
 
 NAME errors on non existent file
 RUN bpftrace non_existent_file.bt
-EXPECT Error: Could not open file 'non_existent_file.bt'
+EXPECT Error opening file 'non_existent_file.bt': No such file or directory
 TIMEOUT 1
 
 NAME it lists kprobes
@@ -71,4 +71,14 @@ TIMEOUT 1
 NAME pid fails validation with non-numeric argument
 RUN bpftrace -p not_a_pid
 EXPECT ERROR: pid 'not_a_pid' is not a valid number.
+TIMEOUT 1
+
+NAME libraries under /usr/include are in the search path
+RUN bpftrace -e "$(echo "#include <sys/types.h>"; echo "BEGIN { exit(); }")" 2>&1
+EXPECT ^((?!file not found).)*$
+TIMEOUT 1
+
+NAME non existent library include fails
+RUN bpftrace -e "$(echo "#include <lol/no.h>"; echo "BEGIN { exit(); }")" 2>&1
+EXPECT file not found
 TIMEOUT 1
