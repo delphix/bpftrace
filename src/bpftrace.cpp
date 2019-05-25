@@ -352,7 +352,7 @@ void perf_event_printer(void *cb_cookie, void *data, int size __attribute__((unu
   {
     uint64_t cat_id = (uint64_t)*(static_cast<uint64_t*>(data) + sizeof(uint64_t) / sizeof(uint64_t));
     auto filename = bpftrace->cat_args_[cat_id].c_str();
-    cat_file(filename);
+    cat_file(filename, bpftrace->cat_bytes_max_);
     return;
   }
   else if (printf_id == asyncactionint(AsyncAction::join))
@@ -786,7 +786,9 @@ void BPFtrace::poll_perf_events(int epollfd, bool drain)
     // Return if either
     //   * epoll_wait has encountered an error (eg signal delivery)
     //   * There's no events left and we've been instructed to drain
-    if (ready < 0 || (ready == 0 && (drain || finalize_)))
+    //   * finalize_ flag has been set through exit() call and this isn't
+    //     a drain call
+    if (ready < 0 || (ready == 0 && drain) || (finalize_ && !drain))
     {
       return;
     }
@@ -890,7 +892,8 @@ int BPFtrace::clear_map(IMap &map)
   std::vector<uint8_t> old_key;
   try
   {
-    if (map.type_.type == Type::hist)
+    if (map.type_.type == Type::hist || map.type_.type == Type::lhist ||
+        map.type_.type == Type::stats || map.type_.type == Type::avg)
       // hist maps have 8 extra bytes for the bucket number
       old_key = find_empty_key(map, map.key_.size() + 8);
     else
