@@ -11,6 +11,7 @@
 
 #include <llvm/Support/raw_os_ostream.h>
 #include <llvm/Support/TargetRegistry.h>
+#include <llvm/IR/Constants.h>
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/Transforms/IPO.h>
 #include <llvm/Transforms/IPO/PassManagerBuilder.h>
@@ -885,8 +886,11 @@ void CodegenLLVM::visit(Unop &unop)
   if (type.type == Type::integer)
   {
     switch (unop.op) {
-      case bpftrace::Parser::token::LNOT: expr_ = b_.CreateNot(expr_); break;
-      case bpftrace::Parser::token::BNOT: expr_ = b_.CreateNeg(expr_); break;
+      case bpftrace::Parser::token::LNOT: {
+	  Value* zero_value = Constant::getNullValue(expr_->getType());
+	  expr_ = b_.CreateICmpEQ(expr_, zero_value);
+      } break;
+      case bpftrace::Parser::token::BNOT: expr_ = b_.CreateNot(expr_); break;
       case bpftrace::Parser::token::MINUS: expr_ = b_.CreateNeg(expr_); break;
       case bpftrace::Parser::token::MUL:
       {
@@ -1301,7 +1305,12 @@ void CodegenLLVM::visit(Probe &probe)
     for (auto attach_point : *probe.attach_points) {
       current_attach_point_ = attach_point;
 
-      auto matches = bpftrace_.find_wildcard_matches(*attach_point);
+      std::set<std::string> matches;
+      if (attach_point->provider == "BEGIN" || attach_point->provider == "END") {
+        matches.insert(attach_point->provider);
+      } else {
+        matches = bpftrace_.find_wildcard_matches(*attach_point);
+      }
 
       tracepoint_struct_ = "";
       for (auto &match_ : matches) {
@@ -1329,6 +1338,8 @@ void CodegenLLVM::visit(Probe &probe)
 
           // Set the probe identifier so that we can read arguments later
           attach_point->usdt = USDTHelper::find(bpftrace_.pid_, attach_point->target, ns, func_id);
+        } else if (attach_point->provider == "BEGIN" || attach_point->provider == "END") {
+          probefull_ = attach_point->provider;
         } else {
           probefull_ = attach_point->name(full_func_id);
         }
