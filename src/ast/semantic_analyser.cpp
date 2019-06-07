@@ -23,6 +23,10 @@ void SemanticAnalyser::visit(Integer &integer)
 void SemanticAnalyser::visit(PositionalParameter &param)
 {
   param.type = SizedType(Type::integer, 8);
+  if (static_cast<size_t>(param.n) > bpftrace_.num_params()) {
+    err_ << "missing positional parameter $" << param.n << std::endl;
+    return;
+  }
   std::string pstr = bpftrace_.get_param(param.n);
   if (is_final_pass()) {
     if (!bpftrace_.is_numeric(pstr) && !param.is_in_str) {
@@ -157,9 +161,11 @@ void SemanticAnalyser::visit(Builtin &builtin)
     for (auto &attach_point : *probe_->attach_points)
     {
       ProbeType type = probetype(attach_point->provider);
-      if (type != ProbeType::tracepoint)
-        err_ << "The args builtin can only be used with tracepoint probes"
+      if (type != ProbeType::tracepoint) {
+        err_ << "The args builtin can only be used with tracepoint probes "
              << "(" << attach_point->provider << " used here)" << std::endl;
+        continue;
+      }
 
       /*
        * tracepoint wildcard expansion, part 2 of 3. This:
@@ -755,14 +761,16 @@ void SemanticAnalyser::visit(Unroll &unroll)
   {
     err_ << "unroll maximum value is 20.\n" << std::endl;
   }
-  else if (unroll.var == 0)
+  else if (unroll.var < 1)
   {
     err_ << "unroll minimum value is 1.\n" << std::endl;
   }
 
-  for (Statement *stmt : *unroll.stmts)
-  {
-    stmt->accept(*this);
+  for (int i=0; i < unroll.var; i++) {
+    for (Statement *stmt : *unroll.stmts)
+    {
+      stmt->accept(*this);
+    }
   }
 }
 
