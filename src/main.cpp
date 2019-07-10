@@ -48,6 +48,7 @@ void usage()
   std::cerr << "    BPFTRACE_CAT_BYTES_MAX    [default: 10k] maximum bytes read by cat builtin" << std::endl;
   std::cerr << "    BPFTRACE_MAX_PROBES       [default: 512] max number of probes" << std::endl;
   std::cerr << "    BPFTRACE_LOG_SIZE         [default: 409600] log size in bytes" << std::endl;
+  std::cerr << "    BPFTRACE_NO_USER_SYMBOLS  [default: 0] disable user symbol resolution" << std::endl;
   std::cerr << std::endl;
   std::cerr << "EXAMPLES:" << std::endl;
   std::cerr << "bpftrace -l '*sleep*'" << std::endl;
@@ -226,7 +227,7 @@ int main(int argc, char *argv[])
   BPFtrace bpftrace(*os);
   Driver driver(bpftrace);
 
-  bpftrace.safe_mode = safe_mode;
+  bpftrace.safe_mode_ = safe_mode;
 
   // PID is currently only used for USDT probes that need enabling. Future work:
   // - make PID a filter for all probe types: pass to perf_event_open(), etc.
@@ -318,9 +319,9 @@ int main(int argc, char *argv[])
   if (const char* env_p = std::getenv("BPFTRACE_NO_CPP_DEMANGLE"))
   {
     if (std::string(env_p) == "1")
-      bpftrace.demangle_cpp_symbols = false;
+      bpftrace.demangle_cpp_symbols_ = false;
     else if (std::string(env_p) == "0")
-      bpftrace.demangle_cpp_symbols = true;
+      bpftrace.demangle_cpp_symbols_ = true;
     else
     {
       std::cerr << "Env var 'BPFTRACE_NO_CPP_DEMANGLE' did not contain a valid value (0 or 1)." << std::endl;
@@ -346,6 +347,20 @@ int main(int argc, char *argv[])
       return 1;
     }
     bpftrace.cat_bytes_max_ = proposed;
+  }
+
+  if (const char* env_p = std::getenv("BPFTRACE_NO_USER_SYMBOLS"))
+  {
+    std::string s(env_p);
+    if (s == "1")
+      bpftrace.resolve_user_symbols_ = false;
+    else if (s == "0")
+      bpftrace.resolve_user_symbols_ = true;
+    else
+    {
+      std::cerr << "Env var 'BPFTRACE_NO_USER_SYMBOLS' did not contain a valid value (0 or 1)." << std::endl;
+      return 1;
+    }
   }
 
   if (cmd_str)

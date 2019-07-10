@@ -22,6 +22,10 @@ void SemanticAnalyser::visit(Integer &integer)
 
 void SemanticAnalyser::visit(PositionalParameter &param)
 {
+  if (param.n <= 0) {
+    err_ << "$" << param.n << " is not a valid parameter" << std::endl;
+  }
+
   param.type = SizedType(Type::integer, 8);
   if (is_final_pass()) {
     std::string pstr = bpftrace_.get_param(param.n, param.is_in_str);
@@ -197,7 +201,7 @@ void SemanticAnalyser::visit(Call &call)
 {
   // Check for unsafe-ness first. It is likely the most pertinent issue
   // (and should be at the top) for any function call.
-  if (bpftrace_.safe_mode && is_unsafe_func(call.func)) {
+  if (bpftrace_.safe_mode_ && is_unsafe_func(call.func)) {
     err_ << call.func << "() is an unsafe function being used in safe mode"
       << std::endl;
   }

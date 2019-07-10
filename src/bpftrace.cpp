@@ -424,7 +424,7 @@ void perf_event_printer(void *cb_cookie, void *data, int size __attribute__((unu
   }
   else if ( printf_id >= asyncactionint(AsyncAction::syscall))
   {
-    if (bpftrace->safe_mode)
+    if (bpftrace->safe_mode_)
     {
       std::cerr << "syscall() not allowed in safe mode" << std::endl;
       abort();
@@ -1831,27 +1831,29 @@ std::string BPFtrace::resolve_usym(uintptr_t addr, int pid, bool show_offset, bo
   struct bcc_symbol usym;
   std::ostringstream symbol;
   struct bcc_symbol_option symopts;
-  void *psyms;
+  void *psyms = nullptr;
 
-  // TODO: deal with these:
   symopts = {.use_debug_file = true,
              .check_debug_file_crc = true,
              .use_symbol_type = BCC_SYM_ALL_TYPES};
 
-  if (pid_sym_.find(pid) == pid_sym_.end())
+  if (resolve_user_symbols_)
   {
-    // not cached, create new ProcSyms cache
-    psyms = bcc_symcache_new(pid, &symopts);
-    pid_sym_[pid] = psyms;
-  }
-  else
-  {
-    psyms = pid_sym_[pid];
+    if (pid_sym_.find(pid) == pid_sym_.end())
+    {
+      // not cached, create new ProcSyms cache
+      psyms = bcc_symcache_new(pid, &symopts);
+      pid_sym_[pid] = psyms;
+    }
+    else
+    {
+      psyms = pid_sym_[pid];
+    }
   }
 
-  if (bcc_symcache_resolve(psyms, addr, &usym) == 0)
+  if (psyms && bcc_symcache_resolve(psyms, addr, &usym) == 0)
   {
-    if (demangle_cpp_symbols)
+    if (demangle_cpp_symbols_)
       symbol << usym.demangle_name;
     else
       symbol << usym.name;
