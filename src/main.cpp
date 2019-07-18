@@ -286,14 +286,24 @@ int main(int argc, char *argv[])
       std::cerr << "USAGE: filename or -e 'program' required." << std::endl;
       return 1;
     }
-    file_name = std::string(argv[optind]);
-    err = driver.parse_file(file_name);
+    std::string filename(argv[optind]);
+    std::ifstream file(filename);
+    if (file.fail()) {
+      std::cerr << "Error opening file '" << filename << "': ";
+      std::cerr << std::strerror(errno) << std::endl;
+      return -1;
+    }
+    std::stringstream buf;
+    buf << file.rdbuf();
+    driver.source(filename, buf.str());
+    err = driver.parse();
     optind++;
   }
   else
   {
     // Script is provided as a command line argument
-    err = driver.parse_str(script);
+    driver.source("stdin", script);
+    err = driver.parse();
   }
 
   if (!is_root())
@@ -431,14 +441,7 @@ int main(int argc, char *argv[])
   if (!clang.parse(driver.root_, bpftrace, extra_flags))
     return 1;
 
-  if (script.empty())
-  {
-    err = driver.parse_file(file_name);
-  }
-  else
-  {
-    err = driver.parse_str(script);
-  }
+  driver.parse();
 
   if (err)
     return err;
@@ -458,9 +461,9 @@ int main(int argc, char *argv[])
   if (bt_debug != DebugLevel::kNone)
     return 0;
 
-  // Empty signal handler for cleanly terminating the program
+  // Signal handler that lets us know SIGINT was called.
   struct sigaction act = {};
-  act.sa_handler = [](int) { };
+  act.sa_handler = [](int) { BPFtrace::sigint_recv = true; };
   sigaction(SIGINT, &act, NULL);
 
   uint64_t num_probes = bpftrace.num_probes();
@@ -484,6 +487,11 @@ int main(int argc, char *argv[])
   err = bpftrace.run(move(bpforc));
   if (err)
     return err;
+
+  // We are now post-processing. If we receive another SIGINT,
+  // handle it normally (exit)
+  act.sa_handler = SIG_DFL;
+  sigaction(SIGINT, &act, NULL);
 
   std::cout << "\n\n";
 

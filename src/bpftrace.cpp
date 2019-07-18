@@ -37,6 +37,7 @@ namespace bpftrace {
 
 DebugLevel bt_debug = DebugLevel::kNone;
 bool bt_verbose = false;
+volatile sig_atomic_t BPFtrace::sigint_recv = false;
 
 int format(char * s, size_t n, const char * fmt, std::vector<std::unique_ptr<IPrintable>> &args) {
   int ret = -1;
@@ -86,10 +87,10 @@ BPFtrace::~BPFtrace()
     waitpid(pid, &status, 0);
   }
 
-  for (const auto& pair : pid_sym_)
+  for (const auto& pair : exe_sym_)
   {
-    if (pair.second)
-      bcc_free_symcache(pair.second, pair.first);
+    if (pair.second.second)
+      bcc_free_symcache(pair.second.second, pair.second.first);
   }
 
   if (ksyms_)
@@ -789,6 +790,10 @@ void BPFtrace::poll_perf_events(int epollfd, bool drain)
   while (true)
   {
     int ready = epoll_wait(epollfd, events.data(), online_cpus_, 100);
+    if (ready < 0 && errno == EINTR && !BPFtrace::sigint_recv) {
+      // We received an interrupt not caused by SIGINT, skip and run again
+      continue;
+    }
 
     // Return if either
     //   * epoll_wait has encountered an error (eg signal delivery)
@@ -1036,7 +1041,13 @@ int BPFtrace::print_map(IMap &map, uint32_t top, uint32_t div)
       value_size *= ncpus_;
     auto value = std::vector<uint8_t>(value_size);
     int err = bpf_lookup_elem(map.mapfd_, key.data(), value.data());
-    if (err)
+    if (err == -1)
+    {
+      // key was removed by the eBPF program during bpf_get_next_key() and bpf_lookup_elem(),
+      // let's skip this key
+      continue;
+    }
+    else if (err)
     {
       std::cerr << "Error looking up elem: " << err << std::endl;
       return -1;
@@ -1112,7 +1123,13 @@ int BPFtrace::print_map_hist(IMap &map, uint32_t top, uint32_t div)
     int value_size = map.type_.size * ncpus_;
     auto value = std::vector<uint8_t>(value_size);
     int err = bpf_lookup_elem(map.mapfd_, key.data(), value.data());
-    if (err)
+    if (err == -1)
+    {
+      // key was removed by the eBPF program during bpf_get_next_key() and bpf_lookup_elem(),
+      // let's skip this key
+      continue;
+    }
+    else if (err)
     {
       std::cerr << "Error looking up elem: " << err << std::endl;
       return -1;
@@ -1184,7 +1201,13 @@ int BPFtrace::print_map_stats(IMap &map)
     int value_size = map.type_.size * ncpus_;
     auto value = std::vector<uint8_t>(value_size);
     int err = bpf_lookup_elem(map.mapfd_, key.data(), value.data());
-    if (err)
+    if (err == -1)
+    {
+      // key was removed by the eBPF program during bpf_get_next_key() and bpf_lookup_elem(),
+      // let's skip this key
+      continue;
+    }
+    else if (err)
     {
       std::cerr << "Error looking up elem: " << err << std::endl;
       return -1;
@@ -1625,15 +1648,16 @@ std::string BPFtrace::resolve_usym(uintptr_t addr, int pid, bool show_offset, bo
 
   if (resolve_user_symbols_)
   {
-    if (pid_sym_.find(pid) == pid_sym_.end())
+    std::string pid_exe = get_pid_exe(pid);
+    if (exe_sym_.find(pid_exe) == exe_sym_.end())
     {
       // not cached, create new ProcSyms cache
       psyms = bcc_symcache_new(pid, &symopts);
-      pid_sym_[pid] = psyms;
+      exe_sym_[pid_exe] = std::make_pair(pid, psyms);
     }
     else
     {
-      psyms = pid_sym_[pid];
+      psyms = exe_sym_[pid_exe].second;
     }
   }
 
@@ -1740,6 +1764,87 @@ bool BPFtrace::is_pid_alive(int pid)
   close(fd);
 
   return true;
+}
+
+const std::string BPFtrace::get_source_line(unsigned int n)
+{
+  // Get the Nth source line. Return an empty string if it doesn't exist
+  std::string buf;
+  std::stringstream ss(src_);
+  for (unsigned int idx = 0; idx <= n; idx++) {
+    std::getline(ss, buf);
+    if (ss.eof() && idx == n)
+      return buf;
+    if (!ss)
+      return "";
+  }
+  return buf;
+}
+
+void BPFtrace::error(std::ostream &out, const location &l, const std::string &m)
+{
+  if (filename_ != "") {
+    out << filename_ << ":";
+  }
+
+  // print only the message if location info wasn't set
+  if (l.begin.line == 0) {
+    out << "ERROR: " << m << std::endl;
+    return;
+  }
+
+  if (l.begin.line > l.end.line) {
+    out << "BUG: begin > end: " << l.begin << ":" << l.end << std::endl;
+    out << "ERROR: " << m << std::endl;
+    return;
+  }
+
+  /* For a multi line error only the line range is printed:
+     <filename>:<start_line>-<end_line>: ERROR: <message>
+  */
+  if (l.begin.line < l.end.line) {
+    out << l.begin.line << "-" << l.end.line << ": ERROR: " << m << std::endl;
+    return;
+  }
+
+  /*
+    For a single line error the format is:
+
+    <filename>:<line>:<start_col>-<end_col>: ERROR: <message>
+    <source line>
+    <marker>
+
+    E.g.
+
+    file.bt:1:10-20: error: <message>
+    i:s:1   /1 < "str"/
+            ~~~~~~~~~~
+  */
+  out << l.begin.line << ":" << l.begin.column << "-" << l.end.column;
+  out << ": ERROR: " << m << std::endl;
+  std::string srcline = get_source_line(l.begin.line - 1);
+
+  if (srcline == "")
+    return;
+
+  // To get consistent printing all tabs will be replaced with 4 spaces
+  for (auto c : srcline) {
+    if (c == '\t')
+      out << "    ";
+    else
+      out << c;
+  }
+  out << std::endl;
+
+  for (unsigned int x = 0; x < srcline.size() && x < (l.end.column - 1); x++) {
+    char marker = (x < (l.begin.column - 1)) ? ' ' : '~';
+    if (srcline[x] == '\t') {
+      out << std::string(4, marker);
+    } else {
+      out << marker;
+    }
+  }
+  out << std::endl;
 }
 
 } // namespace bpftrace
