@@ -22,22 +22,20 @@ Build-Depends: bison,
                cmake,
                flex,
                g++,
+               git,
                libelf-dev,
                zlib1g-dev,
                libfl-dev,
-               clang-5.0,
-               libclang-5.0-dev,
-               libclang-common-5.0-dev,
-               libclang1-5.0,
-               libllvm5.0,
-               llvm-5.0,
-               llvm-5.0-dev,
-               llvm-5.0-runtime
+               systemtap-sdt-dev,
+               llvm-7-dev,
+               llvm-7-runtime,
+               libclang-7-dev,
+               clang-7
 Standards-Version: 4.1.2
 
 Package: bpftrace
 Architecture: any
-Depends: ${shlibs:Depends}, libclang1-5.0, libllvm5.0
+Depends: ${shlibs:Depends}, ${misc:Depends}
 Description: Linux live kernel tracing tool.
   BPFtrace is a high-level tracing language for Linux enhanced Berkeley Packet
   Filter (eBPF) available in recent kernels.
