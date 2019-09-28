@@ -22,17 +22,27 @@
 
 using namespace bpftrace;
 
+namespace {
+enum class OutputBufferConfig {
+  UNSET = 0,
+  LINE,
+  FULL,
+  NONE,
+};
+} // namespace
+
 void usage()
 {
   std::cerr << "USAGE:" << std::endl;
   std::cerr << "    bpftrace [options] filename" << std::endl;
   std::cerr << "    bpftrace [options] -e 'program'" << std::endl << std::endl;
   std::cerr << "OPTIONS:" << std::endl;
-  std::cerr << "    -B MODE        output buffering mode ('line', 'full', or 'none')" << std::endl;
+  std::cerr << "    -B MODE        output buffering mode ('full', 'none')" << std::endl;
   std::cerr << "    -f FORMAT      output format ('text', 'json')" << std::endl;
   std::cerr << "    -d             debug info dry run" << std::endl;
   std::cerr << "    -o file        redirect bpftrace output to file" << std::endl;
   std::cerr << "    -dd            verbose debug info dry run" << std::endl;
+  std::cerr << "    -b             force BTF (BPF type format) processing" << std::endl;
   std::cerr << "    -e 'program'   execute this program" << std::endl;
   std::cerr << "    -h, --help     show this help message" << std::endl;
   std::cerr << "    -I DIR         add the directory to the include search path" << std::endl;
@@ -120,14 +130,17 @@ int main(int argc, char *argv[])
   char *cmd_str = nullptr;
   bool listing = false;
   bool safe_mode = true;
+  bool force_btf = false;
   std::string script, search, file_name, output_file, output_format;
+  OutputBufferConfig obc = OutputBufferConfig::UNSET;
   int c;
 
-  const char* const short_options = "dB:f:e:hlp:vc:Vo:I:";
+  const char* const short_options = "dbB:f:e:hlp:vc:Vo:I:";
   option long_options[] = {
     option{"help", no_argument, nullptr, 'h'},
     option{"version", no_argument, nullptr, 'V'},
     option{"unsafe", no_argument, nullptr, 'u'},
+    option{"btf", no_argument, nullptr, 'b'},
     option{"include", required_argument, nullptr, '#'},
     option{nullptr, 0, nullptr, 0},  // Must be last
   };
@@ -153,11 +166,11 @@ int main(int argc, char *argv[])
         break;
       case 'B':
         if (std::strcmp(optarg, "line") == 0) {
-          std::setvbuf(stdout, NULL, _IOLBF, BUFSIZ);
+          obc = OutputBufferConfig::LINE;
         } else if (std::strcmp(optarg, "full") == 0) {
-          std::setvbuf(stdout, NULL, _IOFBF, BUFSIZ);
+          obc = OutputBufferConfig::FULL;
         } else if (std::strcmp(optarg, "none") == 0) {
-          std::setvbuf(stdout, NULL, _IONBF, BUFSIZ);
+          obc = OutputBufferConfig::NONE;
         } else {
           std::cerr << "USAGE: -B must be either 'line', 'full', or 'none'." << std::endl;
           return 1;
@@ -186,6 +199,9 @@ int main(int argc, char *argv[])
         break;
       case 'u':
         safe_mode = false;
+        break;
+      case 'b':
+        force_btf = true;
         break;
       case 'h':
         usage();
@@ -242,10 +258,28 @@ int main(int argc, char *argv[])
     std::cerr << "Valid formats: 'text', 'json'" << std::endl;
     return 1;
   }
+
+  switch (obc) {
+    case OutputBufferConfig::UNSET:
+    case OutputBufferConfig::LINE:
+      std::setvbuf(stdout, NULL, _IOLBF, BUFSIZ);
+      break;
+    case OutputBufferConfig::FULL:
+      std::setvbuf(stdout, NULL, _IOFBF, BUFSIZ);
+      break;
+    case OutputBufferConfig::NONE:
+      std::setvbuf(stdout, NULL, _IONBF, BUFSIZ);
+      break;
+    default:
+      // Should never get here
+      std::abort();
+  }
+
   BPFtrace bpftrace(std::move(output));
   Driver driver(bpftrace);
 
   bpftrace.safe_mode_ = safe_mode;
+  bpftrace.force_btf_ = force_btf;
 
   // PID is currently only used for USDT probes that need enabling. Future work:
   // - make PID a filter for all probe types: pass to perf_event_open(), etc.
@@ -362,7 +396,7 @@ int main(int argc, char *argv[])
 
   if (!get_uint64_env_var("BPFTRACE_MAX_PROBES", bpftrace.max_probes_))
     return 1;
-	
+
   if (!get_uint64_env_var("BPFTRACE_LOG_SIZE", bpftrace.log_size_))
     return 1;
 

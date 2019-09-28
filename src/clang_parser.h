@@ -14,6 +14,9 @@ class ClangParser
 public:
   bool parse(ast::Program *program, BPFtrace &bpftrace, std::vector<std::string> extra_flags = {});
 private:
+  bool visit_children(CXCursor &cursor, BPFtrace &bpftrace);
+  bool parse_btf_definitions(BPFtrace &bpftrace);
+
   class ClangParserHandler
   {
   public:
@@ -29,6 +32,8 @@ private:
                             struct CXUnsavedFile *unsaved_files,
                             unsigned num_unsaved_files,
                             unsigned options);
+
+    bool check_diagnostics(const std::string& input);
 
     CXCursor get_translation_unit_cursor();
 

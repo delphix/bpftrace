@@ -10,6 +10,8 @@ set(STATIC_LINKING OFF CACHE BOOL "Build bpftrace as a statically linked executa
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
 set (CMAKE_CXX_STANDARD 14)
+set (CMAKE_CXX_STANDARD_REQUIRED ON)
+set (CMAKE_CXX_EXTENSIONS OFF)
 
 add_compile_options("-Wno-format-security")
 add_compile_options("-Wall")
@@ -84,6 +86,8 @@ if(${LLVM_VERSION_MAJOR} VERSION_LESS 5)
   message(SEND_ERROR "Unsupported LLVM version found: ${LLVM_INCLUDE_DIRS}")
   message(SEND_ERROR "Specify an LLVM major version using LLVM_REQUESTED_VERSION=<major version>")
 endif()
+
+find_package(LibBpf)
 
 include(CheckIncludeFile)
 check_include_file("sys/sdt.h" HAVE_SYSTEMTAP_SYS_SDT_H)

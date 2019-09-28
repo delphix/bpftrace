@@ -8,6 +8,7 @@
 #include "types.h"
 #include "utils.h"
 #include "headers.h"
+#include "btf.h"
 
 namespace bpftrace {
 
@@ -182,21 +183,22 @@ static SizedType get_sized_type(CXType clang_type)
   switch (clang_type.kind)
   {
     case CXType_Bool:
-    case CXType_Char_S:
     case CXType_Char_U:
-    case CXType_SChar:
     case CXType_UChar:
-    case CXType_Short:
     case CXType_UShort:
-    case CXType_Int:
     case CXType_UInt:
-    case CXType_Long:
     case CXType_ULong:
-    case CXType_LongLong:
     case CXType_ULongLong:
       return SizedType(Type::integer, size);
     case CXType_Record:
       return SizedType(Type::cast, size, typestr);
+    case CXType_Char_S:
+    case CXType_SChar:
+    case CXType_Short:
+    case CXType_Long:
+    case CXType_LongLong:
+    case CXType_Int:
+      return SizedType(Type::integer, size, true);
     case CXType_Pointer:
     {
       auto pointee_type = clang_getPointeeType(clang_type);
@@ -274,13 +276,147 @@ CXErrorCode ClangParser::ClangParserHandler::parse_translation_unit(
       &translation_unit);
 }
 
+bool ClangParser::ClangParserHandler::check_diagnostics(const std::string& input)
+{
+  for (unsigned int i=0; i < clang_getNumDiagnostics(get_translation_unit()); i++) {
+    CXDiagnostic diag = clang_getDiagnostic(get_translation_unit(), i);
+    CXDiagnosticSeverity severity = clang_getDiagnosticSeverity(diag);
+    if (severity == CXDiagnostic_Error || severity == CXDiagnostic_Fatal) {
+      if (bt_debug >= DebugLevel::kDebug)
+        std::cerr << "Input (" << input.size() << "): " << input << std::endl;
+      return false;
+    }
+  }
+  return true;
+}
+
 CXCursor ClangParser::ClangParserHandler::get_translation_unit_cursor() {
   return clang_getTranslationUnitCursor(translation_unit);
+}
+
+bool ClangParser::visit_children(CXCursor &cursor, BPFtrace &bpftrace)
+{
+  int err = clang_visitChildren(
+      cursor,
+      [](CXCursor c, CXCursor parent, CXClientData client_data)
+      {
+        if (clang_getCursorKind(c) == CXCursor_MacroDefinition)
+        {
+          std::string macro_name;
+          std::string macro_value;
+          if (translateMacro(c, macro_name, macro_value))
+          {
+            auto &macros = static_cast<BPFtrace*>(client_data)->macros_;
+            macros[macro_name] = macro_value;
+          }
+          return CXChildVisit_Recurse;
+        }
+
+        if (clang_getCursorKind(parent) == CXCursor_EnumDecl)
+        {
+          auto &enums = static_cast<BPFtrace*>(client_data)->enums_;
+          enums[get_clang_string(clang_getCursorSpelling(c))] = clang_getEnumConstantDeclValue(c);
+          return CXChildVisit_Recurse;
+        }
+
+        if (clang_getCursorKind(parent) != CXCursor_StructDecl &&
+            clang_getCursorKind(parent) != CXCursor_UnionDecl)
+          return CXChildVisit_Recurse;
+
+        if (clang_getCursorKind(c) == CXCursor_FieldDecl)
+        {
+          auto &structs = static_cast<BPFtrace*>(client_data)->structs_;
+
+          auto named_parent = get_named_parent(c);
+          auto ptype = clang_getCanonicalType(clang_getCursorType(named_parent));
+          auto ptypestr = get_clang_string(clang_getTypeSpelling(ptype));
+          auto ptypesize = clang_Type_getSizeOf(ptype);
+
+          auto ident = get_clang_string(clang_getCursorSpelling(c));
+          auto offset = clang_Type_getOffsetOf(ptype, ident.c_str()) / 8;
+          auto type = clang_getCanonicalType(clang_getCursorType(c));
+
+          auto struct_name = get_clang_string(clang_getCursorSpelling(named_parent));
+          if (struct_name == "")
+            struct_name = ptypestr;
+          remove_struct_union_prefix(struct_name);
+
+          // Warn if we already have the struct member defined and is
+          // different type and keep the current definition in place.
+          if (structs.count(struct_name) != 0 &&
+              structs[struct_name].fields.count(ident)  != 0 &&
+              structs[struct_name].fields[ident].offset != offset &&
+              structs[struct_name].fields[ident].type   != get_sized_type(type) &&
+              structs[struct_name].size                 != ptypesize)
+          {
+            std::cerr << "type mismatch for " << struct_name << "::" << ident << std::endl;
+          }
+          else
+          {
+            structs[struct_name].fields[ident].offset = offset;
+            structs[struct_name].fields[ident].type = get_sized_type(type);
+            structs[struct_name].size = ptypesize;
+          }
+        }
+
+        return CXChildVisit_Recurse;
+      },
+      &bpftrace);
+
+  // clang_visitChildren returns a non-zero value if the traversal
+  // was terminated by the visitor returning CXChildVisit_Break.
+  return err == 0;
+}
+
+bool ClangParser::parse_btf_definitions(BPFtrace &bpftrace)
+{
+  if (ast::Expression::getResolve().size() == 0)
+    return true;
+
+  BTF btf = BTF();
+
+  if (!btf.has_data())
+    return true;
+
+  std::string input = btf.c_def(ast::Expression::getResolve());
+
+  CXUnsavedFile unsaved_files =
+  {
+    .Filename = "btf.h",
+    .Contents = input.c_str(),
+    .Length   = input.size(),
+  };
+
+  ClangParserHandler handler;
+  CXErrorCode error = handler.parse_translation_unit(
+    "btf.h", NULL, 0, &unsaved_files, 1,
+    CXTranslationUnit_DetailedPreprocessingRecord);
+  if (error)
+  {
+    if (bt_debug == DebugLevel::kFullDebug) {
+      std::cerr << "Clang error while parsing BTF C definitions: " << error << std::endl;
+      std::cerr << "Input (" << input.size() << "): " << input << std::endl;
+    }
+    return false;
+  }
+
+  if (!handler.check_diagnostics(input))
+    return false;
+
+  CXCursor cursor = handler.get_translation_unit_cursor();
+  return visit_children(cursor, bpftrace);
 }
 
 bool ClangParser::parse(ast::Program *program, BPFtrace &bpftrace, std::vector<std::string> extra_flags)
 {
   auto input = program->c_definitions;
+
+  // Add BTF definitions, but do not bail out
+  // in case of error, just notify
+  if ((input.size() == 0 || bpftrace.force_btf_) &&
+      !parse_btf_definitions(bpftrace))
+    std::cerr << "Failed to parse BTF data." << std::endl;
+
   if (input.size() == 0)
     return true; // We occasionally get crashes in libclang otherwise
 
@@ -354,75 +490,11 @@ bool ClangParser::parse(ast::Program *program, BPFtrace &bpftrace, std::vector<s
     return false;
   }
 
-  for (unsigned int i=0; i < clang_getNumDiagnostics(handler.get_translation_unit()); i++) {
-    CXDiagnostic diag = clang_getDiagnostic(handler.get_translation_unit(), i);
-    CXDiagnosticSeverity severity = clang_getDiagnosticSeverity(diag);
-    if (severity == CXDiagnostic_Error || severity == CXDiagnostic_Fatal) {
-      if (bt_debug >= DebugLevel::kDebug)
-        std::cerr << "Input (" << input.size() << "): " << input << std::endl;
-      return false;
-    }
-  }
+  if (!handler.check_diagnostics(input))
+    return false;
 
   CXCursor cursor = handler.get_translation_unit_cursor();
-
-  int err = clang_visitChildren(
-      cursor,
-      [](CXCursor c, CXCursor parent, CXClientData client_data)
-      {
-        if (clang_getCursorKind(c) == CXCursor_MacroDefinition)
-        {
-          std::string macro_name;
-          std::string macro_value;
-          if (translateMacro(c, macro_name, macro_value))
-          {
-            auto &macros = static_cast<BPFtrace*>(client_data)->macros_;
-            macros[macro_name] = macro_value;
-          }
-          return CXChildVisit_Recurse;
-        }
-
-        if (clang_getCursorKind(parent) == CXCursor_EnumDecl)
-        {
-          auto &enums = static_cast<BPFtrace*>(client_data)->enums_;
-          enums[get_clang_string(clang_getCursorSpelling(c))] = clang_getEnumConstantDeclValue(c);
-          return CXChildVisit_Recurse;
-        }
-
-        if (clang_getCursorKind(parent) != CXCursor_StructDecl &&
-            clang_getCursorKind(parent) != CXCursor_UnionDecl)
-          return CXChildVisit_Recurse;
-
-        if (clang_getCursorKind(c) == CXCursor_FieldDecl)
-        {
-          auto &structs = static_cast<BPFtrace*>(client_data)->structs_;
-
-          auto named_parent = get_named_parent(c);
-          auto ptype = clang_getCanonicalType(clang_getCursorType(named_parent));
-          auto ptypestr = get_clang_string(clang_getTypeSpelling(ptype));
-          auto ptypesize = clang_Type_getSizeOf(ptype);
-
-          auto ident = get_clang_string(clang_getCursorSpelling(c));
-          auto offset = clang_Type_getOffsetOf(ptype, ident.c_str()) / 8;
-          auto type = clang_getCanonicalType(clang_getCursorType(c));
-
-          auto struct_name = get_clang_string(clang_getCursorSpelling(named_parent));
-          if (struct_name == "")
-            struct_name = ptypestr;
-          remove_struct_union_prefix(struct_name);
-
-          structs[struct_name].fields[ident].offset = offset;
-          structs[struct_name].fields[ident].type = get_sized_type(type);
-          structs[struct_name].size = ptypesize;
-        }
-
-        return CXChildVisit_Recurse;
-      },
-      &bpftrace);
-
-  // clang_visitChildren returns a non-zero value if the traversal
-  // was terminated by the visitor returning CXChildVisit_Break.
-  return err == 0;
+  return visit_children(cursor, bpftrace);
 }
 
 } // namespace bpftrace
