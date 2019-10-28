@@ -450,6 +450,13 @@ int main(int argc, char *argv[])
 
     if (ksrc != "")
       extra_flags = get_kernel_cflags(utsname.machine, ksrc, kobj);
+
+    auto zdir = std::string("/usr/src/zfs-") + utsname.release;
+    if (is_dir(zdir)) {
+      extra_flags.push_back("-include");
+      extra_flags.push_back(zdir + "/zfs_config.h");
+      extra_flags.push_back("-I" + zdir + "/include");
+    }
   }
   extra_flags.push_back("-include");
   extra_flags.push_back(ASM_GOTO_WORKAROUND_H);
