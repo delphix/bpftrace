@@ -422,6 +422,7 @@ int main(int argc, char *argv[])
       extra_flags.push_back("-include");
       extra_flags.push_back(zdir + "/zfs_config.h");
       extra_flags.push_back("-I" + zdir + "/include");
+      extra_flags.push_back("-I" + zdir + "/include/spl");
     }
   }
   extra_flags.push_back("-include");
