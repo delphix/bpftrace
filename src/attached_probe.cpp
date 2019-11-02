@@ -17,9 +17,11 @@
 #include "utils.h"
 #include "bcc_syms.h"
 #include "bcc_usdt.h"
+#include "bcc_elf.h"
 #include "libbpf.h"
 #include "utils.h"
 #include "list.h"
+#include "disasm.h"
 #include <linux/perf_event.h>
 #include <linux/version.h>
 
@@ -78,7 +80,7 @@ void check_banned_kretprobes(std::string const& kprobe_name) {
   }
 }
 
-AttachedProbe::AttachedProbe(Probe &probe, std::tuple<uint8_t *, uintptr_t> func)
+AttachedProbe::AttachedProbe(Probe &probe, std::tuple<uint8_t *, uintptr_t> func, bool safe_mode)
   : probe_(probe), func_(func)
 {
   load_prog();
@@ -95,7 +97,7 @@ AttachedProbe::AttachedProbe(Probe &probe, std::tuple<uint8_t *, uintptr_t> func
       break;
     case ProbeType::uprobe:
     case ProbeType::uretprobe:
-      attach_uprobe();
+      attach_uprobe(safe_mode);
       break;
     case ProbeType::tracepoint:
       attach_tracepoint();
@@ -204,7 +206,7 @@ std::string AttachedProbe::eventname() const
     case ProbeType::uprobe:
     case ProbeType::uretprobe:
     case ProbeType::usdt:
-      offset_str << std::hex << offset();
+      offset_str << std::hex << offset_;
       return eventprefix() + sanitise(probe_.path) + "_" + offset_str.str() + index_str;
     case ProbeType::tracepoint:
       return probe_.attach_point;
@@ -223,16 +225,142 @@ std::string AttachedProbe::sanitise(const std::string &str)
   return std::regex_replace(str, std::regex("[^A-Za-z0-9_]"), "_");
 }
 
-uint64_t AttachedProbe::offset() const
+struct symbol {
+  std::string name;
+  uint64_t    start;
+  uint64_t    size;
+  uint64_t    address;
+};
+
+static int sym_name_cb(const char *symname, uint64_t start,
+                       uint64_t size, void *p)
 {
-  bcc_symbol sym;
-  int err = bcc_resolve_symname(probe_.path.c_str(), probe_.attach_point.c_str(),
-      probe_.loc, 0, nullptr, &sym);
+  struct symbol *sym = static_cast<struct symbol*>(p);
 
-  if (err)
-    throw std::runtime_error("Could not resolve symbol: " + probe_.path + ":" + probe_.attach_point);
+  if (sym->name == symname)
+  {
+    sym->start = start;
+    sym->size  = size;
+    return -1;
+  }
 
-  return sym.offset;
+  return 0;
+}
+
+static int sym_address_cb(const char *symname, uint64_t start,
+                          uint64_t size, void *p)
+{
+  struct symbol *sym = static_cast<struct symbol*>(p);
+
+  if (sym->address >= start && sym->address < (start + size))
+  {
+    sym->start = start;
+    sym->size  = size;
+    sym->name  = symname;
+    return -1;
+  }
+
+  return 0;
+}
+
+static uint64_t resolve_offset(std::string& path, std::string& symbol, uint64_t loc)
+{
+  bcc_symbol bcc_sym;
+
+  if (bcc_resolve_symname(path.c_str(), symbol.c_str(), loc, 0, nullptr, &bcc_sym))
+     throw std::runtime_error("Could not resolve symbol: " + path + ":" + symbol);
+
+  return bcc_sym.offset;
+}
+
+void AttachedProbe::resolve_offset_uprobe(bool safe_mode)
+{
+  struct bcc_symbol_option option = { };
+  struct symbol sym = { };
+  std::string &symbol = probe_.attach_point;
+  uint64_t func_offset = probe_.func_offset;
+
+  sym.name = "";
+  option.use_debug_file  = 1;
+  option.use_symbol_type = 0xffffffff;
+
+  if (symbol.empty())
+  {
+    sym.address = probe_.address;
+    bcc_elf_foreach_sym(probe_.path.c_str(), sym_address_cb, &option, &sym);
+
+    symbol = sym.name;
+    func_offset = probe_.address - sym.start;
+
+    if (!sym.start) {
+      std::stringstream ss;
+      ss << "0x" << std::hex << probe_.address;
+      throw std::runtime_error("Could not resolve address: " + probe_.path + ":" + ss.str());
+    }
+  }
+  else
+  {
+    sym.name = symbol;
+    bcc_elf_foreach_sym(probe_.path.c_str(), sym_name_cb, &option, &sym);
+
+    if (!sym.start)
+      throw std::runtime_error("Could not resolve symbol: " + probe_.path + ":" + symbol);
+  }
+
+  if (func_offset >= sym.size) {
+    std::stringstream ss;
+    ss << sym.size;
+    throw std::runtime_error("Offset outside the function bounds ('" + symbol + "' size is " + ss.str() + ")");
+  }
+
+  uint64_t sym_offset = resolve_offset(probe_.path, probe_.attach_point, probe_.loc);
+  offset_ = sym_offset + func_offset;
+
+  // If we are not aligned to the start of the symbol,
+  // check if we are on the instruction boundary.
+  if (func_offset == 0)
+    return;
+
+  Disasm dasm(probe_.path);
+  AlignState aligned = dasm.is_aligned(sym_offset, func_offset);
+
+  std::string tmp = probe_.path + ":" + symbol + "+" + std::to_string(func_offset);
+
+  if (AlignState::Ok == aligned)
+    return;
+
+  // If we did not allow unaligned uprobes in the
+  // compile time, force the safe mode now.
+#ifndef HAVE_UNSAFE_UPROBE
+  safe_mode = true;
+#endif
+
+  switch (aligned)
+  {
+    case AlignState::NotAlign:
+      if (safe_mode)
+        throw std::runtime_error("Could not add uprobe into middle of instruction: " + tmp);
+      else
+        std::cerr << "Unsafe uprobe in the middle of the instruction: " << tmp << std::endl;
+      break;
+
+     case AlignState::Fail:
+       if (safe_mode)
+         throw std::runtime_error("Failed to check if uprobe is in proper place: " + tmp);
+       else
+         std::cerr << "Unchecked uprobe: " << tmp << std::endl;
+       break;
+
+     case AlignState::NotSupp:
+       if (safe_mode)
+         throw std::runtime_error("Can't check if uprobe is in proper place (compiled without uprobe offset support): " + tmp);
+       else
+         std::cerr << "Unchecked uprobe: " << tmp << std::endl;
+       break;
+
+     default:
+       throw std::runtime_error("Internal error: " + tmp);
+  }
 }
 
 /**
@@ -439,13 +567,15 @@ void AttachedProbe::attach_kprobe()
   perf_event_fds_.push_back(perf_event_fd);
 }
 
-void AttachedProbe::attach_uprobe()
+void AttachedProbe::attach_uprobe(bool safe_mode)
 {
+  resolve_offset_uprobe(safe_mode);
+
   int perf_event_fd = bpf_attach_uprobe(progfd_,
                                         attachtype(probe_.type),
                                         eventname().c_str(),
                                         probe_.path.c_str(),
-                                        offset(),
+                                        offset_,
                                         probe_.pid);
 
   if (perf_event_fd < 0)
@@ -497,8 +627,10 @@ void AttachedProbe::attach_usdt(int pid)
     throw std::runtime_error("Error finding location for probe: " + probe_.name);
   probe_.loc = loc.address;
 
+  offset_ = resolve_offset(probe_.path, probe_.attach_point, probe_.loc);
+
   int perf_event_fd = bpf_attach_uprobe(progfd_, attachtype(probe_.type),
-      eventname().c_str(), probe_.path.c_str(), offset(), pid == 0 ? -1 : pid);
+      eventname().c_str(), probe_.path.c_str(), offset_, pid == 0 ? -1 : pid);
 
   if (perf_event_fd < 0)
   {

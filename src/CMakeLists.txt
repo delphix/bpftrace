@@ -1,3 +1,7 @@
+if(HAVE_BFD_DISASM)
+  set(BFD_DISASM_SRC bfd-disasm.cpp)
+endif()
+
 add_executable(bpftrace
   attached_probe.cpp
   bpftrace.cpp
@@ -15,6 +19,8 @@ add_executable(bpftrace
   tracepoint_format_parser.cpp
   types.cpp
   utils.cpp
+  disasm.cpp
+  ${BFD_DISASM_SRC}
 )
 
 if(HAVE_NAME_TO_HANDLE_AT)
@@ -37,6 +43,16 @@ if (LIBBPF_BTF_DUMP_FOUND)
   target_include_directories(bpftrace PUBLIC ${LIBBPF_INCLUDE_DIRS})
   target_link_libraries(bpftrace ${LIBBPF_LIBRARIES})
 endif(LIBBPF_BTF_DUMP_FOUND)
+if(HAVE_BFD_DISASM)
+  target_compile_definitions(bpftrace PRIVATE HAVE_BFD_DISASM)
+  target_compile_definitions(bpftrace PRIVATE LIBBFD_DISASM_FOUR_ARGS_SIGNATURE=${LIBBFD_DISASM_FOUR_ARGS_SIGNATURE})
+  target_link_libraries(bpftrace ${LIBBFD_LIBRARIES})
+  target_link_libraries(bpftrace ${LIBOPCODES_LIBRARIES})
+endif(HAVE_BFD_DISASM)
+
+if (ALLOW_UNSAFE_UPROBE)
+  target_compile_definitions(bpftrace PRIVATE HAVE_UNSAFE_UPROBE)
+endif(ALLOW_UNSAFE_UPROBE)
 
 target_link_libraries(bpftrace arch ast parser resources)
 

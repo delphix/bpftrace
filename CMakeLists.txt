@@ -64,6 +64,9 @@ if(POLICY CMP0075)
   cmake_policy(SET CMP0075 NEW)
 endif()
 set(CMAKE_REQUIRED_LIBRARIES bcc)
+get_filename_component(LIBBCC_LIBDIR ${LIBBCC_LIBRARIES} DIRECTORY)
+set(CMAKE_REQUIRED_LINK_OPTIONS -L${LIBBCC_LIBDIR})
+
 check_symbol_exists(bcc_prog_load "${LIBBCC_INCLUDE_DIRS}/libbpf.h" HAVE_BCC_PROG_LOAD)
 check_symbol_exists(bcc_create_map "${LIBBCC_INCLUDE_DIRS}/libbpf.h" HAVE_BCC_CREATE_MAP)
 check_symbol_exists(bcc_elf_foreach_sym "${LIBBCC_INCLUDE_DIRS}/bcc_elf.h" HAVE_BCC_ELF_FOREACH_SYM)
@@ -88,6 +91,12 @@ if(${LLVM_VERSION_MAJOR} VERSION_LESS 5)
 endif()
 
 find_package(LibBpf)
+find_package(LibBfd)
+find_package(LibOpcodes)
+
+if(${LIBBFD_FOUND} AND ${LIBOPCODES_FOUND})
+  set(HAVE_BFD_DISASM TRUE)
+endif()
 
 include(CheckIncludeFile)
 check_include_file("sys/sdt.h" HAVE_SYSTEMTAP_SYS_SDT_H)
