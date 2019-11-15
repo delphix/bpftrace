@@ -5,6 +5,9 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+// bfd.h assumes everyone is using autotools and will error out unless
+// PACKAGE is defined. Some distros patch this check out.
+#define PACKAGE "bpftrace"
 #include <bfd.h>
 #include <dis-asm.h>
 #include "bcc_syms.h"
@@ -13,7 +16,7 @@
 
 namespace bpftrace {
 
-BfdDisasm::BfdDisasm(std::string &path) : size(0)
+BfdDisasm::BfdDisasm(std::string &path) : size_(0)
 {
   fd_ = open(path.c_str(), O_RDONLY);
 
@@ -21,7 +24,7 @@ BfdDisasm::BfdDisasm(std::string &path) : size(0)
     struct stat st;
 
     if (fstat(fd_, &st) == 0)
-      size = st.st_size;
+      size_ = st.st_size;
   }
 }
 
@@ -108,7 +111,7 @@ AlignState BfdDisasm::is_aligned(uint64_t offset, uint64_t pc)
 {
   AlignState aligned = AlignState::Fail;
   // 100 bytes should be enough to cover next instruction behind pc
-  uint64_t size = std::min(pc + 100, size);
+  uint64_t size = std::min(pc + 100, size_);
   void *buf;
 
   if (fd_ < 0)
