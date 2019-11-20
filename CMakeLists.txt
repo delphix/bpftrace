@@ -70,11 +70,14 @@ set(CMAKE_REQUIRED_LINK_OPTIONS -L${LIBBCC_LIBDIR})
 check_symbol_exists(bcc_prog_load "${LIBBCC_INCLUDE_DIRS}/libbpf.h" HAVE_BCC_PROG_LOAD)
 check_symbol_exists(bcc_create_map "${LIBBCC_INCLUDE_DIRS}/libbpf.h" HAVE_BCC_CREATE_MAP)
 check_symbol_exists(bcc_elf_foreach_sym "${LIBBCC_INCLUDE_DIRS}/bcc_elf.h" HAVE_BCC_ELF_FOREACH_SYM)
+set(CMAKE_REQUIRED_LIBRARIES)
+set(CMAKE_REQUIRED_LINK_OPTIONS)
 
 include(CheckTypeSize)
 set(CMAKE_EXTRA_INCLUDE_FILES linux/bpf.h)
 # This will set HAVE_GET_CURRENT_CGROUP_ID to TRUE or FALSE
 check_type_size("BPF_FUNC_get_current_cgroup_id" GET_CURRENT_CGROUP_ID LANGUAGE C)
+check_type_size("BPF_FUNC_send_signal" SEND_SIGNAL LANGUAGE C)
 set(CMAKE_EXTRA_INCLUDE_FILES)
 
 # Some users have multiple versions of llvm installed and would like to specify

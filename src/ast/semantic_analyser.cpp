@@ -260,14 +260,14 @@ void SemanticAnalyser::visit(Call &call)
   }
 
   if (call.func == "hist") {
-    check_assignment(call, true, false);
+    if (!check_assignment(call, true, false, false)) return;
     check_nargs(call, 1);
     check_arg(call, Type::integer, 0);
 
     call.type = SizedType(Type::hist, 8);
   }
   else if (call.func == "lhist") {
-    check_assignment(call, true, false);
+    if (!check_assignment(call, true, false, false)) return;
     if (check_nargs(call, 4)) {
       check_arg(call, Type::integer, 0, false);
       check_arg(call, Type::integer, 1, true);
@@ -305,14 +305,14 @@ void SemanticAnalyser::visit(Call &call)
     call.type = SizedType(Type::lhist, 8);
   }
   else if (call.func == "count") {
-    check_assignment(call, true, false);
+    if (!check_assignment(call, true, false, false)) return;
     check_nargs(call, 0);
 
     call.type = SizedType(Type::count, 8);
   }
   else if (call.func == "sum") {
     bool sign = false;
-    check_assignment(call, true, false);
+    if (!check_assignment(call, true, false, false)) return;
     if (check_nargs(call, 1)) {
       sign = call.vargs->at(0)->type.is_signed;
     }
@@ -320,7 +320,7 @@ void SemanticAnalyser::visit(Call &call)
   }
   else if (call.func == "min") {
     bool sign = false;
-    check_assignment(call, true, false);
+    if (!check_assignment(call, true, false, false)) return;
     if (check_nargs(call, 1)) {
       sign = call.vargs->at(0)->type.is_signed;
     }
@@ -328,24 +328,24 @@ void SemanticAnalyser::visit(Call &call)
   }
   else if (call.func == "max") {
     bool sign = false;
-    check_assignment(call, true, false);
+    if (!check_assignment(call, true, false, false)) return;
     if (check_nargs(call, 1)) {
       sign = call.vargs->at(0)->type.is_signed;
     }
     call.type = SizedType(Type::max, 8, sign);
   }
   else if (call.func == "avg") {
-    check_assignment(call, true, false);
+    if (!check_assignment(call, true, false, false)) return;
     check_nargs(call, 1);
     call.type = SizedType(Type::avg, 8, true);
   }
   else if (call.func == "stats") {
-    check_assignment(call, true, false);
+    if (!check_assignment(call, true, false, false)) return;
     check_nargs(call, 1);
     call.type = SizedType(Type::stats, 8, true);
   }
   else if (call.func == "delete") {
-    check_assignment(call, false, false);
+    if (!check_assignment(call, false, false, false)) return;
     if (check_nargs(call, 1)) {
       auto &arg = *call.vargs->at(0);
       if (!arg.is_map)
@@ -411,7 +411,7 @@ void SemanticAnalyser::visit(Call &call)
     call.type.is_internal = true;
   }
   else if (call.func == "join") {
-    check_assignment(call, false, false);
+    if (!check_assignment(call, false, false, false)) return;
     check_varargs(call, 1, 2);
     check_arg(call, Type::integer, 0);
     call.type = SizedType(Type::none, 0);
@@ -474,7 +474,7 @@ void SemanticAnalyser::visit(Call &call)
     call.type = SizedType(Type::integer, 8);
   }
   else if (call.func == "printf" || call.func == "system" || call.func == "cat") {
-    check_assignment(call, false, false);
+    if (!check_assignment(call, false, false, false)) return;
     if (check_varargs(call, 1, 7)) {
       check_arg(call, Type::string, 0, true);
       if (is_final_pass()) {
@@ -505,7 +505,7 @@ void SemanticAnalyser::visit(Call &call)
     check_nargs(call, 0);
   }
   else if (call.func == "print") {
-    check_assignment(call, false, false);
+    if (!check_assignment(call, false, false, false)) return;
     if (check_varargs(call, 1, 3)) {
       auto &arg = *call.vargs->at(0);
       if (!arg.is_map)
@@ -527,7 +527,7 @@ void SemanticAnalyser::visit(Call &call)
     }
   }
   else if (call.func == "clear") {
-    check_assignment(call, false, false);
+    if (!check_assignment(call, false, false, false)) return;
     if (check_nargs(call, 1)) {
       auto &arg = *call.vargs->at(0);
       if (!arg.is_map)
@@ -543,7 +543,7 @@ void SemanticAnalyser::visit(Call &call)
     }
   }
   else if (call.func == "zero") {
-    check_assignment(call, false, false);
+    if (!check_assignment(call, false, false, false)) return;
     if (check_nargs(call, 1)) {
       auto &arg = *call.vargs->at(0);
       if (!arg.is_map)
@@ -559,7 +559,7 @@ void SemanticAnalyser::visit(Call &call)
     }
   }
   else if (call.func == "time") {
-    check_assignment(call, false, false);
+    if (!check_assignment(call, false, false, false)) return;
     if (check_varargs(call, 0, 1)) {
       if (is_final_pass()) {
         if (call.vargs && call.vargs->size() > 0) {
@@ -579,6 +579,51 @@ void SemanticAnalyser::visit(Call &call)
   }
   else if (call.func == "ustack") {
     check_stack_call(call, Type::ustack);
+  }
+  else if (call.func == "signal") {
+#ifdef HAVE_SEND_SIGNAL
+    if (!check_assignment(call, false, false, false)) {
+      return;
+    }
+
+    if (!check_varargs(call, 1, 1)) {
+      return;
+    }
+
+    auto &arg = *call.vargs->at(0);
+    if (arg.type.type == Type::string && arg.is_literal) {
+      auto sig = static_cast<String&>(arg).str;
+      if (signal_name_to_num(sig) < 1) {
+        bpftrace_.error(err_, call.loc, sig + " is not a valid signal");
+      }
+    }
+    else if(arg.type.type == Type::integer && arg.is_literal) {
+      auto sig = static_cast<Integer&>(arg).n;
+      if (sig < 1 || sig > 64) {
+        std::stringstream buf;
+        buf << sig << " is not a valid signal, allowed range: [1,64]";
+        bpftrace_.error(err_, call.loc, buf.str());
+      }
+    }
+    else if(arg.type.type != Type::integer) {
+      buf << "signal only accepts string literals or integers";
+    }
+
+    for (auto &ap : *probe_->attach_points) {
+      ProbeType type = probetype(ap->provider);
+      if (ap->provider == "BEGIN" || ap->provider == "END") {
+        buf << call.func << " can not be used with \"" << ap->provider << "\" probes";
+      }
+      else if (type == ProbeType::interval
+          || type == ProbeType::software
+          || type == ProbeType::hardware
+          || type == ProbeType::watchpoint) {
+        buf << call.func << " can not be used with \"" << ap->provider << "\" probes";
+      }
+    }
+#else
+    buf << "BPF_FUNC_send_signal not available for your kernel version";
+#endif
   }
   else {
     buf << "Unknown function: '" << call.func << "'";
@@ -813,12 +858,12 @@ void SemanticAnalyser::visit(Binop &binop)
         }
       }
     }
-    else if (lhs != Type::integer
+    else if (!(lhs == Type::integer && rhs == Type::integer)
              && binop.op != Parser::token::EQ
              && binop.op != Parser::token::NE) {
       buf << "The " << opstr(binop)
-          << " operator can not be used on expressions of type " << lhs
-          << std::endl;
+          << " operator can not be used on expressions of types " << lhs
+          << ", " << rhs << std::endl;
       bpftrace_.error(err_, binop.loc, buf.str());
     }
   }
@@ -1428,14 +1473,41 @@ bool SemanticAnalyser::is_final_pass() const
   return pass_ == num_passes_;
 }
 
-bool SemanticAnalyser::check_assignment(const Call &call, bool want_map, bool want_var)
+bool SemanticAnalyser::check_assignment(const Call &call, bool want_map, bool want_var, bool want_map_key)
 {
   std::stringstream buf;
-  if (want_map && want_var)
+  if (want_map && want_var && want_map_key)
+  {
+    if (!call.map && !call.var && !call.key_for_map)
+    {
+      buf << call.func << "() should be assigned to a map or a variable, or be used as a map key";
+      bpftrace_.error(err_, call.loc, buf.str());
+      return false;
+    }
+  }
+  else if (want_map && want_var)
   {
     if (!call.map && !call.var)
     {
       buf << call.func << "() should be assigned to a map or a variable";
+      bpftrace_.error(err_, call.loc, buf.str());
+      return false;
+    }
+  }
+  else if (want_map && want_map_key)
+  {
+    if (!call.map && !call.key_for_map)
+    {
+      buf << call.func << "() should be assigned to a map or be used as a map key";
+      bpftrace_.error(err_, call.loc, buf.str());
+      return false;
+    }
+  }
+  else if (want_var && want_map_key)
+  {
+    if (!call.var && !call.key_for_map)
+    {
+      buf << call.func << "() should be assigned to a variable or be used as a map key";
       bpftrace_.error(err_, call.loc, buf.str());
       return false;
     }
@@ -1458,11 +1530,20 @@ bool SemanticAnalyser::check_assignment(const Call &call, bool want_map, bool wa
       return false;
     }
   }
+  else if (want_map_key)
+  {
+    if (!call.key_for_map)
+    {
+      buf << call.func << "() should be used as a map key";
+      bpftrace_.error(err_, call.loc, buf.str());
+      return false;
+    }
+  }
   else
   {
-    if (call.map || call.var)
+    if (call.map || call.var || call.key_for_map)
     {
-      buf << call.func << "() should not be used in an assignment";
+      buf << call.func << "() should not be used in an assignment or as a map key";
       bpftrace_.error(err_, call.loc, buf.str());
       return false;
     }
