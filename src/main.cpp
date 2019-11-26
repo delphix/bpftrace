@@ -493,6 +493,9 @@ int main(int argc, char *argv[])
   if (err)
     return err;
 
+  if (bpftrace.has_child_cmd() && (bpftrace.spawn_child() < 0))
+    return 1;
+
   err = semantics.create_maps(bt_debug != DebugLevel::kNone);
   if (err)
     return err;
