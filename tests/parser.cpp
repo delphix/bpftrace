@@ -10,6 +10,13 @@ namespace parser {
 
 using Printer = ast::Printer;
 
+void test_parse_failure(const std::string &input)
+{
+  BPFtrace bpftrace;
+  Driver driver(bpftrace);
+  ASSERT_EQ(driver.parse_str(input), 1);
+}
+
 void test(const std::string &input, const std::string &output)
 {
   BPFtrace bpftrace;
@@ -714,10 +721,21 @@ TEST(Parser, call)
 
 TEST(Parser, call_unknown_function)
 {
-  test("kprobe:sys_open { myfunc() }",
-      "Program\n"
-      " kprobe:sys_open\n"
-      "  call: myfunc\n");
+  test_parse_failure("kprobe:sys_open { myfunc() }");
+  test_parse_failure("k:f { probe(); }");
+}
+
+TEST(Parser, call_builtin)
+{
+  // Builtins should not be usable as function
+  test_parse_failure("k:f { nsecs(); }");
+  test_parse_failure("k:f { nsecs  (); }");
+  test_parse_failure("k:f { nsecs(\"abc\"); }");
+  test_parse_failure("k:f { nsecs(123); }");
+
+  test_parse_failure("k:f { probe(\"blah\"); }");
+  test_parse_failure("k:f { probe(); }");
+  test_parse_failure("k:f { probe(123); }");
 }
 
 TEST(Parser, call_kaddr)
@@ -929,6 +947,44 @@ TEST(Parser, wildcard_path)
       "Program\n"
       " usdt:/my/program*foo:func\n"
       "  int: 1\n");
+  // Make sure calls or builtins don't cause issues
+  test("usdt:/my/program*avg:func { 1; }",
+       "Program\n"
+       " usdt:/my/program*avg:func\n"
+       "  int: 1\n");
+  test("usdt:/my/program*nsecs:func { 1; }",
+       "Program\n"
+       " usdt:/my/program*nsecs:func\n"
+       "  int: 1\n");
+}
+
+TEST(Parser, wildcard_func)
+{
+  test("usdt:/my/program:abc*cd { 1; }",
+       "Program\n"
+       " usdt:/my/program:abc*cd\n"
+       "  int: 1\n");
+  test("usdt:/my/program:abc*c*d { 1; }",
+       "Program\n"
+       " usdt:/my/program:abc*c*d\n"
+       "  int: 1\n");
+
+  std::string keywords[] = {
+    "arg0", "args", "curtask", "func", "gid" "rand", "uid",
+    "avg", "cat", "exit", "kaddr", "min", "printf", "usym",
+    "kstack", "ustack", "bpftrace", "perf", "uprobe", "kprobe",
+  };
+  for(auto kw : keywords)
+  {
+    test("usdt:/my/program:"+ kw +"*c*d { 1; }",
+         "Program\n"
+         " usdt:/my/program:"+ kw + "*c*d\n"
+         "  int: 1\n");
+    test("usdt:/my/program:abc*"+ kw +"*c*d { 1; }",
+         "Program\n"
+         " usdt:/my/program:abc*"+ kw + "*c*d\n"
+         "  int: 1\n");
+  }
 }
 
 TEST(Parser, short_map_name)
