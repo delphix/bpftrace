@@ -175,6 +175,18 @@ void CodegenLLVM::visit(Builtin &builtin)
         b_.getInt64Ty(),
         b_.CreateGEP(ctx_, b_.getInt64(offset * sizeof(uintptr_t))),
         builtin.ident);
+
+    if (builtin.type.type == Type::usym)
+    {
+      AllocaInst *buf = b_.CreateAllocaBPF(builtin.type, "func");
+      b_.CreateMemSet(buf, b_.getInt8(0), builtin.type.size, 1);
+      Value *pid = b_.CreateLShr(b_.CreateGetPidTgid(), 32);
+      Value *addr_offset = b_.CreateGEP(buf, b_.getInt64(0));
+      Value *pid_offset = b_.CreateGEP(buf, {b_.getInt64(0), b_.getInt64(8)});
+      b_.CreateStore(expr_, addr_offset);
+      b_.CreateStore(pid, pid_offset);
+      expr_ = buf;
+    }
   }
   else if (!builtin.ident.compare(0, 4, "sarg") && builtin.ident.size() == 5 &&
       builtin.ident.at(4) >= '0' && builtin.ident.at(4) <= '9')
@@ -545,13 +557,19 @@ void CodegenLLVM::visit(Call &call)
     Value *af_type;
 
     auto inet = call.vargs->at(0);
-    if (call.vargs->size() == 1) {
-      if (inet->type.type == Type::integer || inet->type.size == 4) {
+    if (call.vargs->size() == 1)
+    {
+      if (inet->type.type == Type::integer || inet->type.size == 4)
+      {
         af_type = b_.getInt64(AF_INET);
-      } else {
+      }
+      else
+      {
         af_type = b_.getInt64(AF_INET6);
       }
-    } else {
+    }
+    else
+    {
       inet = call.vargs->at(1);
       call.vargs->at(0)->accept(*this);
       af_type = b_.CreateIntCast(expr_, b_.getInt64Ty(), true);
@@ -562,9 +580,12 @@ void CodegenLLVM::visit(Call &call)
     b_.CreateMemSet(inet_offset, b_.getInt8(0), 16, 1);
 
     inet->accept(*this);
-    if (inet->type.type == Type::array) {
-      b_.CreateProbeRead(reinterpret_cast<AllocaInst *>(inet_offset), inet->type.size, expr_);
-    } else {
+    if (inet->type.type == Type::array)
+    {
+      b_.CreateProbeRead(static_cast<AllocaInst *>(inet_offset), inet->type.size, expr_);
+    }
+    else
+    {
       b_.CreateStore(b_.CreateIntCast(expr_, b_.getInt32Ty(), false), inet_offset);
     }
 
@@ -903,8 +924,8 @@ static bool unop_skip_accept(Unop &unop)
 {
   if (unop.expr->type.type == Type::integer)
   {
-    if (unop.op == bpftrace::Parser::token::PLUSPLUS ||
-        unop.op == bpftrace::Parser::token::MINUSMINUS)
+    if (unop.op == bpftrace::Parser::token::INCREMENT ||
+        unop.op == bpftrace::Parser::token::DECREMENT)
       return unop.expr->is_map || unop.expr->is_variable;
   }
 
@@ -926,10 +947,10 @@ void CodegenLLVM::visit(Unop &unop)
       } break;
       case bpftrace::Parser::token::BNOT: expr_ = b_.CreateNot(expr_); break;
       case bpftrace::Parser::token::MINUS: expr_ = b_.CreateNeg(expr_); break;
-      case bpftrace::Parser::token::PLUSPLUS:
-      case bpftrace::Parser::token::MINUSMINUS:
+      case bpftrace::Parser::token::INCREMENT:
+      case bpftrace::Parser::token::DECREMENT:
       {
-        bool is_increment = unop.op == bpftrace::Parser::token::PLUSPLUS;
+        bool is_increment = unop.op == bpftrace::Parser::token::INCREMENT;
 
         if (unop.expr->is_map)
         {
