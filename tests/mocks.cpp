@@ -51,6 +51,30 @@ void setup_mock_bpftrace(MockBPFtrace &bpftrace)
                                 "nahprov:tp\n";
         return std::unique_ptr<std::istream>(new std::istringstream(usdt_syms));
       });
+
+  // Fill in some default tracepoint struct definitions
+  bpftrace.structs_["struct _tracepoint_sched_sched_one"] = Struct
+  {
+    .size = 8,
+    .fields = {{"common_field", Field
+      {
+        .type = SizedType(Type::integer, 8, false),
+        .offset = 8,
+        .is_bitfield = false,
+        .bitfield = {},
+      }}},
+  };
+  bpftrace.structs_["struct _tracepoint_sched_sched_two"] = Struct
+  {
+    .size = 8,
+    .fields = {{"common_field", Field
+      {
+        .type = SizedType(Type::integer, 8, false),
+        .offset = 16, // different offset than sched_one.common_field
+        .is_bitfield = false,
+        .bitfield = {},
+      }}},
+  };
 }
 
 std::unique_ptr<MockBPFtrace> get_mock_bpftrace()
