@@ -75,12 +75,18 @@ else()
 endif()
 target_link_libraries(bpftrace ${LIBELF_LIBRARIES})
 
+if (BUILD_ASAN)
+  target_compile_definitions(bpftrace PRIVATE BUILD_ASAN)
+  target_compile_options(bpftrace PUBLIC "-fsanitize=address")
+  target_link_options(bpftrace PUBLIC "-fsanitize=address")
+endif()
+
 install(TARGETS bpftrace DESTINATION bin)
 
 set(KERNEL_HEADERS_DIR "" CACHE PATH "Hard-code kernel headers directory")
 if (KERNEL_HEADERS_DIR)
-MESSAGE(STATUS "Using KERNEL_HEADERS_DIR=${KERNEL_HEADERS_DIR}")
-target_compile_definitions(bpftrace PUBLIC KERNEL_HEADERS_DIR="${KERNEL_HEADERS_DIR}")
+  MESSAGE(STATUS "Using KERNEL_HEADERS_DIR=${KERNEL_HEADERS_DIR}")
+  target_compile_definitions(bpftrace PUBLIC KERNEL_HEADERS_DIR="${KERNEL_HEADERS_DIR}")
 endif()
 
 execute_process(
