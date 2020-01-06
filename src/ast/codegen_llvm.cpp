@@ -1,14 +1,15 @@
-#include "bpforc.h"
 #include "codegen_llvm.h"
-#include "ast.h"
-#include "parser.tab.hh"
 #include "arch/arch.h"
+#include "ast.h"
+#include "bpforc.h"
+#include "parser.tab.hh"
+#include "signal.h"
+#include "tracepoint_format_parser.h"
 #include "types.h"
 #include "utils.h"
-#include <time.h>
+#include <algorithm>
 #include <arpa/inet.h>
-#include "tracepoint_format_parser.h"
-#include "signal.h"
+#include <time.h>
 
 #include <llvm/Support/TargetRegistry.h>
 #include <llvm/IR/Constants.h>
@@ -837,7 +838,8 @@ void CodegenLLVM::visit(Binop &binop)
 
     std::string string_literal("");
 
-    bool inverse = binop.op == bpftrace::Parser::token::NE;
+    // strcmp returns 0 when strings are equal
+    bool inverse = binop.op == bpftrace::Parser::token::EQ;
 
     // If one of the strings is fixed, we can avoid storing the
     // literal in memory by calling a different function.
@@ -861,7 +863,8 @@ void CodegenLLVM::visit(Binop &binop)
       binop.left->accept(*this);
       Value * left_string = expr_;
 
-      expr_ = b_.CreateStrcmp(left_string, right_string, inverse);
+      size_t len = std::min(binop.left->type.size, binop.right->type.size);
+      expr_ = b_.CreateStrncmp(left_string, right_string, len + 1, inverse);
     }
   }
   else
