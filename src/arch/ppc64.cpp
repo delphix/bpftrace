@@ -7,7 +7,7 @@ namespace bpftrace {
 namespace arch {
 
 // clang-format off
-static std::array<std::string, 35> registers = {
+static std::array<std::string, 44> registers = {
   "r0",
   "r1",
   "r2",
@@ -40,20 +40,29 @@ static std::array<std::string, 35> registers = {
   "r29",
   "r30",
   "r31",
-  "sp",
-  "pc",
-  "pstate",
+  "nip",
+  "msr",
+  "orig_gpr3",
+  "ctr",
+  "link",
+  "xer",
+  "ccr",
+  "softe",
+  "trap",
+  "dar",
+  "dsisr",
+  "result",
 };
 
 static std::array<std::string, 8> arg_registers = {
-  "r0",
-  "r1",
-  "r2",
   "r3",
   "r4",
   "r5",
   "r6",
   "r7",
+  "r8",
+  "r9",
+  "r10",
 };
 // clang-format on
 
@@ -77,22 +86,26 @@ int arg_offset(int arg_num)
 
 int ret_offset()
 {
-  return offset("r0");
+  return offset("r3");
 }
 
 int pc_offset()
 {
-  return offset("pc");
+  return offset("nip");
 }
 
 int sp_offset()
 {
-  return offset("sp");
+  return offset("r1");
 }
 
 std::string name()
 {
-  return std::string("aarch64");
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+  return std::string("ppc64le");
+#else
+  return std::string("ppc64");
+#endif // __BYTE_ORDER__
 }
 
 } // namespace arch
