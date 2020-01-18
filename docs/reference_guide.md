@@ -111,6 +111,7 @@ kprobes | A Linux kernel technology for providing dynamic tracing of kernel func
 uprobes | A Linux kernel technology for providing dynamic tracing of user-level functions.
 USDT | User Statically-Defined Tracing: static tracing points for user-level software. Some applications support USDT.
 BPF map | A BPF memory object, which is used by bpftrace to create many higher-level objects.
+BTF | BPF Type Format: the metadata format which encodes the debug info related to BPF program/map.
 
 # Usage
 
@@ -126,6 +127,7 @@ OPTIONS:
     -B MODE        output buffering mode ('line', 'full', or 'none')
     -d             debug info dry run
     -dd            verbose debug info dry run
+    -b             force BTF (BPF type format) processing
     -e 'program'   execute this program
     -h             show this help message
     -I DIR         add the specified DIR to the search path for include files.
@@ -141,6 +143,7 @@ ENVIRONMENT:
     BPFTRACE_NO_CPP_DEMANGLE  [default: 0] disable C++ symbol demangling
     BPFTRACE_MAP_KEYS_MAX     [default: 4096] max keys in a map
     BPFTRACE_MAX_PROBES       [default: 512] max number of probes bpftrace can attach to
+    BPFTRACE_BTF              [default: None] BTF file
 
 EXAMPLES:
 bpftrace -l '*sleep*'
@@ -458,6 +461,13 @@ Default: 512
 This is the maximum number of probes that bpftrace can attach to. Increasing the value will consume more
 memory, increase startup times and can incur high performance overhead or even freeze or crash the
 system.
+
+### 9.5 `BPFTRACE_BTF`
+
+Default: None
+
+The path to a BTF file. By default, bpftrace searches several locations to find a BTF file.
+See src/btf.cpp for the details.
 
 ## 10. Clang Environment Variables
 
@@ -796,9 +806,28 @@ open path: retrans_time_ms
 ```
 
 Here arg0 was casted as a (struct path \*), since that is the first argument to vfs_open(). The struct
-support is currently the same as bcc, and based on available kernel headers. This means that many, but
-not all, structs will be available, and you may need to manually define some structs. In the future,
-bpftrace will use the newer Linux BTF support so that all kernel structs are always available.
+support is the same as bcc, and based on available kernel headers. This means that many, but not all,
+structs will be available, and you may need to manually define some structs.
+
+If the kernel has BTF (BPF Type Format) data, all kernel structs are always available without defining
+them. For example:
+
+```
+# bpftrace -e 'kprobe:vfs_open { printf("open path: %s\n", \
+                                 str(((struct path *)arg0)->dentry->d_name.name)); }'
+Attaching 1 probe...
+open path: cmdline
+open path: interrupts
+[...]
+```
+
+Requirements for using BTF:
+
+- Linux 4.18+ with `CONFIG_DEBUG_INFO_BTF=y`
+    - Building requires dwarves with pahole v1.13+
+- bpftrace v0.9.3+ with BTF support (built with libbpf v0.0.4+)
+
+See [kernel documentation](https://www.kernel.org/doc/html/latest/bpf/btf.html) for more information on BTF.
 
 ## 3. `uprobe`/`uretprobe`: Dynamic Tracing, User-Level
 
@@ -1785,7 +1814,26 @@ const char *usbcore_name = "usbcore";
 
 ## 9. `uaddr()`: Address resolution, user-level
 
-Syntax: `uaddr(char *name)`
+Syntax:
+- `u64 *uaddr(symbol)` (default)
+- `u64 *uaddr(symbol)`
+- `u32 *uaddr(symbol)`
+- `u16 *uaddr(symbol)`
+- `u8  *uaddr(symbol)`
+
+Supported Probe Types:
+- u(ret)probes
+- USDT
+
+**Does not work with ASLR, see issue [#75](https://github.com/iovisor/bpftrace/75)**
+
+The `uaddr` function returns the address of the specified symbol. This lookup
+happens during program compilation and cannot be used dynamically.
+
+The default return type is `u64*`. If the ELF object size matches a known
+integer size (1, 2, 4 or 8 bytes) the return type is modified to match the width
+(`u8*`, `u16*`, `u32*` or `u64*` resp.). As ELF does not contain type info the
+type is always assumed to be unsigned.
 
 Examples:
 
@@ -1797,7 +1845,8 @@ PS1: \[\e[34;1m\]\u@\h:\w>\[\e[0m\]
 ^C
 ```
 
-This is printing the `ps1_prompt` string from /bin/bash, whenever a `readline()` function is executed.
+This is printing the `ps1_prompt` string from /bin/bash, whenever a `readline()`
+function is executed.
 
 ## 10. `reg()`: Registers
 
