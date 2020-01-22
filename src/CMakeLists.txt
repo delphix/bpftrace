@@ -4,6 +4,7 @@ endif()
 
 add_executable(bpftrace
   attached_probe.cpp
+  bpffeature.cpp
   bpftrace.cpp
   btf.cpp
   clang_parser.cpp
@@ -37,12 +38,6 @@ endif(HAVE_BCC_CREATE_MAP)
 if(HAVE_BCC_ELF_FOREACH_SYM)
   target_compile_definitions(bpftrace PRIVATE HAVE_BCC_ELF_FOREACH_SYM)
 endif(HAVE_BCC_ELF_FOREACH_SYM)
-if(HAVE_GET_CURRENT_CGROUP_ID)
-  target_compile_definitions(bpftrace PRIVATE HAVE_GET_CURRENT_CGROUP_ID)
-endif(HAVE_GET_CURRENT_CGROUP_ID)
-if(HAVE_SEND_SIGNAL)
-  target_compile_definitions(bpftrace PRIVATE HAVE_SEND_SIGNAL)
-endif(HAVE_SEND_SIGNAL)
 if (LIBBPF_BTF_DUMP_FOUND)
   target_compile_definitions(bpftrace PRIVATE HAVE_LIBBPF_BTF_DUMP)
   target_include_directories(bpftrace PUBLIC ${LIBBPF_INCLUDE_DIRS})
@@ -69,9 +64,9 @@ if(HAVE_BFD_DISASM)
   endif(STATIC_LINKING)
 endif(HAVE_BFD_DISASM)
 
-if (ALLOW_UNSAFE_UPROBE)
-  target_compile_definitions(bpftrace PRIVATE HAVE_UNSAFE_UPROBE)
-endif(ALLOW_UNSAFE_UPROBE)
+if (ALLOW_UNSAFE_PROBE)
+  target_compile_definitions(bpftrace PRIVATE HAVE_UNSAFE_PROBE)
+endif(ALLOW_UNSAFE_PROBE)
 
 target_link_libraries(bpftrace arch ast parser resources)
 

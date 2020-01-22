@@ -9,17 +9,18 @@
 #include <string.h>
 #include <getopt.h>
 
+#include "bpffeature.h"
 #include "bpforc.h"
 #include "bpftrace.h"
 #include "clang_parser.h"
 #include "codegen_llvm.h"
 #include "driver.h"
+#include "field_analyser.h"
 #include "list.h"
+#include "output.h"
 #include "printer.h"
 #include "semantic_analyser.h"
-#include "field_analyser.h"
 #include "tracepoint_format_parser.h"
-#include "output.h"
 
 using namespace bpftrace;
 
@@ -54,6 +55,7 @@ void usage()
   std::cerr << "    -c 'CMD'       run CMD and enable USDT probes on resulting process" << std::endl;
   std::cerr << "    --unsafe       allow unsafe builtin functions" << std::endl;
   std::cerr << "    -v             verbose messages" << std::endl;
+  std::cerr << "    --info         Print information about kernel BPF support" << std::endl;
   std::cerr << "    -V, --version  bpftrace version" << std::endl << std::endl;
   std::cerr << "ENVIRONMENT:" << std::endl;
   std::cerr << "    BPFTRACE_STRLEN           [default: 64] bytes on BPF stack per str()" << std::endl;
@@ -63,6 +65,7 @@ void usage()
   std::cerr << "    BPFTRACE_MAX_PROBES       [default: 512] max number of probes" << std::endl;
   std::cerr << "    BPFTRACE_LOG_SIZE         [default: 409600] log size in bytes" << std::endl;
   std::cerr << "    BPFTRACE_NO_USER_SYMBOLS  [default: 0] disable user symbol resolution" << std::endl;
+  std::cerr << "    BPFTRACE_VMLINUX          [default: None] vmlinux path used for kernel symbol resolution" << std::endl;
   std::cerr << "    BPFTRACE_BTF              [default: None] BTF file" << std::endl;
   std::cerr << std::endl;
   std::cerr << "EXAMPLES:" << std::endl;
@@ -137,12 +140,13 @@ int main(int argc, char *argv[])
 
   const char* const short_options = "dbB:f:e:hlp:vc:Vo:I:";
   option long_options[] = {
-    option{"help", no_argument, nullptr, 'h'},
-    option{"version", no_argument, nullptr, 'V'},
-    option{"unsafe", no_argument, nullptr, 'u'},
-    option{"btf", no_argument, nullptr, 'b'},
-    option{"include", required_argument, nullptr, '#'},
-    option{nullptr, 0, nullptr, 0},  // Must be last
+    option{ "help", no_argument, nullptr, 'h' },
+    option{ "version", no_argument, nullptr, 'V' },
+    option{ "unsafe", no_argument, nullptr, 'u' },
+    option{ "btf", no_argument, nullptr, 'b' },
+    option{ "include", required_argument, nullptr, '#' },
+    option{ "info", no_argument, nullptr, 2000 },
+    option{ nullptr, 0, nullptr, 0 }, // Must be last
   };
   std::vector<std::string> include_dirs;
   std::vector<std::string> include_files;
@@ -151,6 +155,13 @@ int main(int argc, char *argv[])
   {
     switch (c)
     {
+      case 2000:
+        if (is_root())
+        {
+          std::cerr << BPFfeature().report();
+          return 0;
+        }
+        return 1;
       case 'o':
         output_file = optarg;
         break;
@@ -468,7 +479,7 @@ int main(int argc, char *argv[])
     }
   }
   extra_flags.push_back("-include");
-  extra_flags.push_back(ASM_GOTO_WORKAROUND_H);
+  extra_flags.push_back(CLANG_WORKAROUNDS_H);
 
   for (auto dir : include_dirs)
   {
@@ -495,7 +506,9 @@ int main(int argc, char *argv[])
   if (err)
     return err;
 
-  ast::SemanticAnalyser semantics(driver.root_, bpftrace);
+  BPFfeature features;
+
+  ast::SemanticAnalyser semantics(driver.root_, bpftrace, features);
   err = semantics.analyse();
   if (err)
     return err;
