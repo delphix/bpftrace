@@ -94,10 +94,10 @@ static std::vector<DeprecatedName> DEPRECATED_LIST =
   { "sym", "ksym"},
 };
 
-static std::vector<std::string> UNSAFE_BUILTIN_FUNCS =
-{
+static std::vector<std::string> UNSAFE_BUILTIN_FUNCS = {
   "system",
   "signal",
+  "override_return",
 };
 
 bool get_uint64_env_var(const ::std::string &str, uint64_t &dest);

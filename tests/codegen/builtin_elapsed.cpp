@@ -23,12 +23,13 @@ entry:
   call void @llvm.lifetime.start.p0i8(i64 -1, i8* nonnull %1)
   store i64 0, i64* %elapsed_key, align 8
   %pseudo = tail call i64 @llvm.bpf.pseudo(i64 1, i64 2)
-  %lookup_elem = call i8* inttoptr (i64 1 to i8* (i8*, i8*)*)(i64 %pseudo, i64* nonnull %elapsed_key)
+  %lookup_elem = call i8* inttoptr (i64 1 to i8* (i64, i64*)*)(i64 %pseudo, i64* nonnull %elapsed_key)
   %map_lookup_cond = icmp eq i8* %lookup_elem, null
   br i1 %map_lookup_cond, label %lookup_merge, label %lookup_success
 
 lookup_success:                                   ; preds = %entry
-  %2 = load i64, i8* %lookup_elem, align 8
+  %cast = bitcast i8* %lookup_elem to i64*
+  %2 = load i64, i64* %cast, align 8
   br label %lookup_merge
 
 lookup_merge:                                     ; preds = %entry, %lookup_success
@@ -43,7 +44,7 @@ lookup_merge:                                     ; preds = %entry, %lookup_succ
   call void @llvm.lifetime.start.p0i8(i64 -1, i8* nonnull %5)
   store i64 %3, i64* %"@_val", align 8
   %pseudo1 = call i64 @llvm.bpf.pseudo(i64 1, i64 1)
-  %update_elem = call i64 inttoptr (i64 2 to i64 (i8*, i8*, i8*, i64)*)(i64 %pseudo1, i64* nonnull %"@_key", i64* nonnull %"@_val", i64 0)
+  %update_elem = call i64 inttoptr (i64 2 to i64 (i64, i64*, i64*, i64)*)(i64 %pseudo1, i64* nonnull %"@_key", i64* nonnull %"@_val", i64 0)
   call void @llvm.lifetime.end.p0i8(i64 -1, i8* nonnull %4)
   call void @llvm.lifetime.end.p0i8(i64 -1, i8* nonnull %5)
   ret i64 0

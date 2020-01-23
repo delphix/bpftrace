@@ -157,19 +157,23 @@ CallInst *IRBuilderBPF::CreateBpfPseudoCall(Map &map)
 
 CallInst *IRBuilderBPF::createMapLookup(int mapfd, AllocaInst *key)
 {
-  Value *map_ptr = CreateBpfPseudoCall(mapfd);
-  // void *map_lookup_elem(&map, &key)
+  Value *map = CreateBpfPseudoCall(mapfd);
+  // void *map_lookup_elem(struct bpf_map * map, void * key)
   // Return: Map value or NULL
+
+  assert(key->getType()->isPointerTy());
+  assert(map->getType()->isIntegerTy());
   FunctionType *lookup_func_type = FunctionType::get(
       getInt8PtrTy(),
-      {getInt8PtrTy(), getInt8PtrTy()},
+      // bpfPseudoCall returns an int64
+      {getInt64Ty(), key->getType()},
       false);
   PointerType *lookup_func_ptr_type = PointerType::get(lookup_func_type, 0);
   Constant *lookup_func = ConstantExpr::getCast(
       Instruction::IntToPtr,
       getInt64(libbpf::BPF_FUNC_map_lookup_elem),
       lookup_func_ptr_type);
-  return CreateCall(lookup_func, { map_ptr, key }, "lookup_elem");
+  return CreateCall(lookup_func, { map, key }, "lookup_elem");
 }
 
 CallInst *IRBuilderBPF::CreateGetJoinMap(Value *ctx __attribute__((unused)))
@@ -211,7 +215,13 @@ Value *IRBuilderBPF::CreateMapLookupElem(int mapfd, AllocaInst *key, SizedType &
   if (is_array)
     CREATE_MEMCPY(value, call, type.size, 1);
   else
-    CreateStore(CreateLoad(getInt64Ty(), call), value);
+  {
+    assert(value->getType()->isPointerTy() &&
+           (value->getType()->getElementType() == getInt64Ty()));
+    // createMapLookup  returns an u8*
+    auto *cast = CreatePointerCast(call, value->getType(), "cast");
+    CreateStore(CreateLoad(getInt64Ty(), cast), value);
+  }
   CreateBr(lookup_merge_block);
 
   SetInsertPoint(lookup_failure_block);
@@ -230,21 +240,26 @@ Value *IRBuilderBPF::CreateMapLookupElem(int mapfd, AllocaInst *key, SizedType &
 
 void IRBuilderBPF::CreateMapUpdateElem(Map &map, AllocaInst *key, Value *val)
 {
-  Value *map_ptr = CreateBpfPseudoCall(map);
+  Value *mapid = CreateBpfPseudoCall(map);
+
+  assert(key->getType()->isPointerTy());
+  assert(mapid->getType()->isIntegerTy());
+  assert(val->getType()->isPointerTy());
+
   Value *flags = getInt64(0);
 
-  // int map_update_elem(&map, &key, &value, flags)
-  // Return: 0 on success or negative error
+  // int map_update_elem(struct bpf_map * map, void *key, void * value, u64
+  // flags) Return: 0 on success or negative error
   FunctionType *update_func_type = FunctionType::get(
       getInt64Ty(),
-      {getInt8PtrTy(), getInt8PtrTy(), getInt8PtrTy(), getInt64Ty()},
+      { getInt64Ty(), key->getType(), val->getType(), getInt64Ty() },
       false);
   PointerType *update_func_ptr_type = PointerType::get(update_func_type, 0);
   Constant *update_func = ConstantExpr::getCast(
       Instruction::IntToPtr,
       getInt64(libbpf::BPF_FUNC_map_update_elem),
       update_func_ptr_type);
-  CreateCall(update_func, {map_ptr, key, val, flags}, "update_elem");
+  CreateCall(update_func, { mapid, key, val, flags }, "update_elem");
 }
 
 void IRBuilderBPF::CreateMapDeleteElem(Map &map, AllocaInst *key)
@@ -666,6 +681,19 @@ void IRBuilderBPF::CreateSignal(Value *sig)
       getInt64(libbpf::BPF_FUNC_send_signal),
       signal_func_ptr_type);
   CreateCall(signal_func, {sig}, "signal");
+}
+
+void IRBuilderBPF::CreateOverrideReturn(Value *ctx, Value *rc)
+{
+  // int bpf_override_return(struct pt_regs *regs, u64 rc)
+  // Return: 0
+  FunctionType *override_func_type = FunctionType::get(
+      getInt64Ty(), { getInt8PtrTy(), getInt64Ty() }, false);
+  PointerType *override_func_ptr_type = PointerType::get(override_func_type, 0);
+  Constant *override_func = ConstantExpr::getCast(Instruction::IntToPtr,
+      getInt64(libbpf::BPF_FUNC_override_return),
+      override_func_ptr_type);
+  CreateCall(override_func, { ctx, rc }, "override_return");
 }
 
 } // namespace ast
