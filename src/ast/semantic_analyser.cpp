@@ -62,7 +62,8 @@ void SemanticAnalyser::visit(PositionalParameter &param)
   {
     case PositionalParameterType::positional:
       if (param.n <= 0)
-        ERR("$" << param.n + " is not a valid parameter", param.loc);
+        ERR("$" << std::to_string(param.n) + " is not a valid parameter",
+            param.loc);
       if (is_final_pass()) {
         std::string pstr = bpftrace_.get_param(param.n, param.is_in_str);
         if (!is_numeric(pstr) && !param.is_in_str)
@@ -277,14 +278,15 @@ void SemanticAnalyser::visit(Builtin &builtin)
       auto matches = bpftrace_.find_wildcard_matches(attach_point->target,
                                                      attach_point->func,
                                                      *symbol_stream);
-      for (auto &match : matches) {
+      if (!matches.empty())
+      {
+        auto &match = *matches.begin();
         std::string tracepoint_struct = TracepointFormatParser::get_struct_name(
             attach_point->target, match);
         Struct &cstruct = bpftrace_.structs_[tracepoint_struct];
         builtin.type = SizedType(Type::cast, cstruct.size, tracepoint_struct);
         builtin.type.is_pointer = true;
         builtin.type.is_tparg = true;
-        break;
       }
     }
   }
@@ -784,9 +786,9 @@ void SemanticAnalyser::visit(Call &call)
     }
     call.type = SizedType(Type::integer, 8);
   }
-  else if (call.func == "override_return")
+  else if (call.func == "override")
   {
-    if (!feature_.has_helper_send_signal())
+    if (!feature_.has_helper_override_return())
     {
       error("BPF_FUNC_override_return not available for your kernel version",
             call.loc);

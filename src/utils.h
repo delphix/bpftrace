@@ -1,7 +1,8 @@
 #pragma once
 
+#include <csignal>
+#include <cstring>
 #include <iostream>
-#include <signal.h>
 #include <sstream>
 #include <string>
 #include <sys/utsname.h>
@@ -97,7 +98,7 @@ static std::vector<DeprecatedName> DEPRECATED_LIST =
 static std::vector<std::string> UNSAFE_BUILTIN_FUNCS = {
   "system",
   "signal",
-  "override_return",
+  "override",
 };
 
 bool get_uint64_env_var(const ::std::string &str, uint64_t &dest);
@@ -148,4 +149,13 @@ inline std::string &trim(std::string &s)
 }
 
 int signal_name_to_num(std::string &signal);
+
+template <typename T>
+T read_data(const void *src)
+{
+  T v;
+  std::memcpy(&v, src, sizeof(v));
+  return v;
+}
+
 } // namespace bpftrace

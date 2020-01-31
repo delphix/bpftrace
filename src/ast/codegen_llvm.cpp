@@ -3,13 +3,13 @@
 #include "ast.h"
 #include "bpforc.h"
 #include "parser.tab.hh"
-#include "signal.h"
 #include "tracepoint_format_parser.h"
 #include "types.h"
 #include "utils.h"
 #include <algorithm>
 #include <arpa/inet.h>
-#include <time.h>
+#include <csignal>
+#include <ctime>
 
 #include <llvm/Support/TargetRegistry.h>
 #include <llvm/IR/Constants.h>
@@ -509,7 +509,8 @@ void CodegenLLVM::visit(Call &call)
     // arg0
     b_.SetInsertPoint(notzero);
     b_.CreateStore(b_.getInt64(asyncactionint(AsyncAction::join)), perfdata);
-    b_.CreateStore(b_.getInt64(join_id_), b_.CreateGEP(perfdata, {b_.getInt64(8)}));
+    b_.CreateStore(b_.getInt64(join_id_),
+                   b_.CreateGEP(perfdata, b_.getInt64(8)));
     join_id_++;
     AllocaInst *arr = b_.CreateAllocaBPF(b_.getInt64Ty(), call.func+"_r0");
     b_.CreateProbeRead(arr, 8, expr_);
@@ -802,9 +803,9 @@ void CodegenLLVM::visit(Call &call)
         b_.CreateLifetimeEnd(right_string);
     }
   }
-  else if (call.func == "override_return")
+  else if (call.func == "override")
   {
-    // int bpf_override_return(struct pt_regs *regs, u64 rc)
+    // int bpf_override(struct pt_regs *regs, u64 rc)
     // returns: 0
     auto &arg = *call.vargs->at(0);
     arg.accept(*this);
@@ -1419,15 +1420,15 @@ void CodegenLLVM::visit(Probe &probe)
       {b_.getInt8PtrTy()}, // struct pt_regs *ctx
       false);
 
-  for (auto &attach_point : *probe.attach_points) {
+  // Probe has at least one attach point (required by the parser)
+  auto &attach_point = (*probe.attach_points)[0];
 
-    // All usdt probes need expansion to be able to read arguments
-    if(probetype(attach_point->provider) == ProbeType::usdt)
-      probe.need_expansion = true;
+  // All usdt probes need expansion to be able to read arguments
+  if (probetype(attach_point->provider) == ProbeType::usdt)
+    probe.need_expansion = true;
 
-    current_attach_point_ = attach_point;
-    break;
-  }
+  current_attach_point_ = attach_point;
+
   /*
    * Most of the time, we can take a probe like kprobe:do_f* and build a
    * single BPF program for that, called "s_kprobe:do_f*", and attach it to
