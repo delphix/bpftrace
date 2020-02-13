@@ -1,5 +1,6 @@
 #include <arpa/inet.h>
 #include <cassert>
+#include <cstring>
 #include <ctime>
 #include <fstream>
 #include <iomanip>
@@ -8,6 +9,7 @@
 #include <sys/epoll.h>
 
 #include <fcntl.h>
+#include <sys/personality.h>
 #include <sys/prctl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -542,10 +544,12 @@ std::vector<std::unique_ptr<IPrintable>> BPFtrace::get_arg_values(const std::vec
         }
         break;
       case Type::string:
-        arg_values.push_back(
-          std::make_unique<PrintableCString>(
-            reinterpret_cast<char *>(arg_data+arg.offset)));
+      {
+        auto p = reinterpret_cast<char *>(arg_data + arg.offset);
+        arg_values.push_back(std::make_unique<PrintableString>(
+            std::string(p, strnlen(p, arg.type.size))));
         break;
+      }
       case Type::ksym:
         arg_values.push_back(
           std::make_unique<PrintableString>(
@@ -1038,7 +1042,10 @@ std::string BPFtrace::map_value_to_str(IMap &map, std::vector<uint8_t> value, ui
   else if (map.type_.type == Type::username)
     return resolve_uid(read_data<uint64_t>(value.data()));
   else if (map.type_.type == Type::string)
-    return std::string(reinterpret_cast<const char*>(value.data()));
+  {
+    auto p = reinterpret_cast<const char *>(value.data());
+    return std::string(p, strnlen(p, map.type_.size));
+  }
   else if (map.type_.type == Type::count)
     return std::to_string(reduce_value<uint64_t>(value, nvalues) / div);
   else if (map.type_.type == Type::sum || map.type_.type == Type::integer) {
@@ -1707,6 +1714,51 @@ std::string BPFtrace::resolve_inet(int af, const uint8_t* inet) const
   return addrstr;
 }
 
+// /proc/sys/kernel/randomize_va_space >= 1 and        // system-wide
+// (/proc/<pid>/personality & ADDR_NO_RNDOMIZE) == 0   // this pid
+// if pid == -1, then only check system-wide setting
+bool BPFtrace::is_aslr_enabled(int pid)
+{
+  std::string randomize_va_space_file = "/proc/sys/kernel/randomize_va_space";
+  std::string personality_file = "/proc/" + std::to_string(pid) +
+                                 "/personality";
+
+  {
+    std::ifstream file(randomize_va_space_file);
+    if (file.fail())
+    {
+      if (bt_verbose)
+        std::cerr << strerror(errno) << ": " << randomize_va_space_file
+                  << std::endl;
+      // conservatively return true
+      return true;
+    }
+
+    std::string line;
+    if (std::getline(file, line) && std::stoi(line) < 1)
+      return false;
+  }
+
+  if (pid == -1)
+    return true;
+
+  {
+    std::ifstream file(personality_file);
+    if (file.fail())
+    {
+      if (bt_verbose)
+        std::cerr << strerror(errno) << ": " << personality_file << std::endl;
+      return true;
+    }
+    std::string line;
+    if (std::getline(file, line) &&
+        ((std::stoi(line) & ADDR_NO_RANDOMIZE) == 0))
+      return true;
+  }
+
+  return false;
+}
+
 std::string BPFtrace::resolve_usym(uintptr_t addr, int pid, bool show_offset, bool show_module)
 {
   struct bcc_symbol usym;
@@ -1721,16 +1773,23 @@ std::string BPFtrace::resolve_usym(uintptr_t addr, int pid, bool show_offset, bo
 
   if (resolve_user_symbols_)
   {
-    std::string pid_exe = get_pid_exe(pid);
-    if (exe_sym_.find(pid_exe) == exe_sym_.end())
+    if (cache_user_symbols_)
     {
-      // not cached, create new ProcSyms cache
-      psyms = bcc_symcache_new(pid, &symopts);
-      exe_sym_[pid_exe] = std::make_pair(pid, psyms);
+      std::string pid_exe = get_pid_exe(pid);
+      if (exe_sym_.find(pid_exe) == exe_sym_.end())
+      {
+        // not cached, create new ProcSyms cache
+        psyms = bcc_symcache_new(pid, &symopts);
+        exe_sym_[pid_exe] = std::make_pair(pid, psyms);
+      }
+      else
+      {
+        psyms = exe_sym_[pid_exe].second;
+      }
     }
     else
     {
-      psyms = exe_sym_[pid_exe].second;
+      psyms = bcc_symcache_new(pid, &symopts);
     }
   }
 
@@ -1751,6 +1810,9 @@ std::string BPFtrace::resolve_usym(uintptr_t addr, int pid, bool show_offset, bo
     if (show_module)
       symbol << " ([unknown])";
   }
+
+  if (psyms && !cache_user_symbols_)
+    bcc_free_symcache(psyms, pid);
 
   return symbol.str();
 }
@@ -1806,12 +1868,12 @@ void BPFtrace::sort_by_key(std::vector<SizedType> key_args,
     }
     else if (arg.type == Type::string)
     {
-      std::stable_sort(values_by_key.begin(), values_by_key.end(), [&](auto &a, auto &b)
-      {
-        return strncmp((const char*)(a.first.data() + arg_offset),
-                       (const char*)(b.first.data() + arg_offset),
-                       STRING_SIZE) < 0;
-      });
+      std::stable_sort(
+          values_by_key.begin(), values_by_key.end(), [&](auto &a, auto &b) {
+            return strncmp((const char *)(a.first.data() + arg_offset),
+                           (const char *)(b.first.data() + arg_offset),
+                           arg.size) < 0;
+          });
     }
 
     // Other types don't get sorted
