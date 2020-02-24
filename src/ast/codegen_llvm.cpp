@@ -983,11 +983,14 @@ void CodegenLLVM::visit(Unop &unop)
   SizedType &type = unop.expr->type;
   if (type.type == Type::integer)
   {
-    switch (unop.op) {
-      case bpftrace::Parser::token::LNOT: {
-	  Value* zero_value = Constant::getNullValue(expr_->getType());
-	  expr_ = b_.CreateICmpEQ(expr_, zero_value);
-      } break;
+    switch (unop.op)
+    {
+      case bpftrace::Parser::token::LNOT:
+      {
+        Value *zero_value = Constant::getNullValue(expr_->getType());
+        expr_ = b_.CreateICmpEQ(expr_, zero_value);
+        break;
+      }
       case bpftrace::Parser::token::BNOT: expr_ = b_.CreateNot(expr_); break;
       case bpftrace::Parser::token::MINUS: expr_ = b_.CreateNeg(expr_); break;
       case bpftrace::Parser::token::INCREMENT:
@@ -1979,10 +1982,6 @@ void CodegenLLVM::createFormatStringCall(Call &call, int &id, CallArgs &call_arg
 
 std::unique_ptr<BpfOrc> CodegenLLVM::compile(DebugLevel debug, std::ostream &out)
 {
-  createLog2Function();
-  createLinearFunction();
-  root_->accept(*this);
-
   LLVMInitializeBPFTargetInfo();
   LLVMInitializeBPFTarget();
   LLVMInitializeBPFTargetMC();
@@ -2000,6 +1999,11 @@ std::unique_ptr<BpfOrc> CodegenLLVM::compile(DebugLevel debug, std::ostream &out
   auto RM = Reloc::Model();
   TargetMachine *targetMachine = target->createTargetMachine(targetTriple, "generic", "", opt, RM);
   module_->setDataLayout(targetMachine->createDataLayout());
+  layout_ = DataLayout(module_.get());
+
+  createLog2Function();
+  createLinearFunction();
+  root_->accept(*this);
 
   legacy::PassManager PM;
   PassManagerBuilder PMB;
