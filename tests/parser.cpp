@@ -773,6 +773,23 @@ TEST(Parser, uprobe)
       "Program\n"
       " uprobe:/with#hash:asdf\n"
       "  int: 1\n");
+  test("uprobe:/my/program:1234 { 1; }",
+       "Program\n"
+       " uprobe:/my/program:1234\n"
+       "  int: 1\n");
+  // Trailing alnum chars are allowed (turns the entire arg into a symbol name)
+  test("uprobe:/my/program:1234abc { 1; }",
+       "Program\n"
+       " uprobe:/my/program:1234abc\n"
+       "  int: 1\n");
+  // Test `:`s in quoted string
+  test("uprobe:/my/program:\"A::f\" { 1; }",
+       "Program\n"
+       " uprobe:/my/program:A::f\n"
+       "  int: 1\n");
+
+  test_parse_failure("uprobe:f { 1 }");
+  test_parse_failure("uprobe { 1 }");
 }
 
 TEST(Parser, usdt)
@@ -781,6 +798,15 @@ TEST(Parser, usdt)
       "Program\n"
       " usdt:/my/program:probe\n"
       "  int: 1\n");
+  // Without the escapes needed for C++ to compile:
+  //    usdt:/my/program:"\"probe\"" { 1; }
+  //
+  test("usdt:/my/program:\"\\\"probe\\\"\" { 1; }",
+       "Program\n"
+       " usdt:/my/program:\"probe\"\n"
+       "  int: 1\n");
+
+  test_parse_failure("usdt { 1 }");
 }
 
 TEST(Parser, usdt_namespaced_probe)
@@ -817,6 +843,20 @@ TEST(Parser, begin_probe)
       "Program\n"
       " BEGIN\n"
       "  int: 1\n");
+
+  test_parse_failure("BEGIN:f { 1 }");
+  test_parse_failure("BEGIN:path:f { 1 }");
+}
+
+TEST(Parser, end_probe)
+{
+  test("END { 1 }",
+       "Program\n"
+       " END\n"
+       "  int: 1\n");
+
+  test_parse_failure("END:f { 1 }");
+  test_parse_failure("END:path:f { 1 }");
 }
 
 TEST(Parser, tracepoint_probe)
@@ -825,6 +865,9 @@ TEST(Parser, tracepoint_probe)
       "Program\n"
       " tracepoint:sched:sched_switch\n"
       "  int: 1\n");
+
+  test_parse_failure("tracepoint:f { 1 }");
+  test_parse_failure("tracepoint { 1 }");
 }
 
 TEST(Parser, profile_probe)
@@ -833,6 +876,11 @@ TEST(Parser, profile_probe)
       "Program\n"
       " profile:ms:997\n"
       "  int: 1\n");
+
+  test_parse_failure("profile:ms:nan { 1 }");
+  test_parse_failure("profile:f { 1 }");
+  test_parse_failure("profile { 1 }");
+  test_parse_failure("profile:s:1b { 1 }");
 }
 
 TEST(Parser, interval_probe)
@@ -841,6 +889,8 @@ TEST(Parser, interval_probe)
       "Program\n"
       " interval:s:1\n"
       "  int: 1\n");
+
+  test_parse_failure("interval:s:1b { 1 }");
 }
 
 TEST(Parser, software_probe)
@@ -849,6 +899,8 @@ TEST(Parser, software_probe)
       "Program\n"
       " software:faults:1000\n"
       "  int: 1\n");
+
+  test_parse_failure("software:faults:1b { 1 }");
 }
 
 TEST(Parser, hardware_probe)
@@ -857,6 +909,20 @@ TEST(Parser, hardware_probe)
       "Program\n"
       " hardware:cache-references:1000000\n"
       "  int: 1\n");
+
+  test_parse_failure("hardware:cache-references:1b { 1 }");
+}
+
+TEST(Parser, watchpoint_probe)
+{
+  test("watchpoint::1234:8:w { 1 }",
+       "Program\n"
+       " watchpoint:1234:8:w\n"
+       "  int: 1\n");
+
+  test_parse_failure("watchpoint::1b:8:w { 1 }");
+  test_parse_failure("watchpoint::1:8a:w { 1 }");
+  test_parse_failure("watchpoint::1b:8a:w { 1 }");
 }
 
 TEST(Parser, multiple_attach_points_kprobe)
@@ -1303,6 +1369,31 @@ kprobe:f { "asdf }
   EXPECT_EQ(out.str(), expected);
 }
 
+TEST(Parser, kprobe_offset)
+{
+  test("k:fn+1 {}",
+       "Program\n"
+       " kprobe:fn+1\n");
+  test("k:fn+0x10 {}",
+       "Program\n"
+       " kprobe:fn+16\n");
+
+  test("k:\"fn.abc\"+1 {}",
+       "Program\n"
+       " kprobe:fn.abc+1\n");
+  test("k:\"fn.abc\"+0x10 {}",
+       "Program\n"
+       " kprobe:fn.abc+16\n");
+
+  test_parse_failure("k:asdf+123abc");
+}
+
+TEST(Parser, kretprobe_offset)
+{
+  // Not supported yet
+  test_parse_failure("kr:fn+1 { 1 }");
+}
+
 TEST(Parser, uprobe_offset)
 {
   test("u:./test:fn+1 {}",
@@ -1318,6 +1409,13 @@ TEST(Parser, uprobe_offset)
   test("u:./test:\"fn.abc\"+0x10 {}",
        "Program\n"
        " uprobe:./test:fn.abc+16\n");
+}
+
+TEST(Parser, uretprobe_offset)
+{
+  // Not supported yet
+  test_parse_failure("ur:./test:fn+1 { 1 }");
+  test_parse_failure("uretprobe:/bin/sh:f+0x10 { 1 }");
 }
 
 TEST(Parser, invalid_increment_decrement)

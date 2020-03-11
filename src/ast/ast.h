@@ -262,36 +262,10 @@ public:
 
 class AttachPoint : public Node {
 public:
-  explicit AttachPoint(const std::string &provider, location loc = location());
-  AttachPoint(const std::string &provider,
-              const std::string &func,
-              location loc = location());
-  AttachPoint(const std::string &provider,
-              const std::string &target,
-              const std::string &func,
-              bool need_expansion,
-              location loc = location());
-  AttachPoint(const std::string &provider,
-              const std::string &target,
-              const std::string &ns,
-              const std::string &func,
-              bool need_expansion,
-              location loc = location());
-  AttachPoint(const std::string &provider,
-              const std::string &str,
-              uint64_t val,
-              location loc = location());
-  AttachPoint(const std::string &provider,
-              const std::string &target,
-              uint64_t addr,
-              uint64_t len,
-              const std::string &mode,
-              location loc = location());
-  AttachPoint(const std::string &provider,
-              const std::string &target,
-              const std::string &func,
-              uint64_t offset,
-              location loc = location());
+  explicit AttachPoint(const std::string &raw_input, location loc = location());
+
+  // Raw, unparsed input from user, eg. kprobe:vfs_read
+  std::string raw_input;
 
   std::string provider;
   std::string target;
@@ -299,9 +273,8 @@ public:
   std::string func;
   usdt_probe_entry usdt; // resolved USDT entry, used to support arguments with wildcard matches
   int freq = 0;
-  uint64_t addr = 0;
-  uint64_t len = 0;
-  std::string mode;
+  uint64_t len = 0; // for watchpoint probes, the width of watched addr
+  std::string mode; // for watchpoint probes, the watch mode
   bool need_expansion = false;
   uint64_t address = 0;
   uint64_t func_offset = 0;
