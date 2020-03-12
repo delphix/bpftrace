@@ -181,13 +181,13 @@ void CodegenLLVM::visit(Builtin &builtin)
       offset = arch::arg_offset(arg_num);
     }
 
+    Value *ctx = b_.CreatePointerCast(ctx_, b_.getInt64Ty()->getPointerTo());
     // LLVM optimization is possible to transform `(uint64*)ctx` into
     // `(uint8*)ctx`, but sometimes this causes invalid context access.
     // Mark every context acess to supporess any LLVM optimization.
-    expr_ = b_.CreateLoad(
-        b_.getInt64Ty(),
-        b_.CreateGEP(ctx_, b_.getInt64(offset * sizeof(uintptr_t))),
-        builtin.ident);
+    expr_ = b_.CreateLoad(b_.getInt64Ty(),
+                          b_.CreateGEP(ctx, b_.getInt64(offset)),
+                          builtin.ident);
     // LLVM 7.0 <= does not have CreateLoad(*Ty, *Ptr, isVolatile, Name),
     // so call setVolatile() manually
     dyn_cast<LoadInst>(expr_)->setVolatile(true);
@@ -545,11 +545,19 @@ void CodegenLLVM::visit(Call &call)
   else if (call.func == "usym")
   {
     // store uint64_t[2] with: [0]: (uint64_t)addr, [1]: (uint64_t)pid
-    AllocaInst *buf = b_.CreateAllocaBPF(call.type, "usym");
-    b_.CREATE_MEMSET(buf, b_.getInt8(0), call.type.size, 1);
+    std::vector<llvm::Type *> elements = {
+      b_.getInt64Ty(), // addr
+      b_.getInt64Ty(), // pid
+    };
+    StructType *usym_t = b_.GetStructType("usym_t", elements, false);
+    AllocaInst *buf = b_.CreateAllocaBPF(usym_t, "usym");
+
     Value *pid = b_.CreateLShr(b_.CreateGetPidTgid(), 32);
-    Value *addr_offset = b_.CreateGEP(buf, b_.getInt64(0));
-    Value *pid_offset = b_.CreateGEP(buf, {b_.getInt64(0), b_.getInt64(8)});
+
+    // The extra 0 here ensures the type of addr_offset will be int64
+    Value *addr_offset = b_.CreateGEP(buf, { b_.getInt64(0), b_.getInt32(0) });
+    Value *pid_offset = b_.CreateGEP(buf, { b_.getInt64(0), b_.getInt32(1) });
+
     call.vargs->front()->accept(*this);
     b_.CreateStore(expr_, addr_offset);
     b_.CreateStore(pid, pid_offset);
@@ -565,15 +573,13 @@ void CodegenLLVM::visit(Call &call)
     //   }
     // }
     //}
-    std::vector<llvm::Type *> elements = {
-      b_.getInt64Ty(), // printf ID
-      ArrayType::get(b_.getInt8Ty(), 16)
-    };
-    StructType *inet_struct = StructType::create(elements, "inet_t", false);
+    std::vector<llvm::Type *> elements = { b_.getInt64Ty(),
+                                           ArrayType::get(b_.getInt8Ty(), 16) };
+    StructType *inet_struct = b_.GetStructType("inet_t", elements, false);
 
     AllocaInst *buf = b_.CreateAllocaBPF(inet_struct, "inet");
 
-    Value *af_offset = b_.CreateGEP(buf, b_.getInt64(0));
+    Value *af_offset = b_.CreateGEP(buf, { b_.getInt64(0), b_.getInt32(0) });
     Value *af_type;
 
     auto inet = call.vargs->at(0);
@@ -606,7 +612,9 @@ void CodegenLLVM::visit(Call &call)
     }
     else
     {
-      b_.CreateStore(b_.CreateIntCast(expr_, b_.getInt32Ty(), false), inet_offset);
+      b_.CreateStore(b_.CreateIntCast(expr_, b_.getInt32Ty(), false),
+                     b_.CreatePointerCast(inet_offset,
+                                          b_.getInt32Ty()->getPointerTo()));
     }
 
     expr_ = buf;
@@ -646,8 +654,7 @@ void CodegenLLVM::visit(Call &call)
      * The asyncaction_id informs user-space that this is not a printf(), but is a
      * special asynchronous action. The ID maps to exit().
      */
-    ArrayType *perfdata_type = ArrayType::get(b_.getInt8Ty(), sizeof(uint64_t));
-    AllocaInst *perfdata = b_.CreateAllocaBPF(perfdata_type, "perfdata");
+    AllocaInst *perfdata = b_.CreateAllocaBPF(b_.getInt64Ty(), "perfdata");
     b_.CreateStore(b_.getInt64(asyncactionint(AsyncAction::exit)), perfdata);
     b_.CreatePerfEventOutput(ctx_, perfdata, sizeof(uint64_t));
     b_.CreateLifetimeEnd(perfdata);
