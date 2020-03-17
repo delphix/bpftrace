@@ -96,7 +96,8 @@ void SemanticAnalyser::visit(PositionalParameter &param)
 
 void SemanticAnalyser::visit(String &string)
 {
-  if (string.str.size() > STRING_SIZE-1) {
+  if (!is_compile_time_func(func_) && string.str.size() > STRING_SIZE - 1)
+  {
     ERR("String is too long (over " << STRING_SIZE << " bytes): " << string.str,
         string.loc);
   }
@@ -331,6 +332,26 @@ void SemanticAnalyser::visit(Call &call)
     error(call.func + "() is an unsafe function being used in safe mode",
           call.loc);
   }
+
+  struct func_setter
+  {
+    func_setter(SemanticAnalyser &analyser, const std::string &s)
+        : analyser_(analyser), old_func_(analyser_.func_)
+    {
+      analyser_.func_ = s;
+    }
+
+    ~func_setter()
+    {
+      analyser_.func_ = old_func_;
+    }
+
+  private:
+    SemanticAnalyser &analyser_;
+    std::string old_func_;
+  };
+
+  func_setter scope_bound_func_setter{ *this, call.func };
 
   if (call.vargs) {
     for (Expression *expr : *call.vargs) {

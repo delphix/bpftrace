@@ -201,7 +201,6 @@ private:
 
   std::string src_;
   std::string filename_;
-  std::vector<std::string> srclines_;
 
   std::unique_ptr<AttachedProbe> attach_probe(Probe &probe,
                                               const BpfOrc &bpforc);
@@ -211,13 +210,7 @@ private:
   int zero_map(IMap &map);
   int print_map(IMap &map, uint32_t top, uint32_t div);
   int print_map_hist(IMap &map, uint32_t top, uint32_t div);
-  int print_map_lhist(IMap &map);
   int print_map_stats(IMap &map);
-  int print_hist(const std::vector<uint64_t> &values, uint32_t div) const;
-  int print_lhist(const std::vector<uint64_t> &values,
-                  int min,
-                  int max,
-                  int step) const;
   template <typename T>
   static T reduce_value(const std::vector<uint8_t> &value, int nvalues);
   static int64_t min_value(const std::vector<uint8_t> &value, int nvalues);
