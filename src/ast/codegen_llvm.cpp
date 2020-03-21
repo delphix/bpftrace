@@ -994,8 +994,13 @@ void CodegenLLVM::visit(Unop &unop)
     {
       case bpftrace::Parser::token::LNOT:
       {
-        Value *zero_value = Constant::getNullValue(expr_->getType());
+        auto ty = expr_->getType();
+        Value *zero_value = Constant::getNullValue(ty);
         expr_ = b_.CreateICmpEQ(expr_, zero_value);
+        // CreateICmpEQ() returns 1-bit integer
+        // Cast it to the same type of the operand
+        // Use unsigned extention, otherwise !0 becomes -1
+        expr_ = b_.CreateIntCast(expr_, ty, false);
         break;
       }
       case bpftrace::Parser::token::BNOT: expr_ = b_.CreateNot(expr_); break;
@@ -1105,8 +1110,10 @@ void CodegenLLVM::visit(Ternary &ternary)
   Value *cond;
   ternary.cond->accept(*this);
   cond = expr_;
-  b_.CreateCondBr(b_.CreateICmpNE(cond, b_.getInt64(0), "true_cond"),
-                  left_block, right_block);
+  Value *zero_value = Constant::getNullValue(cond->getType());
+  b_.CreateCondBr(b_.CreateICmpNE(cond, zero_value, "true_cond"),
+                  left_block,
+                  right_block);
 
   if (ternary.type.type == Type::integer) {
     // fetch selected integer via CreateStore
