@@ -16,12 +16,12 @@ entry:
   %"$foo" = alloca [32 x i8], align 1
   %1 = getelementptr inbounds [32 x i8], [32 x i8]* %"$foo", i64 0, i64 0
   call void @llvm.lifetime.start.p0i8(i64 -1, i8* nonnull %1)
-  call void @llvm.memset.p0i8.i64(i8* nonnull align 1 %1, i64 0, i64 32, i1 false)
+  call void @llvm.memset.p0i8.i64(i8* nonnull align 1 %1, i8 0, i64 32, i1 false)
   call void @llvm.lifetime.start.p0i8(i64 -1, i8* nonnull %1)
   call void @llvm.memcpy.p0i8.p64i8.i64(i8* nonnull align 1 %1, i8 addrspace(64)* align 536870912 null, i64 32, i1 false)
   %2 = getelementptr inbounds [32 x i8], [32 x i8]* %"struct Foo.str", i64 0, i64 0
   call void @llvm.lifetime.start.p0i8(i64 -1, i8* nonnull %2)
-  %probe_read = call i64 inttoptr (i64 4 to i64 (i8*, i64, i8*)*)([32 x i8]* nonnull %"struct Foo.str", i64 32, [32 x i8]* nonnull %"$foo")
+  %probe_read = call i64 inttoptr (i64 4 to i64 ([32 x i8]*, i32, [32 x i8]*)*)([32 x i8]* nonnull %"struct Foo.str", i32 32, [32 x i8]* nonnull %"$foo")
   %3 = bitcast i64* %"@mystr_key" to i8*
   call void @llvm.lifetime.start.p0i8(i64 -1, i8* nonnull %3)
   store i64 0, i64* %"@mystr_key", align 8

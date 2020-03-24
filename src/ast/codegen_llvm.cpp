@@ -193,16 +193,7 @@ void CodegenLLVM::visit(Builtin &builtin)
     dyn_cast<LoadInst>(expr_)->setVolatile(true);
 
     if (builtin.type.type == Type::usym)
-    {
-      AllocaInst *buf = b_.CreateAllocaBPF(builtin.type, "func");
-      b_.CREATE_MEMSET(buf, b_.getInt8(0), builtin.type.size, 1);
-      Value *pid = b_.CreateLShr(b_.CreateGetPidTgid(), 32);
-      Value *addr_offset = b_.CreateGEP(buf, b_.getInt64(0));
-      Value *pid_offset = b_.CreateGEP(buf, {b_.getInt64(0), b_.getInt64(8)});
-      b_.CreateStore(expr_, addr_offset);
-      b_.CreateStore(pid, pid_offset);
-      expr_ = buf;
-    }
+      expr_ = b_.CreateUSym(expr_);
   }
   else if (!builtin.ident.compare(0, 4, "sarg") && builtin.ident.size() == 5 &&
       builtin.ident.at(4) >= '0' && builtin.ident.at(4) <= '9')
@@ -215,10 +206,10 @@ void CodegenLLVM::visit(Builtin &builtin)
     }
 
     int arg_num = atoi(builtin.ident.substr(4).c_str());
-    Value *sp = b_.CreateLoad(
-        b_.getInt64Ty(),
-        b_.CreateGEP(ctx_, b_.getInt64(sp_offset * sizeof(uintptr_t))),
-        "reg_sp");
+    Value *ctx = b_.CreatePointerCast(ctx_, b_.getInt64Ty()->getPointerTo());
+    Value *sp = b_.CreateLoad(b_.getInt64Ty(),
+                              b_.CreateGEP(ctx, b_.getInt64(sp_offset)),
+                              "reg_sp");
     dyn_cast<LoadInst>(sp)->setVolatile(true);
     AllocaInst *dst = b_.CreateAllocaBPF(builtin.type, builtin.ident);
     Value *src = b_.CreateAdd(sp, b_.getInt64((arg_num + 1) * sizeof(uintptr_t)));
@@ -503,13 +494,27 @@ void CodegenLLVM::visit(Call &call)
   else if (call.func == "join")
   {
     call.vargs->front()->accept(*this);
-    AllocaInst *first = b_.CreateAllocaBPF(SizedType(Type::integer, 8), call.func + "_first");
-    AllocaInst *second = b_.CreateAllocaBPF(b_.getInt64Ty(), call.func+"_second");
+    AllocaInst *first = b_.CreateAllocaBPF(b_.getInt64Ty(),
+                                           call.func + "_first");
+    AllocaInst *second = b_.CreateAllocaBPF(b_.getInt64Ty(),
+                                            call.func + "_second");
     Value *perfdata = b_.CreateGetJoinMap(ctx_);
     Function *parent = b_.GetInsertBlock()->getParent();
-    BasicBlock *zero = BasicBlock::Create(module_->getContext(), "joinzero", parent);
-    BasicBlock *notzero = BasicBlock::Create(module_->getContext(), "joinnotzero", parent);
-    b_.CreateCondBr(b_.CreateICmpNE(perfdata, ConstantExpr::getCast(Instruction::IntToPtr, b_.getInt64(0), b_.getInt8PtrTy()), "joinzerocond"), notzero, zero);
+
+    BasicBlock *zero = BasicBlock::Create(module_->getContext(),
+                                          "joinzero",
+                                          parent);
+    BasicBlock *notzero = BasicBlock::Create(module_->getContext(),
+                                             "joinnotzero",
+                                             parent);
+
+    b_.CreateCondBr(b_.CreateICmpNE(perfdata,
+                                    ConstantExpr::getCast(Instruction::IntToPtr,
+                                                          b_.getInt64(0),
+                                                          b_.getInt8PtrTy()),
+                                    "joinzerocond"),
+                    notzero,
+                    zero);
 
     // arg0
     b_.SetInsertPoint(notzero);
@@ -517,19 +522,29 @@ void CodegenLLVM::visit(Call &call)
     b_.CreateStore(b_.getInt64(join_id_),
                    b_.CreateGEP(perfdata, b_.getInt64(8)));
     join_id_++;
-    AllocaInst *arr = b_.CreateAllocaBPF(b_.getInt64Ty(), call.func+"_r0");
+    AllocaInst *arr = b_.CreateAllocaBPF(b_.getInt64Ty(), call.func + "_r0");
     b_.CreateProbeRead(arr, 8, expr_);
-    b_.CreateProbeReadStr(b_.CreateAdd(perfdata, b_.getInt64(8+8)), bpftrace_.join_argsize_, b_.CreateLoad(arr));
+    b_.CreateProbeReadStr(b_.CreateAdd(perfdata, b_.getInt64(8 + 8)),
+                          bpftrace_.join_argsize_,
+                          b_.CreateLoad(arr));
 
-    for (unsigned int i = 1; i < bpftrace_.join_argnum_; i++) {
+    for (unsigned int i = 1; i < bpftrace_.join_argnum_; i++)
+    {
       // argi
       b_.CreateStore(b_.CreateAdd(expr_, b_.getInt64(8 * i)), first);
       b_.CreateProbeRead(second, 8, b_.CreateLoad(first));
-      b_.CreateProbeReadStr(b_.CreateAdd(perfdata, b_.getInt64(8 + 8 + i * bpftrace_.join_argsize_)), bpftrace_.join_argsize_, b_.CreateLoad(second));
+      b_.CreateProbeReadStr(
+          b_.CreateAdd(perfdata,
+                       b_.getInt64(8 + 8 + i * bpftrace_.join_argsize_)),
+          bpftrace_.join_argsize_,
+          b_.CreateLoad(second));
     }
 
     // emit
-    b_.CreatePerfEventOutput(ctx_, perfdata, 8 + 8 + bpftrace_.join_argnum_ * bpftrace_.join_argsize_);
+    b_.CreatePerfEventOutput(
+        ctx_,
+        perfdata,
+        8 + 8 + bpftrace_.join_argnum_ * bpftrace_.join_argsize_);
 
     b_.CreateBr(zero);
 
@@ -544,24 +559,8 @@ void CodegenLLVM::visit(Call &call)
   }
   else if (call.func == "usym")
   {
-    // store uint64_t[2] with: [0]: (uint64_t)addr, [1]: (uint64_t)pid
-    std::vector<llvm::Type *> elements = {
-      b_.getInt64Ty(), // addr
-      b_.getInt64Ty(), // pid
-    };
-    StructType *usym_t = b_.GetStructType("usym_t", elements, false);
-    AllocaInst *buf = b_.CreateAllocaBPF(usym_t, "usym");
-
-    Value *pid = b_.CreateLShr(b_.CreateGetPidTgid(), 32);
-
-    // The extra 0 here ensures the type of addr_offset will be int64
-    Value *addr_offset = b_.CreateGEP(buf, { b_.getInt64(0), b_.getInt32(0) });
-    Value *pid_offset = b_.CreateGEP(buf, { b_.getInt64(0), b_.getInt32(1) });
-
     call.vargs->front()->accept(*this);
-    b_.CreateStore(expr_, addr_offset);
-    b_.CreateStore(pid, pid_offset);
-    expr_ = buf;
+    expr_ = b_.CreateUSym(expr_);
   }
   else if (call.func == "ntop")
   {
@@ -629,10 +628,10 @@ void CodegenLLVM::visit(Call &call)
       abort();
     }
 
-    expr_ = b_.CreateLoad(
-        b_.getInt64Ty(),
-        b_.CreateGEP(ctx_, b_.getInt64(offset * sizeof(uintptr_t))),
-        call.func+"_"+reg_name);
+    Value *ctx = b_.CreatePointerCast(ctx_, b_.getInt64Ty()->getPointerTo());
+    expr_ = b_.CreateLoad(b_.getInt64Ty(),
+                          b_.CreateGEP(ctx, b_.getInt64(offset)),
+                          call.func + "_" + reg_name);
     dyn_cast<LoadInst>(expr_)->setVolatile(true);
   }
   else if (call.func == "printf")
@@ -775,13 +774,8 @@ void CodegenLLVM::visit(Call &call)
       return;
     }
     arg.accept(*this);
-    if (arg.is_literal) {
-      b_.CreateSignal(b_.getInt32(static_cast<Integer&>(arg).n));
-    }
-    else {
-      expr_ = b_.CreateIntCast(expr_, b_.getInt32Ty(), arg.type.is_signed);
-      b_.CreateSignal(expr_);
-    }
+    expr_ = b_.CreateIntCast(expr_, b_.getInt32Ty(), arg.type.is_signed);
+    b_.CreateSignal(expr_);
   }
   else if (call.func == "strncmp") {
     uint64_t size = static_cast<Integer *>(call.vargs->at(2))->n;
@@ -1326,7 +1320,9 @@ void CodegenLLVM::visit(AssignMapStatement &assignment)
   Value *val, *expr;
   expr = expr_;
   AllocaInst *key = getMapKey(map);
-  if (map.type.type == Type::string || assignment.expr->type.type == Type::inet)
+  if (map.type.type == Type::string ||
+      assignment.expr->type.type == Type::inet ||
+      assignment.expr->type.type == Type::usym)
   {
     val = expr;
   }
@@ -1636,7 +1632,7 @@ AllocaInst *CodegenLLVM::getMapKey(Map &map)
         key = b_.CreateAllocaBPF(expr->type.size, map.ident + "_key");
         b_.CreateStore(
             b_.CreateIntCast(expr_, b_.getInt64Ty(), expr->type.is_signed),
-            key);
+            b_.CreatePointerCast(key, expr_->getType()->getPointerTo()));
       }
     }
     else
@@ -1654,8 +1650,9 @@ AllocaInst *CodegenLLVM::getMapKey(Map &map)
       for (Expression *expr : *map.vargs)
       {
         expr->accept(*this);
-        Value *offset_val =
-            b_.CreateGEP(key, { b_.getInt64(0), b_.getInt64(offset) });
+        Value *offset_val = b_.CreateGEP(
+            key, { b_.getInt64(0), b_.getInt64(offset) });
+
         if (expr->type.type == Type::string || expr->type.type == Type::usym ||
             expr->type.type == Type::inet)
         {
@@ -1668,7 +1665,8 @@ AllocaInst *CodegenLLVM::getMapKey(Map &map)
           // promote map key to 64-bit:
           b_.CreateStore(
               b_.CreateIntCast(expr_, b_.getInt64Ty(), expr->type.is_signed),
-              offset_val);
+              b_.CreatePointerCast(offset_val,
+                                   expr_->getType()->getPointerTo()));
         }
         offset += expr->type.size;
       }

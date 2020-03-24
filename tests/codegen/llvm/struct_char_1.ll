@@ -17,12 +17,12 @@ entry:
   %"$foo" = alloca [1 x i8], align 1
   %1 = getelementptr inbounds [1 x i8], [1 x i8]* %"$foo", i64 0, i64 0
   call void @llvm.lifetime.start.p0i8(i64 -1, i8* nonnull %1)
-  call void @llvm.memset.p0i8.i64(i8* nonnull align 1 %1, i64 0, i64 1, i1 false)
+  store i8 0, i8* %1, align 1
   call void @llvm.lifetime.start.p0i8(i64 -1, i8* nonnull %1)
   %2 = load i8, i8 addrspace(64)* null, align 536870912
   store i8 %2, i8* %1, align 1
   call void @llvm.lifetime.start.p0i8(i64 -1, i8* nonnull %"struct Foo.x")
-  %probe_read = call i64 inttoptr (i64 4 to i64 (i8*, i64, i8*)*)(i8* nonnull %"struct Foo.x", i64 1, [1 x i8]* nonnull %"$foo")
+  %probe_read = call i64 inttoptr (i64 4 to i64 (i8*, i32, [1 x i8]*)*)(i8* nonnull %"struct Foo.x", i32 1, [1 x i8]* nonnull %"$foo")
   %3 = load i8, i8* %"struct Foo.x", align 1
   call void @llvm.lifetime.end.p0i8(i64 -1, i8* nonnull %"struct Foo.x")
   %4 = bitcast i64* %"@x_key" to i8*
@@ -38,9 +38,6 @@ entry:
   call void @llvm.lifetime.end.p0i8(i64 -1, i8* nonnull %6)
   ret i64 0
 }
-
-; Function Attrs: argmemonly nounwind
-declare void @llvm.memset.p0i8.i64(i8* nocapture writeonly, i8, i64, i1) #1
 
 ; Function Attrs: argmemonly nounwind
 declare void @llvm.lifetime.end.p0i8(i64, i8* nocapture) #1

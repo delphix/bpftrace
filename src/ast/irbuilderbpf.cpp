@@ -15,6 +15,26 @@ namespace libbpf {
 namespace bpftrace {
 namespace ast {
 
+AllocaInst *IRBuilderBPF::CreateUSym(llvm::Value *val)
+{
+  std::vector<llvm::Type *> elements = {
+    getInt64Ty(), // addr
+    getInt64Ty(), // pid
+  };
+  StructType *usym_t = GetStructType("usym_t", elements, false);
+  AllocaInst *buf = CreateAllocaBPF(usym_t, "usym");
+
+  Value *pid = CreateLShr(CreateGetPidTgid(), 32);
+
+  // The extra 0 here ensures the type of addr_offset will be int64
+  Value *addr_offset = CreateGEP(buf, { getInt64(0), getInt32(0) });
+  Value *pid_offset = CreateGEP(buf, { getInt64(0), getInt32(1) });
+
+  CreateStore(val, addr_offset);
+  CreateStore(pid, pid_offset);
+  return buf;
+}
+
 StructType *IRBuilderBPF::GetStructType(
     std::string name,
     const std::vector<llvm::Type *> &elements,
@@ -96,7 +116,7 @@ AllocaInst *IRBuilderBPF::CreateAllocaBPFInit(const SizedType &stype, const std:
   }
   else
   {
-    CREATE_MEMSET(alloca, getInt64(0), stype.size, 1);
+    CREATE_MEMSET(alloca, getInt8(0), stype.size, 1);
   }
 
   restoreIP(ip);
@@ -219,7 +239,7 @@ Value *IRBuilderBPF::CreateMapLookupElem(int mapfd, AllocaInst *key, SizedType &
 
   bool is_array = (type.type == Type::string ||
                    (type.type == Type::cast && !type.is_pointer) ||
-                   type.type == Type::inet);
+                   type.type == Type::inet || type.type == Type::usym);
 
   SetInsertPoint(lookup_success_block);
   if (is_array)
@@ -273,12 +293,13 @@ void IRBuilderBPF::CreateMapUpdateElem(Map &map, AllocaInst *key, Value *val)
 
 void IRBuilderBPF::CreateMapDeleteElem(Map &map, AllocaInst *key)
 {
+  assert(key->getType()->isPointerTy());
   Value *map_ptr = CreateBpfPseudoCall(map);
 
   // int map_delete_elem(&map, &key)
   // Return: 0 on success or negative error
   FunctionType *delete_func_type = FunctionType::get(
-      getInt64Ty(), { map_ptr->getType(), getInt8PtrTy() }, false);
+      getInt64Ty(), { map_ptr->getType(), key->getType() }, false);
   PointerType *delete_func_ptr_type = PointerType::get(delete_func_type, 0);
   Constant *delete_func = ConstantExpr::getCast(
       Instruction::IntToPtr,
@@ -292,50 +313,53 @@ void IRBuilderBPF::CreateProbeRead(AllocaInst *dst, size_t size, Value *src)
   // int bpf_probe_read(void *dst, int size, void *src)
   // Return: 0 on success or negative error
   FunctionType *proberead_func_type = FunctionType::get(
-      getInt64Ty(),
-      {getInt8PtrTy(), getInt64Ty(), getInt8PtrTy()},
-      false);
+      getInt64Ty(), { dst->getType(), getInt32Ty(), src->getType() }, false);
   PointerType *proberead_func_ptr_type = PointerType::get(proberead_func_type, 0);
   Constant *proberead_func = ConstantExpr::getCast(
       Instruction::IntToPtr,
       getInt64(libbpf::BPF_FUNC_probe_read),
       proberead_func_ptr_type);
-  CreateCall(proberead_func, {dst, getInt64(size), src}, "probe_read");
+  CreateCall(proberead_func, { dst, getInt32(size), src }, "probe_read");
 }
 
-CallInst *IRBuilderBPF::CreateProbeReadStr(AllocaInst *dst, size_t size, Value *src)
+Constant *IRBuilderBPF::createProbeReadStrFn(llvm::Type *dst, llvm::Type *src)
 {
-  return CreateProbeReadStr(dst, getInt64(size), src);
-}
-
-CallInst *IRBuilderBPF::CreateProbeReadStr(AllocaInst *dst, llvm::Value *size, Value *src)
-{
+  assert(src && (src->isIntegerTy() || src->isPointerTy()));
   // int bpf_probe_read_str(void *dst, int size, const void *unsafe_ptr)
   FunctionType *probereadstr_func_type = FunctionType::get(
-      getInt64Ty(),
-      {getInt8PtrTy(), getInt64Ty(), getInt8PtrTy()},
-      false);
-  PointerType *probereadstr_func_ptr_type = PointerType::get(probereadstr_func_type, 0);
-  Constant *probereadstr_func = ConstantExpr::getCast(
-      Instruction::IntToPtr,
-      getInt64(libbpf::BPF_FUNC_probe_read_str),
-      probereadstr_func_ptr_type);
-  return CreateCall(probereadstr_func, {dst, size, src}, "probe_read_str");
+      getInt64Ty(), { dst, getInt32Ty(), src }, false);
+  PointerType *probereadstr_func_ptr_type = PointerType::get(
+      probereadstr_func_type, 0);
+  return ConstantExpr::getCast(Instruction::IntToPtr,
+                               getInt64(libbpf::BPF_FUNC_probe_read_str),
+                               probereadstr_func_ptr_type);
+}
+
+CallInst *IRBuilderBPF::CreateProbeReadStr(AllocaInst *dst,
+                                           size_t size,
+                                           Value *src)
+{
+  return CreateProbeReadStr(dst, getInt32(size), src);
 }
 
 CallInst *IRBuilderBPF::CreateProbeReadStr(Value *dst, size_t size, Value *src)
 {
-  // int bpf_probe_read_str(void *dst, int size, const void *unsafe_ptr)
-  FunctionType *probereadstr_func_type = FunctionType::get(
-      getInt64Ty(),
-      {getInt8PtrTy(), getInt64Ty(), getInt8PtrTy()},
-      false);
-  PointerType *probereadstr_func_ptr_type = PointerType::get(probereadstr_func_type, 0);
-  Constant *probereadstr_func = ConstantExpr::getCast(
-      Instruction::IntToPtr,
-      getInt64(libbpf::BPF_FUNC_probe_read_str),
-      probereadstr_func_ptr_type);
-  return CreateCall(probereadstr_func, {dst, getInt64(size), src}, "map_read_str");
+  Constant *fn = createProbeReadStrFn(dst->getType(), src->getType());
+  return CreateCall(fn, { dst, getInt32(size), src }, "probe_read_str");
+}
+
+CallInst *IRBuilderBPF::CreateProbeReadStr(AllocaInst *dst,
+                                           llvm::Value *size,
+                                           Value *src)
+{
+  assert(dst && dst->getAllocatedType()->isArrayTy() &&
+         dst->getAllocatedType()->getArrayElementType() == getInt8Ty());
+  assert(size && size->getType()->isIntegerTy());
+
+  auto *size_i32 = CreateIntCast(size, getInt32Ty(), false);
+
+  Constant *fn = createProbeReadStrFn(dst->getType(), src->getType());
+  return CreateCall(fn, { dst, size_i32, src }, "probe_read_str");
 }
 
 Value *IRBuilderBPF::CreateUSDTReadArgument(Value *ctx, struct bcc_usdt_argument *argument, Builtin &builtin) {
@@ -417,6 +441,13 @@ Value *IRBuilderBPF::CreateStrcmp(Value* val, std::string str, bool inverse) {
 }
 
 Value *IRBuilderBPF::CreateStrncmp(Value* val, std::string str, uint64_t n, bool inverse) {
+#ifndef NDEBUG
+  PointerType *valp = cast<PointerType>(val->getType());
+  assert(valp->getElementType()->isArrayTy() &&
+         valp->getElementType()->getArrayNumElements() >= n &&
+         valp->getElementType()->getArrayElementType() == getInt8Ty());
+#endif
+
   Function *parent = GetInsertBlock()->getParent();
   BasicBlock *str_ne = BasicBlock::Create(module_.getContext(), "strcmp.false", parent);
   AllocaInst *store = CreateAllocaBPF(getInt8Ty(), "strcmp.result");
@@ -427,9 +458,8 @@ Value *IRBuilderBPF::CreateStrncmp(Value* val, std::string str, uint64_t n, bool
   for (size_t i = 0; i < n; i++)
   {
     BasicBlock *char_eq = BasicBlock::Create(module_.getContext(), "strcmp.loop", parent);
-    Value *ptr = CreateAdd(
-        val,
-        getInt64(i));
+
+    auto *ptr = CreateGEP(val, { getInt32(0), getInt32(i) });
     Value *l = CreateLoad(getInt8Ty(), ptr);
     Value *r = getInt8(c_str[i]);
     Value *cmp = CreateICmpNE(l, r, "strcmp.cmp");
@@ -472,10 +502,26 @@ Value *IRBuilderBPF::CreateStrncmp(Value* val1, Value* val2, uint64_t n, bool in
         return true;
      }
   */
+
+#ifndef NDEBUG
+  PointerType *val1p = cast<PointerType>(val1->getType());
+  PointerType *val2p = cast<PointerType>(val2->getType());
+
+  assert(val1p->getElementType()->isArrayTy() &&
+         val1p->getElementType()->getArrayElementType() == getInt8Ty());
+
+  assert(val2p->getElementType()->isArrayTy() &&
+         val2p->getElementType()->getArrayElementType() == getInt8Ty());
+#endif
+
   Function *parent = GetInsertBlock()->getParent();
-  BasicBlock *str_ne = BasicBlock::Create(module_.getContext(), "strcmp.false", parent);
   AllocaInst *store = CreateAllocaBPF(getInt8Ty(), "strcmp.result");
-  BasicBlock *done = BasicBlock::Create(module_.getContext(), "strcmp.done", parent);
+  BasicBlock *str_ne = BasicBlock::Create(module_.getContext(),
+                                          "strcmp.false",
+                                          parent);
+  BasicBlock *done = BasicBlock::Create(module_.getContext(),
+                                        "strcmp.done",
+                                        parent);
 
   CreateStore(getInt1(!inverse), store);
 
@@ -485,14 +531,18 @@ Value *IRBuilderBPF::CreateStrncmp(Value* val1, Value* val2, uint64_t n, bool in
   AllocaInst *val_r = CreateAllocaBPF(getInt8Ty(), "strcmp.char_r");
   for (size_t i = 0; i < n; i++)
   {
-    BasicBlock *char_eq = BasicBlock::Create(module_.getContext(), "strcmp.loop", parent);
-    BasicBlock *loop_null_check = BasicBlock::Create(module_.getContext(), "strcmp.loop_null_cmp", parent);
+    BasicBlock *char_eq = BasicBlock::Create(module_.getContext(),
+                                             "strcmp.loop",
+                                             parent);
+    BasicBlock *loop_null_check = BasicBlock::Create(module_.getContext(),
+                                                     "strcmp.loop_null_cmp",
+                                                     parent);
 
-    Value *ptr1 = CreateAdd(val1, getInt64(i));
+    auto *ptr1 = CreateGEP(val1, { getInt32(0), getInt32(i) });
     CreateProbeRead(val_l, 1, ptr1);
     Value *l = CreateLoad(getInt8Ty(), val_l);
 
-    Value *ptr2 = CreateAdd(val2, getInt64(i));
+    auto *ptr2 = CreateGEP(val2, { getInt32(0), getInt32(i) });
     CreateProbeRead(val_r, 1, ptr2);
     Value *r = CreateLoad(getInt8Ty(), val_r);
 
@@ -677,7 +727,7 @@ void IRBuilderBPF::CreatePerfEventOutput(Value *ctx, Value *data, size_t size)
   //                           u64 flags, void *data, u64 size)
   FunctionType *perfoutput_func_type = FunctionType::get(getInt64Ty(),
                                                          { getInt8PtrTy(),
-                                                           getInt64Ty(),
+                                                           map_ptr->getType(),
                                                            getInt64Ty(),
                                                            data->getType(),
                                                            getInt64Ty() },
