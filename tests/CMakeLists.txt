@@ -89,22 +89,20 @@ endif(HAVE_BFD_DISASM)
 
 target_link_libraries(bpftrace_test arch ast parser resources)
 
+target_link_libraries(bpftrace_test ${LIBBCC_LIBRARIES})
 if (STATIC_LINKING)
   if(EMBED_LLVM OR EMBED_CLANG)
     set_target_properties(bpftrace_test PROPERTIES LINK_FLAGS "${EMBEDDED_LINK_FLAGS}")
   endif()
 
-  target_link_libraries(bpftrace_test ${LIBBCC_LIBRARIES})
-if (LIBBPF_BTF_DUMP_FOUND)
+  # These two are not part of the static libbcc so have to be added separate
   target_link_libraries(bpftrace_test ${LIBBPF_LIBRARY_STATIC})
-endif(LIBBPF_BTF_DUMP_FOUND)
   target_link_libraries(bpftrace_test ${LIBBCC_LOADER_LIBRARY_STATIC})
 
   add_library(LIBELF STATIC IMPORTED)
   set_property(TARGET LIBELF PROPERTY IMPORTED_LOCATION ${LIBELF_LIBRARIES})
   target_link_libraries(bpftrace_test LIBELF)
 else()
-  target_link_libraries(bpftrace_test ${LIBBCC_LIBRARIES})
   target_link_libraries(bpftrace_test ${LIBELF_LIBRARIES})
 endif(STATIC_LINKING)
 
