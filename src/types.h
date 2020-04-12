@@ -91,7 +91,9 @@ struct SizedType
   bool is_internal = false;
   bool is_pointer = false;
   bool is_tparg = false;
+  bool is_kfarg = false;
   size_t pointee_size = 0;
+  int kfarg_idx = -1;
 
   bool IsArray() const;
   bool IsStack() const;
@@ -117,6 +119,8 @@ enum class ProbeType
   software,
   hardware,
   watchpoint,
+  kfunc,
+  kretfunc,
 };
 
 struct ProbeItem
@@ -141,6 +145,8 @@ const std::vector<ProbeItem> PROBE_LIST =
   { "software", "s", ProbeType::software },
   { "hardware", "h", ProbeType::hardware },
   { "watchpoint", "w", ProbeType::watchpoint },
+  { "kfunc", "f", ProbeType::kfunc },
+  { "kretfunc", "fr", ProbeType::kretfunc },
 };
 
 std::string typestr(Type t);

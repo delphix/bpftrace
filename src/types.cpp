@@ -154,6 +154,9 @@ std::string probetypeName(ProbeType t)
     case ProbeType::interval:    return "interval";    break;
     case ProbeType::software:    return "software";    break;
     case ProbeType::hardware:    return "hardware";    break;
+    case ProbeType::watchpoint:  return "watchpoint";  break;
+    case ProbeType::kfunc:       return "kfunc";       break;
+    case ProbeType::kretfunc:    return "kretfunc";    break;
     default:
       std::cerr << "probe type not found" << std::endl;
       abort();

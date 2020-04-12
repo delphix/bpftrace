@@ -128,6 +128,52 @@ void SemanticAnalyser::visit(Identifier &identifier)
   }
 }
 
+void SemanticAnalyser::builtin_args_tracepoint(AttachPoint *attach_point,
+                                               Builtin &builtin)
+{
+  /*
+   * tracepoint wildcard expansion, part 2 of 3. This:
+   * 1. expands the wildcard, then sets args to be the first matched probe.
+   *    This is so that enough of the type information is available to
+   *    survive the later semantic analyser checks.
+   * 2. sets is_tparg so that codegen does the real type setting after
+   *    expansion.
+   */
+  auto symbol_stream = bpftrace_.get_symbols_from_file(
+      "/sys/kernel/debug/tracing/available_events");
+  auto matches = bpftrace_.find_wildcard_matches(attach_point->target,
+                                                 attach_point->func,
+                                                 *symbol_stream);
+  if (!matches.empty())
+  {
+    auto &match = *matches.begin();
+    std::string tracepoint_struct = TracepointFormatParser::get_struct_name(
+        attach_point->target, match);
+    Struct &cstruct = bpftrace_.structs_[tracepoint_struct];
+    builtin.type = SizedType(Type::ctx, cstruct.size, tracepoint_struct);
+    builtin.type.is_pointer = true;
+    builtin.type.is_tparg = true;
+  }
+}
+
+ProbeType SemanticAnalyser::single_provider_type(void)
+{
+  ProbeType type = ProbeType::invalid;
+
+  for (auto &attach_point : *probe_->attach_points)
+  {
+    ProbeType ap = probetype(attach_point->provider);
+
+    if (type == ProbeType::invalid)
+      type = ap;
+
+    if (type != ap)
+      return ProbeType::invalid;
+  }
+
+  return type;
+}
+
 void SemanticAnalyser::visit(Builtin &builtin)
 {
   if (builtin.ident == "ctx")
@@ -190,20 +236,32 @@ void SemanticAnalyser::visit(Builtin &builtin)
       builtin.type.is_pointer = true;
     }
   }
-  else if (builtin.ident == "retval") {
-    for (auto &attach_point : *probe_->attach_points)
+  else if (builtin.ident == "retval")
+  {
+    ProbeType type = single_provider_type();
+
+    if (type == ProbeType::kretprobe || type == ProbeType::uretprobe)
     {
-      ProbeType type = probetype(attach_point->provider);
-      if (type != ProbeType::kretprobe && type != ProbeType::uretprobe) {
-        ERR("The retval builtin can only be used with 'kretprobe' and "
-                << "'uretprobe' probes"
-                << (type == ProbeType::tracepoint
-                        ? " (try to use args->ret instead)"
-                        : ""),
-            builtin.loc);
-      }
+      builtin.type = SizedType(Type::integer, 8);
     }
-    builtin.type = SizedType(Type::integer, 8);
+    else if (type == ProbeType::kfunc || type == ProbeType::kretfunc)
+    {
+      auto it = ap_args_.find("$retval");
+
+      if (it != ap_args_.end())
+        builtin.type = it->second;
+      else
+        ERR("Can't find a field $retval", builtin.loc);
+    }
+    else
+    {
+      ERR("The retval builtin can only be used with 'kretprobe' and "
+              << "'uretprobe' and 'kfunc' probes"
+              << (type == ProbeType::tracepoint
+                      ? " (try to use args->ret instead)"
+                      : ""),
+          builtin.loc);
+    }
   }
   else if (builtin.ident == "kstack") {
     builtin.type = SizedType(Type::kstack, StackType());
@@ -282,40 +340,33 @@ void SemanticAnalyser::visit(Builtin &builtin)
     builtin.type = SizedType(Type::integer, 4);
   }
   else if (builtin.ident == "args") {
-    probe_->need_expansion = true;
     for (auto &attach_point : *probe_->attach_points)
     {
       ProbeType type = probetype(attach_point->provider);
-      if (type != ProbeType::tracepoint) {
-        error("The args builtin can only be used with tracepoint probes (" +
-                  attach_point->provider + " used here)",
-              builtin.loc);
-        continue;
-      }
 
-      /*
-       * tracepoint wildcard expansion, part 2 of 3. This:
-       * 1. expands the wildcard, then sets args to be the first matched probe.
-       *    This is so that enough of the type information is available to
-       *    survive the later semantic analyser checks.
-       * 2. sets is_tparg so that codegen does the real type setting after
-       *    expansion.
-       */
-      auto symbol_stream = bpftrace_.get_symbols_from_file(
-          "/sys/kernel/debug/tracing/available_events");
-      auto matches = bpftrace_.find_wildcard_matches(attach_point->target,
-                                                     attach_point->func,
-                                                     *symbol_stream);
-      if (!matches.empty())
+      if (type == ProbeType::tracepoint)
       {
-        auto &match = *matches.begin();
-        std::string tracepoint_struct = TracepointFormatParser::get_struct_name(
-            attach_point->target, match);
-        Struct &cstruct = bpftrace_.structs_[tracepoint_struct];
-        builtin.type = SizedType(Type::ctx, cstruct.size, tracepoint_struct);
-        builtin.type.is_pointer = true;
-        builtin.type.is_tparg = true;
+        probe_->need_expansion = true;
+        builtin_args_tracepoint(attach_point, builtin);
       }
+    }
+
+    ProbeType type = single_provider_type();
+
+    if (type == ProbeType::tracepoint)
+    {
+      // no special action in here
+    }
+    else if (type == ProbeType::kfunc || type == ProbeType::kretfunc)
+    {
+      builtin.type = SizedType(Type::ctx, 0);
+      builtin.type.is_kfarg = true;
+    }
+    else
+    {
+      error("The args builtin can only be used with tracepoint/kfunc probes (" +
+                probetypeName(type) + " used here)",
+            builtin.loc);
     }
   }
   else {
@@ -1195,6 +1246,12 @@ void SemanticAnalyser::visit(Unop &unop)
         }
         unop.type.is_tparg = type.is_tparg;
       }
+      else if (type.is_kfarg)
+      {
+        // args->arg access, we need to push the args builtin
+        // type further through the expression ladder
+        unop.type = type;
+      }
       else {
         ERR("Can not dereference struct/union of type '"
                 << type.cast_type << "'. "
@@ -1284,6 +1341,17 @@ void SemanticAnalyser::visit(FieldAccess &acc)
                                    << type << "'",
           acc.loc);
     }
+    return;
+  }
+
+  if (type.is_kfarg)
+  {
+    auto it = ap_args_.find(acc.field);
+
+    if (it != ap_args_.end())
+      acc.type = it->second;
+    else
+      error("Can't find a field", acc.loc);
     return;
   }
 
@@ -1723,6 +1791,34 @@ void SemanticAnalyser::visit(AttachPoint &ap)
           error("More than one END probe defined", ap.loc);
         has_end_probe_ = true;
       }
+    }
+  }
+  else if (ap.provider == "kfunc" || ap.provider == "kretfunc")
+  {
+#ifdef HAVE_KFUNC
+    bool supported = bpftrace_.btf_.has_data();
+#else
+    bool supported = false;
+#endif
+
+    if (!supported)
+    {
+      error("kfunc/kretfunc not available for your kernel version.", ap.loc);
+      return;
+    }
+
+    const auto& ap_map = bpftrace_.btf_ap_args_;
+    auto it = ap_map.find(ap.provider + ap.func);
+
+    if (it != ap_map.end())
+    {
+      auto args = it->second;
+      ap_args_.clear();
+      ap_args_.insert(args.begin(), args.end());
+    }
+    else
+    {
+      error("Failed to resolve kfunc args.", ap.loc);
     }
   }
   else {

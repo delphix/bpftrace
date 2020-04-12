@@ -74,12 +74,16 @@ private:
 
   void assign_map_type(const Map &map, const SizedType &type);
 
+  void builtin_args_tracepoint(AttachPoint *attach_point, Builtin &builtin);
+  ProbeType single_provider_type(void);
+
   Probe *probe_;
   std::string func_;
   std::map<std::string, SizedType> variable_val_;
   std::map<std::string, SizedType> map_val_;
   std::map<std::string, MapKey> map_key_;
   std::map<std::string, ExpressionList> map_args_;
+  std::map<std::string, SizedType> ap_args_;
   std::unordered_set<StackType> needs_stackid_maps_;
   bool needs_join_map_ = false;
   bool needs_elapsed_map_ = false;
