@@ -609,31 +609,36 @@ std::vector<std::unique_ptr<IPrintable>> BPFtrace::get_arg_values(const std::vec
     switch (arg.type.type)
     {
       case Type::integer:
-        switch (arg.type.size)
+        // If no casting is performed, we have already promoted the ty.size to 8
+        if (arg.type.cast_type == "" || arg.type.cast_type == "uint64" ||
+            arg.type.cast_type == "int64")
         {
-          case 8:
-            arg_values.push_back(
-              std::make_unique<PrintableInt>(
-                *reinterpret_cast<uint64_t*>(arg_data+arg.offset)));
-            break;
-          case 4:
-            arg_values.push_back(
-              std::make_unique<PrintableInt>(
-                *reinterpret_cast<uint32_t*>(arg_data+arg.offset)));
-            break;
-          case 2:
-            arg_values.push_back(
-              std::make_unique<PrintableInt>(
-                *reinterpret_cast<uint16_t*>(arg_data+arg.offset)));
-            break;
-          case 1:
-            arg_values.push_back(
-              std::make_unique<PrintableInt>(
-                *reinterpret_cast<uint8_t*>(arg_data+arg.offset)));
-            break;
-          default:
-            std::cerr << "get_arg_values: invalid integer size. 8, 4, 2 and byte supported. " << arg.type.size << "provided" << std::endl;
-            abort();
+          arg_values.push_back(std::make_unique<PrintableInt>(
+              *reinterpret_cast<uint64_t *>(arg_data + arg.offset)));
+        }
+        else if (arg.type.cast_type == "uint32" ||
+                 arg.type.cast_type == "int32")
+        {
+          arg_values.push_back(std::make_unique<PrintableInt>(
+              *reinterpret_cast<uint32_t *>(arg_data + arg.offset)));
+        }
+        else if (arg.type.cast_type == "uint16" ||
+                 arg.type.cast_type == "int16")
+        {
+          arg_values.push_back(std::make_unique<PrintableInt>(
+              *reinterpret_cast<uint16_t *>(arg_data + arg.offset)));
+        }
+        else if (arg.type.cast_type == "uint8" || arg.type.cast_type == "int8")
+        {
+          arg_values.push_back(std::make_unique<PrintableInt>(
+              *reinterpret_cast<uint8_t *>(arg_data + arg.offset)));
+        }
+        else
+        {
+          std::cerr << "get_arg_values: invalid integer size. 8, 4, 2 and byte "
+                       "supported. "
+                    << arg.type.size << "provided" << std::endl;
+          abort();
         }
         break;
       case Type::string:
@@ -1225,7 +1230,7 @@ int BPFtrace::print_map_hist(IMap &map, uint32_t top, uint32_t div)
   while (bpf_get_next_key(map.mapfd_, old_key.data(), key.data()) == 0)
   {
     auto key_prefix = std::vector<uint8_t>(map.key_.size());
-    int bucket = key.at(map.key_.size());
+    uint64_t bucket = read_data<uint64_t>(key.data() + map.key_.size());
 
     for (size_t i=0; i<map.key_.size(); i++)
       key_prefix.at(i) = key.at(i);
@@ -1262,7 +1267,7 @@ int BPFtrace::print_map_hist(IMap &map, uint32_t top, uint32_t div)
   std::vector<std::pair<std::vector<uint8_t>, uint64_t>> total_counts_by_key;
   for (auto &map_elem : values_by_key)
   {
-    int sum = 0;
+    int64_t sum = 0;
     for (size_t i=0; i<map_elem.second.size(); i++)
     {
       sum += map_elem.second.at(i);
@@ -1304,7 +1309,7 @@ int BPFtrace::print_map_stats(IMap &map)
   while (bpf_get_next_key(map.mapfd_, old_key.data(), key.data()) == 0)
   {
     auto key_prefix = std::vector<uint8_t>(map.key_.size());
-    int bucket = key.at(map.key_.size());
+    uint64_t bucket = read_data<uint64_t>(key.data() + map.key_.size());
 
     for (size_t i=0; i<map.key_.size(); i++)
       key_prefix.at(i) = key.at(i);
