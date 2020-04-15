@@ -59,5 +59,19 @@ struct Time
   }
 } __attribute__((packed));
 
+struct Buf
+{
+  uint8_t length;
+  char content[];
+
+  std::vector<llvm::Type*> asLLVMType(ast::IRBuilderBPF& b, size_t length)
+  {
+    return {
+      b.getInt8Ty(),                               // buffer length
+      llvm::ArrayType::get(b.getInt8Ty(), length), // buffer content
+    };
+  }
+} __attribute__((packed));
+
 } // namespace AsyncEvent
 } // namespace bpftrace

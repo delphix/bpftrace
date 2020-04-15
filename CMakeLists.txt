@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 2.8.12)
+cmake_minimum_required(VERSION 3.8)
 project(bpftrace)
 
 # bpftrace version number components.
@@ -36,7 +36,7 @@ if(EMBED_LIBCLANG_ONLY AND NOT EMBED_CLANG)
     message(FATAL_ERROR "Cannot set EMBED_LIBCLANG_ONLY without also setting EMBED_CLANG")
 endif()
 
-set (CMAKE_CXX_STANDARD 14)
+set (CMAKE_CXX_STANDARD 17)
 set (CMAKE_CXX_STANDARD_REQUIRED ON)
 set (CMAKE_CXX_EXTENSIONS OFF)
 
@@ -144,7 +144,7 @@ else()
     find_package(LLVM REQUIRED)
   endif()
 
-  if(${LLVM_VERSION_MAJOR} VERSION_LESS 5)
+  if(${LLVM_VERSION_MAJOR} VERSION_LESS 6)
     message(SEND_ERROR "Unsupported LLVM version found: ${LLVM_INCLUDE_DIRS}")
     message(SEND_ERROR "Specify an LLVM major version using LLVM_REQUESTED_VERSION=<major version>")
   endif()
