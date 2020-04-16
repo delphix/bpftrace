@@ -7,6 +7,7 @@ add_executable(bpftrace
   bpffeature.cpp
   bpftrace.cpp
   btf.cpp
+  child.cpp
   clang_parser.cpp
   disasm.cpp
   driver.cpp
@@ -47,9 +48,9 @@ if (LIBBPF_BTF_DUMP_FOUND)
     target_compile_definitions(bpftrace PRIVATE HAVE_LIBBPF_BTF_DUMP_EMIT_TYPE_DECL)
   endif()
 endif(LIBBPF_BTF_DUMP_FOUND)
-if (HAVE_KFUNC)
-  target_compile_definitions(bpftrace PRIVATE HAVE_KFUNC)
-endif(HAVE_KFUNC)
+if (HAVE_BCC_KFUNC)
+  target_compile_definitions(bpftrace PRIVATE HAVE_BCC_KFUNC)
+endif(HAVE_BCC_KFUNC)
 if(HAVE_BFD_DISASM)
   target_compile_definitions(bpftrace PRIVATE HAVE_BFD_DISASM)
   if(LIBBFD_DISASM_FOUR_ARGS_SIGNATURE)

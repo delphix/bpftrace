@@ -334,7 +334,8 @@ void SemanticAnalyser::visit(Builtin &builtin)
     builtin.type = SizedType(Type::username, 8);
   }
   else if (builtin.ident == "cpid") {
-    if (! bpftrace_.has_child_cmd()) {
+    if (!has_child_)
+    {
       error("cpid cannot be used without child command", builtin.loc);
     }
     builtin.type = SizedType(Type::integer, 4);
@@ -1546,7 +1547,11 @@ void SemanticAnalyser::visit(AssignMapStatement &assignment)
     }
     else {
       map_val_[map_ident].cast_type = cast_type;
-      map_val_[map_ident].is_internal = true;
+      if (!assignment.expr->type.is_pointer)
+      {
+        // A pointer value is loaded to a register, not in the stack
+        map_val_[map_ident].is_internal = true;
+      }
     }
   }
   else if (type == Type::string)
@@ -1738,6 +1743,7 @@ void SemanticAnalyser::visit(AttachPoint &ap)
     }
   }
   else if (ap.provider == "usdt") {
+    bpftrace_.has_usdt_ = true;
     if (ap.func == "")
       error("usdt probe must have a target function or wildcard", ap.loc);
 
@@ -1882,12 +1888,13 @@ void SemanticAnalyser::visit(AttachPoint &ap)
   }
   else if (ap.provider == "kfunc" || ap.provider == "kretfunc")
   {
-#ifdef HAVE_KFUNC
-    bool supported = bpftrace_.btf_.has_data();
-#else
-    bool supported = false;
+#ifndef HAVE_BCC_KFUNC
+    error("kfunc/kretfunc not available for your linked against bcc version.",
+          ap.loc);
+    return;
 #endif
 
+    bool supported = feature_.has_prog_kfunc() && bpftrace_.btf_.has_data();
     if (!supported)
     {
       error("kfunc/kretfunc not available for your kernel version.", ap.loc);

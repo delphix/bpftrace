@@ -19,6 +19,7 @@ add_custom_command(OUTPUT ${CMAKE_BINARY_DIR}/tests/codegen_includes.cpp
 add_executable(bpftrace_test
   ast.cpp
   bpftrace.cpp
+  child.cpp
   clang_parser.cpp
   main.cpp
   mocks.cpp
@@ -34,6 +35,7 @@ add_executable(bpftrace_test
   ${CMAKE_SOURCE_DIR}/src/bpftrace.cpp
   ${CMAKE_SOURCE_DIR}/src/bpffeature.cpp
   ${CMAKE_SOURCE_DIR}/src/btf.cpp
+  ${CMAKE_SOURCE_DIR}/src/child.cpp
   ${CMAKE_SOURCE_DIR}/src/clang_parser.cpp
   ${CMAKE_SOURCE_DIR}/src/disasm.cpp
   ${CMAKE_SOURCE_DIR}/src/driver.cpp
@@ -68,9 +70,9 @@ if (LIBBPF_BTF_DUMP_FOUND)
     target_compile_definitions(bpftrace_test PRIVATE HAVE_LIBBPF_BTF_DUMP_EMIT_TYPE_DECL)
   endif()
 endif(LIBBPF_BTF_DUMP_FOUND)
-if (HAVE_KFUNC)
-  target_compile_definitions(bpftrace_test PRIVATE HAVE_KFUNC)
-endif(HAVE_KFUNC)
+if (HAVE_BCC_KFUNC)
+  target_compile_definitions(bpftrace_test PRIVATE HAVE_BCC_KFUNC)
+endif(HAVE_BCC_KFUNC)
 target_compile_definitions(bpftrace_test PRIVATE TEST_CODEGEN_LOCATION="${CMAKE_SOURCE_DIR}/tests/codegen/llvm/")
 if(HAVE_BFD_DISASM)
   target_compile_definitions(bpftrace_test PRIVATE HAVE_BFD_DISASM)
