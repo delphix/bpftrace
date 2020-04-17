@@ -333,6 +333,8 @@ TEST(semantic_analyser, call_hist)
   test("kprobe:f { hist(1); }", 1);
   test("kprobe:f { $x = hist(1); }", 1);
   test("kprobe:f { @x[hist(1)] = 1; }", 1);
+  test("kprobe:f { if(hist()) { 123 } }", 1);
+  test("kprobe:f { hist() ? 0 : 1; }", 1);
 }
 
 TEST(semantic_analyser, call_lhist)
@@ -347,6 +349,8 @@ TEST(semantic_analyser, call_lhist)
   test("kprobe:f { @ = lhist(-10, -10, 10, 1); }", 10); // must be positive
   test("kprobe:f { $x = lhist(); }", 1);
   test("kprobe:f { @[lhist()] = 1; }", 1);
+  test("kprobe:f { if(lhist()) { 123 } }", 1);
+  test("kprobe:f { lhist() ? 0 : 1; }", 1);
 }
 
 TEST(semantic_analyser, call_count)
@@ -356,6 +360,8 @@ TEST(semantic_analyser, call_count)
   test("kprobe:f { count(); }", 1);
   test("kprobe:f { $x = count(); }", 1);
   test("kprobe:f { @[count()] = 1; }", 1);
+  test("kprobe:f { if(count()) { 123 } }", 1);
+  test("kprobe:f { count() ? 0 : 1; }", 1);
 }
 
 TEST(semantic_analyser, call_sum)
@@ -366,6 +372,8 @@ TEST(semantic_analyser, call_sum)
   test("kprobe:f { sum(123); }", 1);
   test("kprobe:f { $x = sum(123); }", 1);
   test("kprobe:f { @[sum(123)] = 1; }", 1);
+  test("kprobe:f { if(sum(1)) { 123 } }", 1);
+  test("kprobe:f { sum(1) ? 0 : 1; }", 1);
 }
 
 TEST(semantic_analyser, call_min)
@@ -375,6 +383,8 @@ TEST(semantic_analyser, call_min)
   test("kprobe:f { min(123); }", 1);
   test("kprobe:f { $x = min(123); }", 1);
   test("kprobe:f { @[min(123)] = 1; }", 1);
+  test("kprobe:f { if(min(1)) { 123 } }", 1);
+  test("kprobe:f { min(1) ? 0 : 1; }", 1);
 }
 
 TEST(semantic_analyser, call_max)
@@ -384,6 +394,8 @@ TEST(semantic_analyser, call_max)
   test("kprobe:f { max(123); }", 1);
   test("kprobe:f { $x = max(123); }", 1);
   test("kprobe:f { @[max(123)] = 1; }", 1);
+  test("kprobe:f { if(max(1)) { 123 } }", 1);
+  test("kprobe:f { max(1) ? 0 : 1; }", 1);
 }
 
 TEST(semantic_analyser, call_avg)
@@ -393,6 +405,8 @@ TEST(semantic_analyser, call_avg)
   test("kprobe:f { avg(123); }", 1);
   test("kprobe:f { $x = avg(123); }", 1);
   test("kprobe:f { @[avg(123)] = 1; }", 1);
+  test("kprobe:f { if(avg(1)) { 123 } }", 1);
+  test("kprobe:f { avg(1) ? 0 : 1; }", 1);
 }
 
 TEST(semantic_analyser, call_stats)
@@ -402,6 +416,8 @@ TEST(semantic_analyser, call_stats)
   test("kprobe:f { stats(123); }", 1);
   test("kprobe:f { $x = stats(123); }", 1);
   test("kprobe:f { @[stats(123)] = 1; }", 1);
+  test("kprobe:f { if(stats(1)) { 123 } }", 1);
+  test("kprobe:f { stats(1) ? 0 : 1; }", 1);
 }
 
 TEST(semantic_analyser, call_delete)
@@ -412,15 +428,20 @@ TEST(semantic_analyser, call_delete)
   test("kprobe:f { @y = delete(@x); }", 1);
   test("kprobe:f { $y = delete(@x); }", 1);
   test("kprobe:f { @[delete(@x)] = 1; }", 1);
+  test("kprobe:f { @x = 1; if(delete(@x)) { 123 } }", 10);
+  test("kprobe:f { @x = 1; delete(@x) ? 0 : 1; }", 10);
 }
 
 TEST(semantic_analyser, call_exit)
 {
   test("kprobe:f { exit(); }", 0);
   test("kprobe:f { exit(1); }", 1);
+  test("kprobe:f { @a = exit(); }", 1);
   test("kprobe:f { @a = exit(1); }", 1);
   test("kprobe:f { $a = exit(1); }", 1);
   test("kprobe:f { @[exit(1)] = 1; }", 1);
+  test("kprobe:f { if(exit()) { 123 } }", 10);
+  test("kprobe:f { exit() ? 0 : 1; }", 10);
 }
 
 TEST(semantic_analyser, call_print)
@@ -438,6 +459,8 @@ TEST(semantic_analyser, call_print)
   test("kprobe:f { @x = count(); @ = print(@x); }", 1);
   test("kprobe:f { @x = count(); $y = print(@x); }", 1);
   test("kprobe:f { @x = count(); @[print(@x)] = 1; }", 1);
+  test("kprobe:f { @x = count(); if(print(@x)) { 123 } }", 10);
+  test("kprobe:f { @x = count(); print(@x) ? 0 : 1; }", 10);
 }
 
 TEST(semantic_analyser, call_clear)
@@ -453,6 +476,8 @@ TEST(semantic_analyser, call_clear)
   test("kprobe:f { @x = count(); @ = clear(@x); }", 1);
   test("kprobe:f { @x = count(); $y = clear(@x); }", 1);
   test("kprobe:f { @x = count(); @[clear(@x)] = 1; }", 1);
+  test("kprobe:f { @x = count(); if(clear(@x)) { 123 } }", 10);
+  test("kprobe:f { @x = count(); clear(@x) ? 0 : 1; }", 10);
 }
 
 TEST(semantic_analyser, call_zero)
@@ -468,6 +493,8 @@ TEST(semantic_analyser, call_zero)
   test("kprobe:f { @x = count(); @ = zero(@x); }", 1);
   test("kprobe:f { @x = count(); $y = zero(@x); }", 1);
   test("kprobe:f { @x = count(); @[zero(@x)] = 1; }", 1);
+  test("kprobe:f { @x = count(); if(zero(@x)) { 123 } }", 10);
+  test("kprobe:f { @x = count(); zero(@x) ? 0 : 1; }", 10);
 }
 
 TEST(semantic_analyser, call_time)
@@ -480,6 +507,8 @@ TEST(semantic_analyser, call_time)
   test("kprobe:f { @[time()] = 1; }", 1);
   test("kprobe:f { time(1); }", 10);
   test("kprobe:f { $x = \"str\"; time($x); }", 10);
+  test("kprobe:f { if(time()) { 123 } }", 10);
+  test("kprobe:f { time() ? 0 : 1; }", 10);
 }
 
 TEST(semantic_analyser, call_str)
@@ -659,6 +688,8 @@ TEST(semantic_analyser, call_cat)
   test("kprobe:f { @x = cat(\"/proc/loadavg\"); }", 1);
   test("kprobe:f { $x = cat(\"/proc/loadavg\"); }", 1);
   test("kprobe:f { @[cat(\"/proc/loadavg\")] = 1; }", 1);
+  test("kprobe:f { if(cat(\"/proc/loadavg\")) { 123 } }", 10);
+  test("kprobe:f { cat(\"/proc/loadavg\") ? 0 : 1; }", 10);
 }
 
 TEST(semantic_analyser, call_stack)

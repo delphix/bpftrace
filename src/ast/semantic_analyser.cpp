@@ -483,6 +483,7 @@ void SemanticAnalyser::visit(Call &call)
     bool sign = false;
     check_assignment(call, true, false, false);
     if (check_nargs(call, 1)) {
+      check_arg(call, Type::integer, 0);
       sign = call.vargs->at(0)->type.is_signed;
     }
     call.type = SizedType(Type::sum, 8, sign);
@@ -491,6 +492,7 @@ void SemanticAnalyser::visit(Call &call)
     bool sign = false;
     check_assignment(call, true, false, false);
     if (check_nargs(call, 1)) {
+      check_arg(call, Type::integer, 0);
       sign = call.vargs->at(0)->type.is_signed;
     }
     call.type = SizedType(Type::min, 8, sign);
@@ -499,6 +501,7 @@ void SemanticAnalyser::visit(Call &call)
     bool sign = false;
     check_assignment(call, true, false, false);
     if (check_nargs(call, 1)) {
+      check_arg(call, Type::integer, 0);
       sign = call.vargs->at(0)->type.is_signed;
     }
     call.type = SizedType(Type::max, 8, sign);
@@ -506,11 +509,13 @@ void SemanticAnalyser::visit(Call &call)
   else if (call.func == "avg") {
     check_assignment(call, true, false, false);
     check_nargs(call, 1);
+    check_arg(call, Type::integer, 0);
     call.type = SizedType(Type::avg, 8, true);
   }
   else if (call.func == "stats") {
     check_assignment(call, true, false, false);
     check_nargs(call, 1);
+    check_arg(call, Type::integer, 0);
     call.type = SizedType(Type::stats, 8, true);
   }
   else if (call.func == "delete") {
@@ -798,6 +803,7 @@ void SemanticAnalyser::visit(Call &call)
     call.type = SizedType(Type::none, 0);
   }
   else if (call.func == "exit") {
+    check_assignment(call, false, false, false);
     check_nargs(call, 0);
   }
   else if (call.func == "print") {
@@ -1042,6 +1048,12 @@ void SemanticAnalyser::visit(Map &map)
       }
 
       if (is_final_pass()) {
+        if (expr->type.type == Type::none)
+          ERR("Invalid expression for assignment: " << expr->type.type,
+              expr->loc);
+        if (expr->type.type == Type::array)
+          error("Using array as a map key is not supported (#1052)", expr->loc);
+
         // Skip is_signed when comparing keys to not break existing scripts
         // which use maps as a lookup table
         // TODO (fbs): This needs a better solution
@@ -1329,6 +1341,7 @@ void SemanticAnalyser::visit(Ternary &ternary)
   ternary.cond->accept(*this);
   ternary.left->accept(*this);
   ternary.right->accept(*this);
+  Type &cond = ternary.cond->type.type;
   Type &lhs = ternary.left->type.type;
   Type &rhs = ternary.right->type.type;
   if (is_final_pass()) {
@@ -1338,6 +1351,8 @@ void SemanticAnalyser::visit(Ternary &ternary)
               << "and '" << rhs << "'",
           ternary.loc);
     }
+    if (cond != Type::integer)
+      ERR("Invalid condition in ternary: " << cond, ternary.loc);
   }
   if (lhs == Type::string)
     ternary.type = SizedType(lhs, STRING_SIZE);
@@ -1351,6 +1366,13 @@ void SemanticAnalyser::visit(Ternary &ternary)
 void SemanticAnalyser::visit(If &if_block)
 {
   if_block.cond->accept(*this);
+
+  if (is_final_pass())
+  {
+    Type &cond = if_block.cond->type.type;
+    if (cond != Type::integer)
+      ERR("Invalid condition in if(): " << cond, if_block.loc);
+  }
 
   for (Statement *stmt : *if_block.stmts) {
     stmt->accept(*this);
@@ -1599,6 +1621,14 @@ void SemanticAnalyser::visit(AssignMapStatement &assignment)
     // bpf_map_update_elem() only accepts a pointer to a element in the stack
     error("context cannot be assigned to a map", assignment.loc);
   }
+
+  if (is_final_pass())
+  {
+    if (type == Type::none)
+      ERR("Invalid expression for assignment: " << type, assignment.expr->loc);
+    if (type == Type::array)
+      error("Assigning array is not supported (#1057)", assignment.expr->loc);
+  }
 }
 
 void SemanticAnalyser::visit(AssignVarStatement &assignment)
@@ -1678,6 +1708,15 @@ void SemanticAnalyser::visit(AssignVarStatement &assignment)
         buf << " The value may contain garbage.";
       bpftrace_.warning(out_, assignment.loc, buf.str());
     }
+  }
+
+  if (is_final_pass())
+  {
+    auto &ty = assignment.expr->type.type;
+    if (ty == Type::none)
+      ERR("Invalid expression for assignment: " << ty, assignment.expr->loc);
+    if (ty == Type::array)
+      error("Assigning array is not supported (#1057)", assignment.expr->loc);
   }
 }
 
