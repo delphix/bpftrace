@@ -32,6 +32,10 @@ and this project adheres to
   - [#1314](https://github.com/iovisor/bpftrace/pull/1314)
 - With --btf, do not use <linux/types.h> for resolving tracepoint defs
   - [#1318](https://github.com/iovisor/bpftrace/pull/1318)
+- Add environment variable, BPFTRACE_PERF_RB_PAGES, to tune perf ring buffer size
+  - [#1329](https://github.com/iovisor/bpftrace/pull/1329)
+- Add --usdt-file-activation to activate usdt semaphores by file name
+  - [#1317](https://github.com/iovisor/bpftrace/pull/1317)
 
 #### Changed
 

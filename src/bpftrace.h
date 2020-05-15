@@ -160,12 +160,14 @@ public:
   size_t cat_bytes_max_ = 10240;
   uint64_t max_probes_ = 512;
   uint64_t log_size_ = 409600;
+  uint64_t perf_rb_pages_ = 64;
   bool demangle_cpp_symbols_ = true;
   bool resolve_user_symbols_ = true;
   bool cache_user_symbols_ = true;
   bool safe_mode_ = true;
   bool force_btf_ = false;
   bool has_usdt_ = false;
+  bool usdt_file_activation_ = false;
 
   static void sort_by_key(
       std::vector<SizedType> key_args,
@@ -215,8 +217,14 @@ private:
   std::string src_;
   std::string filename_;
 
-  std::unique_ptr<AttachedProbe> attach_probe(Probe &probe,
-                                              const BpfOrc &bpforc);
+  std::vector<std::unique_ptr<AttachedProbe>> attach_usdt_probe(
+      Probe &probe,
+      std::tuple<uint8_t *, uintptr_t> func,
+      int pid,
+      bool file_activation);
+  std::vector<std::unique_ptr<AttachedProbe>> attach_probe(
+      Probe &probe,
+      const BpfOrc &bpforc);
   int setup_perf_events();
   void poll_perf_events(int epollfd, bool drain = false);
   int print_map_hist(IMap &map, uint32_t top, uint32_t div);

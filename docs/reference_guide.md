@@ -496,6 +496,16 @@ Default: None
 The path to a BTF file. By default, bpftrace searches several locations to find a BTF file.
 See src/btf.cpp for the details.
 
+### 9.8 `BPFTRACE_PERF_RB_PAGES`
+
+Default: 64
+
+Number of pages to allocate per CPU for perf ring buffer. The value must be a power of 2.
+
+If you're getting a lot of dropped events bpftrace may not be processing events in the ring buffer
+fast enough. It may be useful to bump the value higher so more events can be queued up. The tradeoff
+is that bpftrace will use more memory.
+
 ## 10. Clang Environment Variables
 
 bpftrace parses header files using libclang, the C interface to Clang. Thus environment variables
@@ -1193,6 +1203,16 @@ the probe to be found, regardless of the name of the binary:
 ```
 bpftrace -e 'usdt:/root/tock:tick:loop { printf("hi\n"); }'
 ```
+
+bpftrace also supports USDT semaphores. You may activate semaphores by passing in `-p $PID` or
+`--usdt-file-activation`. `--usdt-file-activation` looks through `/proc` to find processes that
+have your probe's binary mapped with executable permissions into their address space and then tries
+to attach your probe. Note that file activation occurs only once (during attach time). In other
+words, if later during your tracing session a new process with your executable is spawned, your
+current tracing session will not activate the new process. Also note that `--usdt-file-activation`
+matches based on file path. This means that if bpftrace runs from the root host, things may not work
+as expected if there are processes `execve`d from private mount namespaces or bind mounted directories.
+One workaround is to run bpftrace inside the appropriate namespaces (ie the container).
 
 ## 8. `usdt`: Static Tracing, User-Level Arguments
 

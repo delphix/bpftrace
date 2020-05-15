@@ -57,6 +57,8 @@ void usage()
   std::cerr << "    -l [search]    list probes" << std::endl;
   std::cerr << "    -p PID         enable USDT probes on PID" << std::endl;
   std::cerr << "    -c 'CMD'       run CMD and enable USDT probes on resulting process" << std::endl;
+  std::cerr << "    --usdt-file-activation" << std::endl;
+  std::cerr << "                   activate usdt semaphores based on file path" << std::endl;
   std::cerr << "    --unsafe       allow unsafe builtin functions" << std::endl;
   std::cerr << "    -v             verbose messages" << std::endl;
   std::cerr << "    --info         Print information about kernel BPF support" << std::endl;
@@ -68,6 +70,7 @@ void usage()
   std::cerr << "    BPFTRACE_CAT_BYTES_MAX      [default: 10k] maximum bytes read by cat builtin" << std::endl;
   std::cerr << "    BPFTRACE_MAX_PROBES         [default: 512] max number of probes" << std::endl;
   std::cerr << "    BPFTRACE_LOG_SIZE           [default: 409600] log size in bytes" << std::endl;
+  std::cerr << "    BPFTRACE_PERF_RB_PAGES      [default: 64] pages per CPU to allocate for ring buffer" << std::endl;
   std::cerr << "    BPFTRACE_NO_USER_SYMBOLS    [default: 0] disable user symbol resolution" << std::endl;
   std::cerr << "    BPFTRACE_CACHE_USER_SYMBOLS [default: auto] enable user symbol cache" << std::endl;
   std::cerr << "    BPFTRACE_VMLINUX            [default: none] vmlinux path used for kernel symbol resolution" << std::endl;
@@ -185,6 +188,7 @@ int main(int argc, char *argv[])
   bool listing = false;
   bool safe_mode = true;
   bool force_btf = false;
+  bool usdt_file_activation = false;
   std::string script, search, file_name, output_file, output_format;
   OutputBufferConfig obc = OutputBufferConfig::UNSET;
   int c;
@@ -193,6 +197,7 @@ int main(int argc, char *argv[])
   option long_options[] = {
     option{ "help", no_argument, nullptr, 'h' },
     option{ "version", no_argument, nullptr, 'V' },
+    option{ "usdt-file-activation", no_argument, nullptr, '$' },
     option{ "unsafe", no_argument, nullptr, 'u' },
     option{ "btf", no_argument, nullptr, 'b' },
     option{ "include", required_argument, nullptr, '#' },
@@ -256,6 +261,9 @@ int main(int argc, char *argv[])
         break;
       case 'c':
         cmd_str = optarg;
+        break;
+      case '$':
+        usdt_file_activation = true;
         break;
       case 'u':
         safe_mode = false;
@@ -338,6 +346,7 @@ int main(int argc, char *argv[])
   BPFtrace bpftrace(std::move(output));
   Driver driver(bpftrace);
 
+  bpftrace.usdt_file_activation_ = usdt_file_activation;
   bpftrace.safe_mode_ = safe_mode;
   bpftrace.force_btf_ = force_btf;
 
@@ -490,6 +499,9 @@ int main(int argc, char *argv[])
     return 1;
 
   if (!get_uint64_env_var("BPFTRACE_LOG_SIZE", bpftrace.log_size_))
+    return 1;
+
+  if (!get_uint64_env_var("BPFTRACE_PERF_RB_PAGES", bpftrace.perf_rb_pages_))
     return 1;
 
   if (const char* env_p = std::getenv("BPFTRACE_CAT_BYTES_MAX"))

@@ -1,9 +1,11 @@
 #include <arpa/inet.h>
 #include <cassert>
+#include <cstdio>
 #include <cstring>
 #include <ctime>
 #include <cxxabi.h>
 #include <fstream>
+#include <glob.h>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
@@ -724,8 +726,89 @@ void perf_event_lost(void *cb_cookie, uint64_t lost)
   bpftrace->out_->lost_events(lost);
 }
 
-std::unique_ptr<AttachedProbe> BPFtrace::attach_probe(Probe &probe, const BpfOrc &bpforc)
+std::vector<std::unique_ptr<AttachedProbe>> BPFtrace::attach_usdt_probe(
+    Probe &probe,
+    std::tuple<uint8_t *, uintptr_t> func,
+    int pid,
+    bool file_activation)
 {
+  std::vector<std::unique_ptr<AttachedProbe>> ret;
+
+  if (!(file_activation && probe.path.size()))
+  {
+    ret.emplace_back(std::make_unique<AttachedProbe>(probe, func, pid));
+    return ret;
+  }
+
+  // File activation works by scanning through /proc/*/maps and seeing
+  // which processes have the target executable in their address space
+  // with execute permission. If found, we will try to attach to each
+  // process we find.
+  glob_t globbuf;
+  if (::glob("/proc/[0-9]*/maps", GLOB_NOSORT, nullptr, &globbuf))
+    throw std::runtime_error("failed to glob");
+
+  const char *p;
+  if (!(p = realpath(probe.path.c_str(), nullptr)))
+  {
+    std::cerr << "Failed to resolve " << probe.path << std::endl;
+    return ret;
+  }
+  std::string resolved(p);
+
+  for (size_t i = 0; i < globbuf.gl_pathc; ++i)
+  {
+    std::string path(globbuf.gl_pathv[i]);
+    std::ifstream file(path);
+    if (file.fail())
+    {
+      // The process could have exited between the glob and now. We have
+      // to silently ignore that.
+      continue;
+    }
+
+    std::string line;
+    while (std::getline(file, line))
+    {
+      if (line.find(resolved) == std::string::npos)
+        continue;
+
+      auto parts = split_string(line, ' ');
+      if (parts.at(1).find('x') == std::string::npos)
+        continue;
+
+      // Remove `/proc/` prefix
+      std::string pid_str(globbuf.gl_pathv[i] + 6);
+      // No need to remove `/maps` suffix b/c stoi() will ignore trailing !ints
+
+      int pid_parsed;
+      try
+      {
+        pid_parsed = std::stoi(pid_str);
+      }
+      catch (const std::exception &ex)
+      {
+        throw std::runtime_error("failed to parse pid=" + pid_str);
+      }
+
+      ret.emplace_back(
+          std::make_unique<AttachedProbe>(probe, func, pid_parsed));
+      break;
+    }
+  }
+
+  if (ret.empty())
+    std::cerr << "Failed to find processes running " << probe.path << std::endl;
+
+  return ret;
+}
+
+std::vector<std::unique_ptr<AttachedProbe>> BPFtrace::attach_probe(
+    Probe &probe,
+    const BpfOrc &bpforc)
+{
+  std::vector<std::unique_ptr<AttachedProbe>> ret;
+
   // use the single-probe program if it exists (as is the case with wildcards
   // and the name builtin, which must be expanded into separate programs per
   // probe), else try to find a the program based on the original probe name
@@ -740,23 +823,40 @@ std::unique_ptr<AttachedProbe> BPFtrace::attach_probe(Probe &probe, const BpfOrc
       std::cerr << "Code not generated for probe: " << probe.name << " from: " << probe.orig_name << std::endl;
     else
       std::cerr << "Code not generated for probe: " << probe.name << std::endl;
-    return nullptr;
+    return ret;
   }
   try
   {
-    if (probe.type == ProbeType::usdt || probe.type == ProbeType::watchpoint)
+    pid_t pid = child_ ? child_->pid() : this->pid();
+
+    if (probe.type == ProbeType::usdt)
     {
-      pid_t pid = child_ ? child_->pid() : this->pid();
-      return std::make_unique<AttachedProbe>(probe, func->second, pid);
+      auto aps = attach_usdt_probe(
+          probe, func->second, pid, usdt_file_activation_);
+      for (auto &ap : aps)
+        ret.emplace_back(std::move(ap));
+
+      return ret;
+    }
+    else if (probe.type == ProbeType::watchpoint)
+    {
+      ret.emplace_back(
+          std::make_unique<AttachedProbe>(probe, func->second, pid));
+      return ret;
     }
     else
-      return std::make_unique<AttachedProbe>(probe, func->second, safe_mode_);
+    {
+      ret.emplace_back(
+          std::make_unique<AttachedProbe>(probe, func->second, safe_mode_));
+      return ret;
+    }
   }
   catch (std::runtime_error &e)
   {
     std::cerr << e.what() << std::endl;
+    ret.clear();
   }
-  return nullptr;
+  return ret;
 }
 
 bool attach_reverse(const Probe &p)
@@ -792,10 +892,10 @@ int BPFtrace::run_special_probe(std::string name,
   {
     if ((*probe).attach_point == name)
     {
-      std::unique_ptr<AttachedProbe> ap = attach_probe(*probe, bpforc);
+      auto aps = attach_probe(*probe, bpforc);
 
       trigger();
-      return ap != nullptr ? 0 : -1;
+      return aps.size() ? 0 : -1;
     }
   }
 
@@ -847,24 +947,26 @@ int BPFtrace::run(std::unique_ptr<BpfOrc> bpforc)
   for (auto probes = probes_.begin(); probes != probes_.end(); ++probes)
   {
     if (!attach_reverse(*probes)) {
-      auto attached_probe = attach_probe(*probes, *bpforc.get());
-      if (attached_probe == nullptr)
-      {
+      auto aps = attach_probe(*probes, *bpforc.get());
+
+      if (aps.empty())
         return -1;
-      }
-      attached_probes_.push_back(std::move(attached_probe));
+
+      for (auto &ap : aps)
+        attached_probes_.emplace_back(std::move(ap));
     }
   }
 
   for (auto r_probes = probes_.rbegin(); r_probes != probes_.rend(); ++r_probes)
   {
     if (attach_reverse(*r_probes)) {
-      auto attached_probe = attach_probe(*r_probes, *bpforc.get());
-      if (attached_probe == nullptr)
-      {
+      auto aps = attach_probe(*r_probes, *bpforc.get());
+
+      if (aps.empty())
         return -1;
-      }
-      attached_probes_.push_back(std::move(attached_probe));
+
+      for (auto &ap : aps)
+        attached_probes_.emplace_back(std::move(ap));
     }
   }
 
@@ -916,8 +1018,8 @@ int BPFtrace::setup_perf_events()
   online_cpus_ = cpus.size();
   for (int cpu : cpus)
   {
-    int page_cnt = 64;
-    void *reader = bpf_open_perf_buffer(&perf_event_printer, &perf_event_lost, this, -1, cpu, page_cnt);
+    void *reader = bpf_open_perf_buffer(
+        &perf_event_printer, &perf_event_lost, this, -1, cpu, perf_rb_pages_);
     if (reader == nullptr)
     {
       std::cerr << "Failed to open perf buffer" << std::endl;
