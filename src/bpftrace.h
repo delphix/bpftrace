@@ -79,6 +79,12 @@ private:
   std::string msg_;
 };
 
+struct HelperErrorInfo
+{
+  int func_id;
+  location loc;
+};
+
 class BPFtrace
 {
 public:
@@ -145,6 +151,7 @@ public:
   std::vector<std::string> join_args_;
   std::vector<std::string> time_args_;
   std::vector<std::tuple<std::string, std::vector<Field>>> cat_args_;
+  std::unordered_map<int64_t, struct HelperErrorInfo> helper_error_info_;
   std::unordered_map<StackType, std::unique_ptr<IMap>> stackid_maps_;
   std::unique_ptr<IMap> join_map_;
   std::unique_ptr<IMap> elapsed_map_;
@@ -159,7 +166,7 @@ public:
   uint64_t mapmax_ = 4096;
   size_t cat_bytes_max_ = 10240;
   uint64_t max_probes_ = 512;
-  uint64_t log_size_ = 409600;
+  uint64_t log_size_ = 1000000;
   uint64_t perf_rb_pages_ = 64;
   bool demangle_cpp_symbols_ = true;
   bool resolve_user_symbols_ = true;
@@ -168,6 +175,7 @@ public:
   bool force_btf_ = false;
   bool has_usdt_ = false;
   bool usdt_file_activation_ = false;
+  int helper_check_level_ = 0;
 
   static void sort_by_key(
       std::vector<SizedType> key_args,

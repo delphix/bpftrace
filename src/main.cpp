@@ -62,6 +62,8 @@ void usage()
   std::cerr << "    --unsafe       allow unsafe builtin functions" << std::endl;
   std::cerr << "    -v             verbose messages" << std::endl;
   std::cerr << "    --info         Print information about kernel BPF support" << std::endl;
+  std::cerr << "    -k             emit a warning when a bpf helper returns an error (except read functions)" << std::endl;
+  std::cerr << "    -kk            check all bpf helper functions" << std::endl;
   std::cerr << "    -V, --version  bpftrace version" << std::endl << std::endl;
   std::cerr << "ENVIRONMENT:" << std::endl;
   std::cerr << "    BPFTRACE_STRLEN             [default: 64] bytes on BPF stack per str()" << std::endl;
@@ -69,7 +71,7 @@ void usage()
   std::cerr << "    BPFTRACE_MAP_KEYS_MAX       [default: 4096] max keys in a map" << std::endl;
   std::cerr << "    BPFTRACE_CAT_BYTES_MAX      [default: 10k] maximum bytes read by cat builtin" << std::endl;
   std::cerr << "    BPFTRACE_MAX_PROBES         [default: 512] max number of probes" << std::endl;
-  std::cerr << "    BPFTRACE_LOG_SIZE           [default: 409600] log size in bytes" << std::endl;
+  std::cerr << "    BPFTRACE_LOG_SIZE           [default: 1000000] log size in bytes" << std::endl;
   std::cerr << "    BPFTRACE_PERF_RB_PAGES      [default: 64] pages per CPU to allocate for ring buffer" << std::endl;
   std::cerr << "    BPFTRACE_NO_USER_SYMBOLS    [default: 0] disable user symbol resolution" << std::endl;
   std::cerr << "    BPFTRACE_CACHE_USER_SYMBOLS [default: auto] enable user symbol cache" << std::endl;
@@ -189,11 +191,12 @@ int main(int argc, char *argv[])
   bool safe_mode = true;
   bool force_btf = false;
   bool usdt_file_activation = false;
+  int helper_check_level = 0;
   std::string script, search, file_name, output_file, output_format;
   OutputBufferConfig obc = OutputBufferConfig::UNSET;
   int c;
 
-  const char* const short_options = "dbB:f:e:hlp:vc:Vo:I:";
+  const char* const short_options = "dbB:f:e:hlp:vc:Vo:I:k";
   option long_options[] = {
     option{ "help", no_argument, nullptr, 'h' },
     option{ "version", no_argument, nullptr, 'V' },
@@ -277,6 +280,14 @@ int main(int argc, char *argv[])
       case 'V':
         std::cout << "bpftrace " << BPFTRACE_VERSION << std::endl;
         return 0;
+      case 'k':
+        helper_check_level++;
+        if (helper_check_level >= 3)
+        {
+          usage();
+          return 1;
+        }
+        break;
       default:
         usage();
         return 1;
@@ -349,6 +360,7 @@ int main(int argc, char *argv[])
   bpftrace.usdt_file_activation_ = usdt_file_activation;
   bpftrace.safe_mode_ = safe_mode;
   bpftrace.force_btf_ = force_btf;
+  bpftrace.helper_check_level_ = helper_check_level;
 
   if (!pid_str.empty())
   {
