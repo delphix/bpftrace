@@ -9,55 +9,6 @@
 
 #include "types.h"
 
-namespace {
-
-/*
- * This function splits an attach point definition into arguments,
- * where arguments are separated by `:`. The exception is `:`s inside
- * of quoted strings, which we must treat as a literal.
- *
- * Note that this function assumes the raw string is generally well
- * formed. More specifically, that there is no unescaped whitespace
- * and no unmatched quotes.
- */
-std::vector<std::string> split_attachpoint(const std::string &raw)
-{
-  std::vector<std::string> ret;
-  bool in_quotes = false;
-  std::string argument;
-
-  for (size_t idx = 0; idx < raw.size(); ++idx)
-  {
-    if (raw[idx] == ':' && !in_quotes)
-    {
-      ret.emplace_back(std::move(argument));
-      // The standard says an std::string in moved-from state is in
-      // valid but unspecified state, so clear() to be safe
-      argument.clear();
-    }
-    else if (raw[idx] == '"')
-      in_quotes = !in_quotes;
-    // Handle escaped characters in a string
-    else if (in_quotes && raw[idx] == '\\' && (idx + 1 < raw.size()))
-    {
-      argument += raw[idx + 1];
-      ++idx;
-    }
-    else
-      argument += raw[idx];
-  }
-
-  // Add final argument
-  //
-  // There will always be text in `argument` unless the AP definition
-  // ended in a ':' which we will treat as an empty argument.
-  ret.emplace_back(std::move(argument));
-
-  return ret;
-}
-
-} // namespace
-
 namespace bpftrace {
 namespace ast {
 
@@ -94,7 +45,10 @@ int AttachPointParser::parse_attachpoint(AttachPoint &ap)
 {
   ap_ = &ap;
 
-  parts_ = split_attachpoint(ap_->raw_input);
+  parts_.clear();
+  if (lex_attachpoint(*ap_))
+    return 1;
+
   if (parts_.empty())
   {
     errs_ << "Invalid attachpoint definition" << std::endl;
@@ -134,6 +88,74 @@ int AttachPointParser::parse_attachpoint(AttachPoint &ap)
       errs_ << "Unrecognized probe type: " << ap_->provider << std::endl;
       return 1;
   }
+
+  return 0;
+}
+
+int AttachPointParser::lex_attachpoint(const AttachPoint &ap)
+{
+  const auto &raw = ap.raw_input;
+  std::vector<std::string> ret;
+  bool in_quotes = false;
+  std::string argument;
+
+  for (size_t idx = 0; idx < raw.size(); ++idx)
+  {
+    if (raw[idx] == ':' && !in_quotes)
+    {
+      parts_.emplace_back(std::move(argument));
+      // The standard says an std::string in moved-from state is in
+      // valid but unspecified state, so clear() to be safe
+      argument.clear();
+    }
+    else if (raw[idx] == '"')
+      in_quotes = !in_quotes;
+    // Handle escaped characters in a string
+    else if (in_quotes && raw[idx] == '\\' && (idx + 1 < raw.size()))
+    {
+      argument += raw[idx + 1];
+      ++idx;
+    }
+    else if (!in_quotes && raw[idx] == '$')
+    {
+      // There's an assumption that the positional paramter is well
+      // formed. ie we are not expecting a bare `$` or `$nonint`. The
+      // bison parser should have guaranteed this.
+      size_t i = idx + 1;
+      size_t len = 0;
+      while (i < raw.size() && (raw[i] != '"' && raw[i] != ':'))
+      {
+        len++;
+        i++;
+      }
+
+      std::string param_idx_str = raw.substr(idx + 1, len);
+      size_t pos, param_idx;
+      param_idx = std::stoll(param_idx_str, &pos, 0);
+
+      if (pos != param_idx_str.size())
+      {
+        errs_
+            << "Found trailing text '" << param_idx_str.substr(pos)
+            << "' in positional parameter index. Try quoting the trailing text."
+            << std::endl;
+        return 1;
+      }
+
+      argument += bpftrace_.get_param(param_idx, true);
+      // NB the for loop will then do idx++ so while we consumed
+      // (len + 1) characters, we only increment by (len).
+      idx += len;
+    }
+    else
+      argument += raw[idx];
+  }
+
+  // Add final argument
+  //
+  // There will always be text in `argument` unless the AP definition
+  // ended in a ':' which we will treat as an empty argument.
+  parts_.emplace_back(std::move(argument));
 
   return 0;
 }
