@@ -23,10 +23,10 @@ namespace bpftrace {
 namespace ast {
 
 namespace {
-bool shouldBeOnStackAlready(Type type)
+bool shouldBeOnStackAlready(SizedType &type)
 {
-  return type == Type::string || type == Type::buffer || type == Type::inet ||
-         type == Type::usym;
+  return type.IsStringTy() || type.IsBufferTy() || type.IsInetTy() ||
+         type.IsUsymTy();
 }
 } // namespace
 
@@ -215,7 +215,7 @@ void CodegenLLVM::visit(Builtin &builtin)
     // so call setVolatile() manually
     dyn_cast<LoadInst>(expr_)->setVolatile(true);
 
-    if (builtin.type.type == Type::usym)
+    if (builtin.type.IsUsymTy())
       expr_ = b_.CreateUSym(expr_);
   }
   else if (!builtin.ident.compare(0, 4, "sarg") && builtin.ident.size() == 5 &&
@@ -303,7 +303,9 @@ void CodegenLLVM::visit(Call &call)
 
     call.vargs->front()->accept(*this);
     // promote int to 64-bit
-    expr_ = b_.CreateIntCast(expr_, b_.getInt64Ty(), call.vargs->front()->type.is_signed);
+    expr_ = b_.CreateIntCast(expr_,
+                             b_.getInt64Ty(),
+                             call.vargs->front()->type.IsSigned());
     b_.CreateStore(b_.CreateAdd(expr_, oldval), newval);
     b_.CreateMapUpdateElem(ctx_, map, key, newval, call.loc);
 
@@ -324,7 +326,9 @@ void CodegenLLVM::visit(Call &call)
     Function *parent = b_.GetInsertBlock()->getParent();
     call.vargs->front()->accept(*this);
     // promote int to 64-bit
-    expr_ = b_.CreateIntCast(expr_, b_.getInt64Ty(), call.vargs->front()->type.is_signed);
+    expr_ = b_.CreateIntCast(expr_,
+                             b_.getInt64Ty(),
+                             call.vargs->front()->type.IsSigned());
     Value *inverted = b_.CreateSub(b_.getInt64(0xffffffff), expr_);
     BasicBlock *lt = BasicBlock::Create(module_->getContext(), "min.lt", parent);
     BasicBlock *ge = BasicBlock::Create(module_->getContext(), "min.ge", parent);
@@ -350,7 +354,9 @@ void CodegenLLVM::visit(Call &call)
     Function *parent = b_.GetInsertBlock()->getParent();
     call.vargs->front()->accept(*this);
     // promote int to 64-bit
-    expr_ = b_.CreateIntCast(expr_, b_.getInt64Ty(), call.vargs->front()->type.is_signed);
+    expr_ = b_.CreateIntCast(expr_,
+                             b_.getInt64Ty(),
+                             call.vargs->front()->type.IsSigned());
     BasicBlock *lt = BasicBlock::Create(module_->getContext(), "min.lt", parent);
     BasicBlock *ge = BasicBlock::Create(module_->getContext(), "min.ge", parent);
     b_.CreateCondBr(b_.CreateICmpSGE(expr_, oldval), ge, lt);
@@ -384,7 +390,9 @@ void CodegenLLVM::visit(Call &call)
     AllocaInst *total_new = b_.CreateAllocaBPF(map.type, map.ident + "_val");
     call.vargs->front()->accept(*this);
     // promote int to 64-bit
-    expr_ = b_.CreateIntCast(expr_, b_.getInt64Ty(), call.vargs->front()->type.is_signed);
+    expr_ = b_.CreateIntCast(expr_,
+                             b_.getInt64Ty(),
+                             call.vargs->front()->type.IsSigned());
     b_.CreateStore(b_.CreateAdd(expr_, total_old), total_new);
     b_.CreateMapUpdateElem(ctx_, map, total_key, total_new, call.loc);
     b_.CreateLifetimeEnd(total_key);
@@ -397,7 +405,9 @@ void CodegenLLVM::visit(Call &call)
     Map &map = *call.map;
     call.vargs->front()->accept(*this);
     // promote int to 64-bit
-    expr_ = b_.CreateIntCast(expr_, b_.getInt64Ty(), call.vargs->front()->type.is_signed);
+    expr_ = b_.CreateIntCast(expr_,
+                             b_.getInt64Ty(),
+                             call.vargs->front()->type.IsSigned());
     Function *log2_func = module_->getFunction("log2");
     Value *log2 = b_.CreateCall(log2_func, expr_, "log2");
     AllocaInst *key = getHistMapKey(map, log2);
@@ -434,7 +444,9 @@ void CodegenLLVM::visit(Call &call)
     step = expr_;
 
     // promote int to 64-bit
-    value = b_.CreateIntCast(value, b_.getInt64Ty(), call.vargs->front()->type.is_signed);
+    value = b_.CreateIntCast(value,
+                             b_.getInt64Ty(),
+                             call.vargs->front()->type.IsSigned());
     min = b_.CreateIntCast(min, b_.getInt64Ty(), false);
     max = b_.CreateIntCast(max, b_.getInt64Ty(), false);
     step = b_.CreateIntCast(step, b_.getInt64Ty(), false);
@@ -667,7 +679,7 @@ void CodegenLLVM::visit(Call &call)
     auto inet = call.vargs->at(0);
     if (call.vargs->size() == 1)
     {
-      if (inet->type.type == Type::integer || inet->type.size == 4)
+      if (inet->type.IsIntegerTy() || inet->type.size == 4)
       {
         af_type = b_.getInt64(AF_INET);
       }
@@ -688,7 +700,7 @@ void CodegenLLVM::visit(Call &call)
     b_.CREATE_MEMSET(inet_offset, b_.getInt8(0), 16, 1);
 
     inet->accept(*this);
-    if (inet->type.type == Type::array)
+    if (inet->type.IsArrayTy())
     {
       b_.CreateProbeRead(ctx_,
                          static_cast<AllocaInst *>(inet_offset),
@@ -871,7 +883,8 @@ void CodegenLLVM::visit(Call &call)
   else if (call.func == "signal") {
     // int bpf_send_signal(u32 sig)
     auto &arg = *call.vargs->at(0);
-    if (arg.type.type == Type::string) {
+    if (arg.type.IsStringTy())
+    {
       auto signame = static_cast<String&>(arg).str;
       int sigid = signal_name_to_num(signame);
       // Should be caught in semantic analyser
@@ -883,7 +896,7 @@ void CodegenLLVM::visit(Call &call)
       return;
     }
     arg.accept(*this);
-    expr_ = b_.CreateIntCast(expr_, b_.getInt32Ty(), arg.type.is_signed);
+    expr_ = b_.CreateIntCast(expr_, b_.getInt32Ty(), arg.type.IsSigned());
     b_.CreateSignal(ctx_, expr_, call.loc);
   }
   else if (call.func == "sizeof")
@@ -932,7 +945,7 @@ void CodegenLLVM::visit(Call &call)
     // returns: 0
     auto &arg = *call.vargs->at(0);
     arg.accept(*this);
-    expr_ = b_.CreateIntCast(expr_, b_.getInt64Ty(), arg.type.is_signed);
+    expr_ = b_.CreateIntCast(expr_, b_.getInt64Ty(), arg.type.IsSigned());
     b_.CreateOverrideReturn(ctx_, expr_);
   }
   else
@@ -975,8 +988,8 @@ void CodegenLLVM::visit(Binop &binop)
     return;
   }
 
-  Type &type = binop.left->type.type;
-  if (type == Type::string)
+  SizedType &type = binop.left->type;
+  if (type.IsStringTy())
   {
 
     if (binop.op != bpftrace::Parser::token::EQ && binop.op != bpftrace::Parser::token::NE) {
@@ -1016,7 +1029,7 @@ void CodegenLLVM::visit(Binop &binop)
           ctx_, left_string, right_string, len + 1, binop.loc, inverse);
     }
   }
-  else if (type == Type::buffer)
+  else if (type.IsBufferTy())
   {
     if (binop.op != bpftrace::Parser::token::EQ &&
         binop.op != bpftrace::Parser::token::NE)
@@ -1049,8 +1062,8 @@ void CodegenLLVM::visit(Binop &binop)
     binop.right->accept(*this);
     rhs = expr_;
 
-    bool lsign = binop.left->type.is_signed;
-    bool rsign = binop.right->type.is_signed;
+    bool lsign = binop.left->type.IsSigned();
+    bool rsign = binop.right->type.IsSigned();
     bool do_signed = lsign && rsign;
     // promote int to 64-bit
     lhs = b_.CreateIntCast(lhs, b_.getInt64Ty(), lsign);
@@ -1108,7 +1121,7 @@ void CodegenLLVM::visit(Binop &binop)
 
 static bool unop_skip_accept(Unop &unop)
 {
-  if (unop.expr->type.type == Type::integer)
+  if (unop.expr->type.IsIntTy())
   {
     if (unop.op == bpftrace::Parser::token::INCREMENT ||
         unop.op == bpftrace::Parser::token::DECREMENT)
@@ -1124,7 +1137,7 @@ void CodegenLLVM::visit(Unop &unop)
     unop.expr->accept(*this);
 
   SizedType &type = unop.expr->type;
-  if (type.type == Type::integer)
+  if (type.IsIntegerTy())
   {
     switch (unop.op)
     {
@@ -1207,12 +1220,12 @@ void CodegenLLVM::visit(Unop &unop)
         abort();
     }
   }
-  else if (type.type == Type::cast || type.type == Type::ctx)
+  else if (type.IsCastTy() || type.IsCtxTy())
   {
     switch (unop.op) {
       case bpftrace::Parser::token::MUL:
       {
-        if (type.is_pointer && unop.type.type == Type::integer)
+        if (type.is_pointer && unop.type.IsIntTy())
         {
           int size = unop.type.size;
           AllocaInst *dst = b_.CreateAllocaBPF(unop.type, "deref");
@@ -1251,13 +1264,14 @@ void CodegenLLVM::visit(Ternary &ternary)
                   left_block,
                   right_block);
 
-  if (ternary.type.type == Type::integer) {
+  if (ternary.type.IsIntTy())
+  {
     // fetch selected integer via CreateStore
     b_.SetInsertPoint(left_block);
     ternary.left->accept(*this);
     expr_ = b_.CreateIntCast(expr_,
                              b_.GetType(ternary.type),
-                             ternary.type.is_signed);
+                             ternary.type.IsSigned());
     b_.CreateStore(expr_, result);
     b_.CreateBr(done);
 
@@ -1265,13 +1279,15 @@ void CodegenLLVM::visit(Ternary &ternary)
     ternary.right->accept(*this);
     expr_ = b_.CreateIntCast(expr_,
                              b_.GetType(ternary.type),
-                             ternary.type.is_signed);
+                             ternary.type.IsSigned());
     b_.CreateStore(expr_, result);
     b_.CreateBr(done);
 
     b_.SetInsertPoint(done);
     expr_ = b_.CreateLoad(result);
-  } else {
+  }
+  else
+  {
     // copy selected string via CreateMemCpy
     b_.SetInsertPoint(left_block);
     ternary.left->accept(*this);
@@ -1295,7 +1311,7 @@ void CodegenLLVM::visit(Ternary &ternary)
 void CodegenLLVM::visit(FieldAccess &acc)
 {
   SizedType &type = acc.expr->type;
-  assert(type.type == Type::cast || type.type == Type::ctx);
+  assert(type.IsCastTy() || type.IsCtxTy());
   acc.expr->accept(*this);
 
   if (type.is_kfarg)
@@ -1320,7 +1336,7 @@ void CodegenLLVM::visit(FieldAccess &acc)
     // Just read from the correct offset of expr_
     Value *src = b_.CreateGEP(expr_, {b_.getInt64(0), b_.getInt64(field.offset)});
 
-    if (field.type.type == Type::cast)
+    if (field.type.IsCastTy())
     {
       // TODO This should be do-able without allocating more memory here
       AllocaInst *dst = b_.CreateAllocaBPF(field.type, "internal_" + type.cast_type + "." + acc.field);
@@ -1328,7 +1344,7 @@ void CodegenLLVM::visit(FieldAccess &acc)
       expr_ = dst;
       // TODO clean up dst memory?
     }
-    else if (field.type.type == Type::string || field.type.type == Type::buffer)
+    else if (field.type.IsStringTy() || field.type.IsBufferTy())
     {
       expr_ = src;
     }
@@ -1345,7 +1361,7 @@ void CodegenLLVM::visit(FieldAccess &acc)
     Value *src = b_.CreateAdd(expr_, b_.getInt64(field.offset));
     llvm::Type *field_ty = b_.GetType(field.type);
 
-    if (field.type.type == Type::cast && !field.type.is_pointer)
+    if (field.type.IsCastTy() && !field.type.is_pointer)
     {
       // struct X
       // {
@@ -1358,7 +1374,7 @@ void CodegenLLVM::visit(FieldAccess &acc)
       // pointer internally and dereference later when necessary.
       expr_ = src;
     }
-    else if (field.type.type == Type::array)
+    else if (field.type.IsArrayTy())
     {
       // For array types, we want to just pass pointer along,
       // since the offset of the field should be the start of the array.
@@ -1366,10 +1382,10 @@ void CodegenLLVM::visit(FieldAccess &acc)
       // operation
       expr_ = src;
     }
-    else if (field.type.type == Type::string || field.type.type == Type::buffer)
+    else if (field.type.IsStringTy() || field.type.IsBufferTy())
     {
       AllocaInst *dst = b_.CreateAllocaBPF(field.type, type.cast_type + "." + acc.field);
-      if (type.type == Type::ctx)
+      if (type.IsCtxTy())
       {
         // Map functions only accept a pointer to a element in the stack
         // Copy data to avoid the above issue
@@ -1385,10 +1401,10 @@ void CodegenLLVM::visit(FieldAccess &acc)
       }
       expr_ = dst;
     }
-    else if (field.type.type == Type::integer && field.is_bitfield)
+    else if (field.type.IsIntTy() && field.is_bitfield)
     {
       Value *raw;
-      if (type.type == Type::ctx)
+      if (type.IsCtxTy())
         raw = b_.CreateLoad(b_.CreateIntToPtr(src, field_ty->getPointerTo()),
                             true);
       else
@@ -1405,9 +1421,9 @@ void CodegenLLVM::visit(FieldAccess &acc)
       Value *masked = b_.CreateAnd(shifted, field.bitfield.mask);
       expr_ = masked;
     }
-    else if (type.type == Type::ctx &&
-             (field.type.type == Type::integer ||
-              (field.type.type == Type::cast && field.type.is_pointer)))
+    else if (type.IsCtxTy() &&
+             (field.type.IsIntTy() ||
+              (field.type.IsCastTy() && field.type.is_pointer)))
     {
       expr_ = b_.CreateLoad(b_.CreateIntToPtr(src, field_ty->getPointerTo()),
                             true);
@@ -1432,12 +1448,12 @@ void CodegenLLVM::visit(ArrayAccess &arr)
 
   arr.indexpr->accept(*this);
   // promote int to 64-bit
-  index = b_.CreateIntCast(expr_, b_.getInt64Ty(), arr.expr->type.is_signed);
+  index = b_.CreateIntCast(expr_, b_.getInt64Ty(), arr.expr->type.IsSigned());
   offset = b_.CreateMul(index, b_.getInt64(type.pointee_size));
 
   Value *src = b_.CreateAdd(array, offset);
   auto stype = SizedType(Type::integer, type.pointee_size);
-  if (arr.expr->type.type == Type::ctx)
+  if (arr.expr->type.IsCtxTy())
   {
     auto ty = b_.GetType(stype);
     expr_ = b_.CreateLoad(b_.CreateIntToPtr(src, ty->getPointerTo()), true);
@@ -1454,8 +1470,10 @@ void CodegenLLVM::visit(ArrayAccess &arr)
 void CodegenLLVM::visit(Cast &cast)
 {
   cast.expr->accept(*this);
-  if (cast.type.type == Type::integer) {
-    expr_ = b_.CreateIntCast(expr_, b_.getIntNTy(8 * cast.type.size), cast.type.is_signed, "cast");
+  if (cast.type.IsIntTy())
+  {
+    expr_ = b_.CreateIntCast(
+        expr_, b_.getIntNTy(8 * cast.type.size), cast.type.IsSigned(), "cast");
   }
 }
 
@@ -1476,11 +1494,11 @@ void CodegenLLVM::visit(AssignMapStatement &assignment)
   Value *val, *expr;
   expr = expr_;
   AllocaInst *key = getMapKey(map);
-  if (shouldBeOnStackAlready(assignment.expr->type.type))
+  if (shouldBeOnStackAlready(assignment.expr->type))
   {
     val = expr;
   }
-  else if (map.type.type == Type::cast)
+  else if (map.type.IsCastTy())
   {
     if (assignment.expr->type.is_internal)
     {
@@ -1505,10 +1523,10 @@ void CodegenLLVM::visit(AssignMapStatement &assignment)
   }
   else
   {
-    if (map.type.type == Type::integer)
+    if (map.type.IsIntTy())
     {
       // Integers are always stored as 64-bit in map values
-      expr = b_.CreateIntCast(expr, b_.getInt64Ty(), map.type.is_signed);
+      expr = b_.CreateIntCast(expr, b_.getInt64Ty(), map.type.IsSigned());
     }
     val = b_.CreateAllocaBPF(map.type, map.ident + "_val");
     b_.CreateStore(expr, val);
@@ -1873,7 +1891,7 @@ AllocaInst *CodegenLLVM::getMapKey(Map &map)
     {
       Expression *expr = map.vargs->at(0);
       expr->accept(*this);
-      if (shouldBeOnStackAlready(expr->type.type))
+      if (shouldBeOnStackAlready(expr->type))
       {
         key = dyn_cast<AllocaInst>(expr_);
       }
@@ -1881,7 +1899,7 @@ AllocaInst *CodegenLLVM::getMapKey(Map &map)
       {
         key = b_.CreateAllocaBPF(expr->type.size, map.ident + "_key");
         b_.CreateStore(
-            b_.CreateIntCast(expr_, b_.getInt64Ty(), expr->type.is_signed),
+            b_.CreateIntCast(expr_, b_.getInt64Ty(), expr->type.IsSigned()),
             b_.CreatePointerCast(key, expr_->getType()->getPointerTo()));
       }
     }
@@ -1903,7 +1921,7 @@ AllocaInst *CodegenLLVM::getMapKey(Map &map)
         Value *offset_val = b_.CreateGEP(
             key, { b_.getInt64(0), b_.getInt64(offset) });
 
-        if (shouldBeOnStackAlready(expr->type.type))
+        if (shouldBeOnStackAlready(expr->type))
         {
           b_.CREATE_MEMCPY(offset_val, expr_, expr->type.size, 1);
           if (!expr->is_variable && dyn_cast<AllocaInst>(expr_))
@@ -1913,7 +1931,7 @@ AllocaInst *CodegenLLVM::getMapKey(Map &map)
         {
           // promote map key to 64-bit:
           b_.CreateStore(
-              b_.CreateIntCast(expr_, b_.getInt64Ty(), expr->type.is_signed),
+              b_.CreateIntCast(expr_, b_.getInt64Ty(), expr->type.IsSigned()),
               b_.CreatePointerCast(offset_val,
                                    expr_->getType()->getPointerTo()));
         }
@@ -1945,7 +1963,7 @@ AllocaInst *CodegenLLVM::getHistMapKey(Map &map, Value *log2)
     for (Expression *expr : *map.vargs) {
       expr->accept(*this);
       Value *offset_val = b_.CreateGEP(key, {b_.getInt64(0), b_.getInt64(offset)});
-      if (shouldBeOnStackAlready(expr->type.type))
+      if (shouldBeOnStackAlready(expr->type))
       {
         b_.CREATE_MEMCPY(offset_val, expr_, expr->type.size, 1);
         if (!expr->is_variable && dyn_cast<AllocaInst>(expr_))
@@ -1968,8 +1986,8 @@ AllocaInst *CodegenLLVM::getHistMapKey(Map &map, Value *log2)
 
 Value *CodegenLLVM::createLogicalAnd(Binop &binop)
 {
-  assert(binop.left->type.type == Type::integer);
-  assert(binop.right->type.type == Type::integer);
+  assert(binop.left->type.IsIntTy());
+  assert(binop.right->type.IsIntTy());
 
   Function *parent = b_.GetInsertBlock()->getParent();
   BasicBlock *lhs_true_block = BasicBlock::Create(module_->getContext(), "&&_lhs_true", parent);
@@ -2007,8 +2025,8 @@ Value *CodegenLLVM::createLogicalAnd(Binop &binop)
 
 Value *CodegenLLVM::createLogicalOr(Binop &binop)
 {
-  assert(binop.left->type.type == Type::integer);
-  assert(binop.right->type.type == Type::integer);
+  assert(binop.left->type.IsIntTy());
+  assert(binop.right->type.IsIntTy());
 
   Function *parent = b_.GetInsertBlock()->getParent();
   BasicBlock *lhs_false_block = BasicBlock::Create(module_->getContext(), "||_lhs_false", parent);

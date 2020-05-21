@@ -493,7 +493,7 @@ void SemanticAnalyser::visit(Call &call)
     check_assignment(call, true, false, false);
     if (check_nargs(call, 1)) {
       check_arg(call, Type::integer, 0);
-      sign = call.vargs->at(0)->type.is_signed;
+      sign = call.vargs->at(0)->type.IsSigned();
     }
     call.type = CreateSum(sign);
   }
@@ -502,7 +502,7 @@ void SemanticAnalyser::visit(Call &call)
     check_assignment(call, true, false, false);
     if (check_nargs(call, 1)) {
       check_arg(call, Type::integer, 0);
-      sign = call.vargs->at(0)->type.is_signed;
+      sign = call.vargs->at(0)->type.IsSigned();
     }
     call.type = CreateMin(sign);
   }
@@ -511,7 +511,7 @@ void SemanticAnalyser::visit(Call &call)
     check_assignment(call, true, false, false);
     if (check_nargs(call, 1)) {
       check_arg(call, Type::integer, 0);
-      sign = call.vargs->at(0)->type.is_signed;
+      sign = call.vargs->at(0)->type.IsSigned();
     }
     call.type = CreateMax(sign);
   }
@@ -555,8 +555,7 @@ void SemanticAnalyser::visit(Call &call)
       return;
 
     auto &arg = *call.vargs->at(0);
-    if (!(arg.type.type == Type::integer || arg.type.type == Type::string ||
-          arg.type.type == Type::array))
+    if (!(arg.type.IsIntTy() || arg.type.IsStringTy() || arg.type.IsArrayTy()))
       error(call.func +
                 "() expects an integer, string, or array argument but saw " +
                 typestr(arg.type.type),
@@ -566,7 +565,7 @@ void SemanticAnalyser::visit(Call &call)
     size_t buffer_size = max_buffer_size;
 
     if (call.vargs->size() == 1)
-      if (arg.type.type == Type::array)
+      if (arg.type.IsArrayTy())
         buffer_size = arg.type.pointee_size * arg.type.size;
       else
         error(call.func + "() expects a length argument for non-array type " +
@@ -640,7 +639,8 @@ void SemanticAnalyser::visit(Call &call)
     //   }
     // }
     int buffer_size = 24;
-    if (arg->type.type == Type::array) {
+    if (arg->type.IsArrayTy())
+    {
       if (arg->type.elem_type != Type::integer || arg->type.pointee_size != 1 || !(arg->type.size == 4 || arg->type.size == 16)) {
         error(call.func + "() invalid array", call.loc);
       }
@@ -915,13 +915,15 @@ void SemanticAnalyser::visit(Call &call)
     }
 
     auto &arg = *call.vargs->at(0);
-    if (arg.type.type == Type::string && arg.is_literal) {
+    if (arg.type.IsStringTy() && arg.is_literal)
+    {
       auto sig = static_cast<String&>(arg).str;
       if (signal_name_to_num(sig) < 1) {
         error(sig + " is not a valid signal", call.loc);
       }
     }
-    else if(arg.type.type == Type::integer && arg.is_literal) {
+    else if (arg.type.IsIntTy() && arg.is_literal)
+    {
       auto sig = static_cast<Integer&>(arg).n;
       if (sig < 1 || sig > 64) {
         error(std::to_string(sig) +
@@ -1011,10 +1013,13 @@ void SemanticAnalyser::check_stack_call(Call &call, bool kernel)
           auto &arg = *call.vargs->at(0);
           // If we have a single argument it can be either
           // stack-mode or stack-size
-          if (arg.type.type == Type::stack_mode) {
+          if (arg.type.IsStackModeTy())
+          {
             if (check_arg(call, Type::stack_mode, 0, true))
               stack_type.mode = static_cast<StackMode&>(arg).type.stack_type.mode;
-          } else {
+          }
+          else
+          {
             if (check_arg(call, Type::integer, 0, true))
               stack_type.limit = static_cast<Integer&>(arg).n;
           }
@@ -1059,31 +1064,33 @@ void SemanticAnalyser::visit(Map &map)
 
       // Insert a cast to 64 bits if needed by injecting
       // a cast into the ast.
-      if (expr->type.type == Type::integer && expr->type.size < 8) {
-        std::string type = expr->type.is_signed ? "int64" : "uint64";
+      if (expr->type.IsIntTy() && expr->type.size < 8)
+      {
+        std::string type = expr->type.IsSigned() ? "int64" : "uint64";
         Expression * cast = new ast::Cast(type, false, expr);
         cast->accept(*this);
         map.vargs->at(i) = cast;
         expr = cast;
       }
-      else if (expr->type.type == Type::ctx)
+      else if (expr->type.IsCtxTy())
       {
         // map functions only accepts a pointer to a element in the stack
         error("context cannot be used as a map key", map.loc);
       }
 
       if (is_final_pass()) {
-        if (expr->type.type == Type::none)
+        if (expr->type.IsNoneTy())
           ERR("Invalid expression for assignment: " << expr->type.type,
               expr->loc);
-        if (expr->type.type == Type::array)
+        if (expr->type.IsArrayTy())
           error("Using array as a map key is not supported (#1052)", expr->loc);
 
-        // Skip is_signed when comparing keys to not break existing scripts
+        SizedType keytype = expr->type;
+        // Skip.IsSigned() when comparing keys to not break existing scripts
         // which use maps as a lookup table
         // TODO (fbs): This needs a better solution
-        SizedType keytype = expr->type;
-        keytype.is_signed = false;
+        if (expr->type.IsIntTy())
+          keytype = CreateUInt(keytype.size * 8);
         key.args_.push_back(keytype);
       }
     }
@@ -1141,11 +1148,11 @@ void SemanticAnalyser::visit(ArrayAccess &arr)
   SizedType &indextype = arr.indexpr->type;
 
   if (is_final_pass()) {
-    if (!((type.type == Type::array || type.type == Type::ctx) &&
-          type.elem_type != Type::none))
+    if (!((type.IsArrayTy() || type.IsCtxTy()) && type.elem_type != Type::none))
       error("The array index operator [] can only be used on arrays.", arr.loc);
 
-    if (indextype.type == Type::integer && arr.indexpr->is_literal) {
+    if (indextype.IsIntTy() && arr.indexpr->is_literal)
+    {
       Integer *index = static_cast<Integer *>(arr.indexpr);
 
       if ((size_t) index->n >= type.size)
@@ -1159,7 +1166,7 @@ void SemanticAnalyser::visit(ArrayAccess &arr)
     }
   }
 
-  arr.type = SizedType(type.elem_type, type.pointee_size, type.is_signed);
+  arr.type = SizedType(type.elem_type, type.pointee_size, type.IsSigned());
 }
 
 void SemanticAnalyser::visit(Binop &binop)
@@ -1168,8 +1175,8 @@ void SemanticAnalyser::visit(Binop &binop)
   binop.right->accept(*this);
   Type &lhs = binop.left->type.type;
   Type &rhs = binop.right->type.type;
-  bool lsign = binop.left->type.is_signed;
-  bool rsign = binop.right->type.is_signed;
+  bool lsign = binop.left->type.IsSigned();
+  bool rsign = binop.right->type.IsSigned();
 
   std::stringstream buf;
   if (is_final_pass()) {
@@ -1203,11 +1210,11 @@ void SemanticAnalyser::visit(Binop &binop)
         // No warning should be emitted as we know that 10 can be
         // represented as unsigned int
         if (lsign && !rsign && left->is_literal && get_int_literal(left) >= 0) {
-          left->type.is_signed = lsign = false;
+          lsign = false;
         }
         // The reverse (10 < a) should also hold
         else if (!lsign && rsign && right->is_literal && get_int_literal(right) >= 0) {
-          right->type.is_signed = rsign = false;
+          rsign = false;
         }
         else {
           switch (binop.op) {
@@ -1217,9 +1224,8 @@ void SemanticAnalyser::visit(Binop &binop)
           case bpftrace::Parser::token::GE:
           case bpftrace::Parser::token::LT:
           case bpftrace::Parser::token::GT:
-            buf << "comparison of integers of different signs: '"
-                << binop.left->type << "' and '"
-                << binop.right->type << "'"
+            buf << "comparison of integers of different signs: '" << left->type
+                << "' and '" << right->type << "'"
                 << " can lead to undefined behavior";
             warning(buf.str(), binop.loc);
             buf.str({});
@@ -1229,8 +1235,8 @@ void SemanticAnalyser::visit(Binop &binop)
           case bpftrace::Parser::token::MUL:
           case bpftrace::Parser::token::DIV:
           case bpftrace::Parser::token::MOD:
-            buf << "arithmetic on integers of different signs: '"
-                << left->type << "' and '" << right->type << "'"
+            buf << "arithmetic on integers of different signs: '" << left->type
+                << "' and '" << right->type << "'"
                 << " can lead to undefined behavior";
             warning(buf.str(), binop.loc);
             buf.str({});
@@ -1249,9 +1255,9 @@ void SemanticAnalyser::visit(Binop &binop)
           binop.op == bpftrace::Parser::token::MOD) {
         // Convert operands to unsigned if possible
         if (lsign && left->is_literal && get_int_literal(left) >= 0)
-          left->type.is_signed = lsign = false;
+          lsign = false;
         if (rsign && right->is_literal && get_int_literal(right) >= 0)
-          right->type.is_signed = rsign = false;
+          rsign = false;
 
         // If they're still signed, we have to warn
         if (lsign || rsign) {
@@ -1306,9 +1312,8 @@ void SemanticAnalyser::visit(Unop &unop)
   unop.expr->accept(*this);
 
   SizedType &type = unop.expr->type;
-  if (is_final_pass() && !(type.type == Type::integer) &&
-      !((type.type == Type::cast || type.type == Type::ctx) &&
-        unop.op == Parser::token::MUL))
+  if (is_final_pass() && !(type.IsIntTy()) &&
+      !((type.IsCastTy() || type.IsCtxTy()) && unop.op == Parser::token::MUL))
   {
     ERR("The " << opstr(unop)
                << " operator can not be used on expressions of type '" << type
@@ -1317,7 +1322,7 @@ void SemanticAnalyser::visit(Unop &unop)
   }
 
   if (unop.op == Parser::token::MUL) {
-    if (type.type == Type::cast || type.type == Type::ctx)
+    if (type.IsCastTy() || type.IsCtxTy())
     {
       if (type.is_pointer) {
         int cast_size;
@@ -1349,15 +1354,16 @@ void SemanticAnalyser::visit(Unop &unop)
             unop.loc);
       }
     }
-    else if (type.type == Type::integer) {
-      unop.type = CreateInteger(8 * type.size, type.is_signed);
+    else if (type.IsIntTy())
+    {
+      unop.type = CreateInteger(8 * type.size, type.IsSigned());
     }
   }
   else if (unop.op == Parser::token::LNOT) {
     unop.type = CreateUInt(type.size);
   }
   else {
-    unop.type = CreateInteger(64, type.is_signed);
+    unop.type = CreateInteger(64, type.IsSigned());
   }
 }
 
@@ -1382,7 +1388,7 @@ void SemanticAnalyser::visit(Ternary &ternary)
   if (lhs == Type::string)
     ternary.type = CreateString(STRING_SIZE);
   else if (lhs == Type::integer)
-    ternary.type = CreateInteger(64, ternary.left->type.is_signed);
+    ternary.type = CreateInteger(64, ternary.left->type.IsSigned());
   else {
     ERR("Ternary return type unsupported " << lhs, ternary.loc);
   }
@@ -1558,9 +1564,9 @@ void SemanticAnalyser::visit(FieldAccess &acc)
     }
     else {
       acc.type = fields[acc.field].type;
-      if (acc.expr->type.type == Type::ctx &&
-          ((acc.type.type == Type::cast && !acc.type.is_pointer) ||
-           acc.type.type == Type::array))
+      if (acc.expr->type.IsCtxTy() &&
+          ((acc.type.IsCastTy() && !acc.type.is_pointer) ||
+           acc.type.IsArrayTy()))
       {
         // e.g., ((struct bpf_perf_event_data*)ctx)->regs.ax
         // in this case, the type of FieldAccess to "regs" is Type::ctx
@@ -1575,7 +1581,7 @@ void SemanticAnalyser::visit(Cast &cast)
 {
   cast.expr->accept(*this);
 
-  bool is_ctx = cast.expr->type.type == Type::ctx;
+  bool is_ctx = cast.expr->type.IsCtxTy();
   auto &intcasts = getIntcasts();
   auto k_v = intcasts.find(cast.cast_type);
   int cast_size;
@@ -1717,7 +1723,8 @@ void SemanticAnalyser::visit(AssignVarStatement &assignment)
   auto search = variable_val_.find(var_ident);
   assignment.var->type = assignment.expr->type;
   if (search != variable_val_.end()) {
-    if (search->second.type == Type::none) {
+    if (search->second.IsNoneTy())
+    {
       if (is_final_pass()) {
         error("Undefined variable: " + var_ident, assignment.loc);
       }
@@ -1740,8 +1747,7 @@ void SemanticAnalyser::visit(AssignVarStatement &assignment)
     assignment.var->type = assignment.expr->type;
   }
 
-  if (assignment.expr->type.type == Type::cast ||
-      assignment.expr->type.type == Type::ctx)
+  if (assignment.expr->type.IsCastTy() || assignment.expr->type.IsCtxTy())
   {
     std::string cast_type = assignment.expr->type.cast_type;
     std::string curr_cast_type = variable_val_[var_ident].cast_type;
@@ -1757,7 +1763,7 @@ void SemanticAnalyser::visit(AssignVarStatement &assignment)
       variable_val_[var_ident].cast_type = cast_type;
     }
   }
-  else if (assignment.expr->type.type == Type::string)
+  else if (assignment.expr->type.IsStringTy())
   {
     auto var_size = variable_val_[var_ident].size;
     auto expr_size = assignment.expr->type.size;
@@ -1772,7 +1778,7 @@ void SemanticAnalyser::visit(AssignVarStatement &assignment)
       bpftrace_.warning(out_, assignment.loc, buf.str());
     }
   }
-  else if (assignment.expr->type.type == Type::buffer)
+  else if (assignment.expr->type.IsBufferTy())
   {
     auto var_size = variable_val_[var_ident].size;
     auto expr_size = assignment.expr->type.size;
@@ -1803,8 +1809,8 @@ void SemanticAnalyser::visit(Predicate &pred)
   pred.expr->accept(*this);
   if (is_final_pass() &&
       ((pred.expr->type.type != Type::integer) &&
-       (!(pred.expr->type.is_pointer && (pred.expr->type.type == Type::cast ||
-                                         pred.expr->type.type == Type::ctx)))))
+       (!(pred.expr->type.is_pointer &&
+          (pred.expr->type.IsCastTy() || pred.expr->type.IsCtxTy())))))
   {
     ERR("Invalid type for predicate: " << pred.expr->type.type, pred.loc);
   }
@@ -2109,7 +2115,7 @@ int SemanticAnalyser::create_maps(bool debug)
     }
     else
     {
-      if (type.type == Type::lhist)
+      if (type.IsLhistTy())
       {
         // store lhist args to the bpftrace::Map
         auto map_args = map_args_.find(map_name);
@@ -2414,7 +2420,8 @@ void SemanticAnalyser::assign_map_type(const Map &map, const SizedType &type)
   const std::string &map_ident = map.ident;
   auto search = map_val_.find(map_ident);
   if (search != map_val_.end()) {
-    if (search->second.type == Type::none) {
+    if (search->second.IsNoneTy())
+    {
       if (is_final_pass()) {
         error("Undefined map: " + map_ident, map.loc);
       }
@@ -2434,7 +2441,8 @@ void SemanticAnalyser::assign_map_type(const Map &map, const SizedType &type)
   else {
     // This map hasn't been seen before
     map_val_.insert({map_ident, type});
-    if (map_val_[map_ident].type == Type::integer) {
+    if (map_val_[map_ident].IsIntTy())
+    {
       // Store all integer values as 64-bit in maps, so that there will
       // be space for any integer to be assigned to the map later
       map_val_[map_ident].size = 8;
