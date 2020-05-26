@@ -72,6 +72,12 @@ public:
   std::unique_ptr<BpfOrc> compile(DebugLevel debug=DebugLevel::kNone, std::ostream &out=std::cout);
 
 private:
+  void generateProbe(Probe &probe,
+                     const std::string &full_func_id,
+                     const std::string &section_name,
+                     FunctionType *func_type,
+                     bool expansion);
+
   Node *root_;
   LLVMContext context_;
   std::unique_ptr<Module> module_;
@@ -86,6 +92,8 @@ private:
   std::string probefull_;
   std::string tracepoint_struct_;
   std::map<std::string, int> next_probe_index_;
+  // Used if there are duplicate USDT entries
+  int current_usdt_location_index_{ 0 };
 
   std::map<std::string, AllocaInst *> variables_;
   int printf_id_ = 0;

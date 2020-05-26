@@ -175,10 +175,9 @@ int BPFtrace::add_probe(ast::Probe &p)
         attach_funcs.push_back(attach_point->func);
     }
 
-    for (auto func_ : attach_funcs)
+    for (const auto &func : attach_funcs)
     {
-      std::string full_func_id = func_;
-      std::string func_id = func_;
+      std::string func_id = func;
 
       // USDT probes must specify both a provider and a function name for full id
       // So we will extract out the provider namespace to get just the function name
@@ -204,11 +203,30 @@ int BPFtrace::add_probe(ast::Probe &p)
       probe.address = attach_point->address;
       probe.func_offset = attach_point->func_offset;
       probe.loc = 0;
-      probe.index = attach_point->index(full_func_id) > 0 ?
-          attach_point->index(full_func_id) : p.index();
+      probe.index = attach_point->index(func) > 0 ? attach_point->index(func)
+                                                  : p.index();
       probe.len = attach_point->len;
       probe.mode = attach_point->mode;
-      probes_.push_back(probe);
+
+      if (probetype(attach_point->provider) == ProbeType::usdt)
+      {
+        // We must attach to all locations of a USDT marker if duplicates exist
+        // in a target binary. See comment in codegen_llvm.cpp probe generation
+        // code for more details.
+        for (int i = 0; i < attach_point->usdt.num_locations; ++i)
+        {
+          Probe probe_copy = probe;
+          probe_copy.usdt_location_idx = i;
+          probe_copy.index = attach_point->index(func + "_loc" +
+                                                 std::to_string(i));
+
+          probes_.emplace_back(std::move(probe_copy));
+        }
+      }
+      else
+      {
+        probes_.push_back(probe);
+      }
     }
   }
 
@@ -403,9 +421,8 @@ std::unique_ptr<std::istream> BPFtrace::get_symbols_from_usdt(
 
   for (auto const& usdt_probe : usdt_probes)
   {
-    std::string path     = std::get<USDT_PATH_INDEX>(usdt_probe);
-    std::string provider = std::get<USDT_PROVIDER_INDEX>(usdt_probe);
-    std::string fname    = std::get<USDT_FNAME_INDEX>(usdt_probe);
+    std::string provider = usdt_probe.provider;
+    std::string fname = usdt_probe.name;
     probes += provider + ":" + fname + "\n";
   }
 
@@ -830,11 +847,14 @@ std::vector<std::unique_ptr<AttachedProbe>> BPFtrace::attach_probe(
 {
   std::vector<std::unique_ptr<AttachedProbe>> ret;
 
+  std::string index_str = "_" + std::to_string(probe.index);
+  if (probe.type == ProbeType::usdt)
+    index_str = "_loc" + std::to_string(probe.usdt_location_idx) + index_str;
+
   // use the single-probe program if it exists (as is the case with wildcards
   // and the name builtin, which must be expanded into separate programs per
   // probe), else try to find a the program based on the original probe name
   // that includes wildcards.
-  std::string index_str = "_" + std::to_string(probe.index);
   auto func = bpforc.sections_.find("s_" + probe.name + index_str);
   if (func == bpforc.sections_.end())
     func = bpforc.sections_.find("s_" + probe.orig_name + index_str);
