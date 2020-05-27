@@ -183,7 +183,10 @@ void Printer::visit(FieldAccess &acc)
   acc.expr->accept(*this);
   --depth_;
 
-  out_ << indent << " " << acc.field << std::endl;
+  if (acc.field.size())
+    out_ << indent << " " << acc.field << std::endl;
+  else
+    out_ << indent << " " << acc.index << std::endl;
 }
 
 void Printer::visit(ArrayAccess &arr)
@@ -207,6 +210,17 @@ void Printer::visit(Cast &cast)
 
   ++depth_;
   cast.expr->accept(*this);
+  --depth_;
+}
+
+void Printer::visit(Tuple &tuple)
+{
+  std::string indent(depth_, ' ');
+  out_ << indent << "tuple:" << std::endl;
+
+  ++depth_;
+  for (Expression *expr : *tuple.elems)
+    expr->accept(*this);
   --depth_;
 }
 

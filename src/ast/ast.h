@@ -157,8 +157,10 @@ class FieldAccess : public Expression {
 public:
   FieldAccess(Expression *expr, const std::string &field);
   FieldAccess(Expression *expr, const std::string &field, location loc);
+  FieldAccess(Expression *expr, ssize_t index, location loc);
   Expression *expr;
   std::string field;
+  ssize_t index = -1;
 
   void accept(Visitor &v) override;
 };
@@ -183,6 +185,15 @@ public:
   std::string cast_type;
   bool is_pointer;
   Expression *expr;
+
+  void accept(Visitor &v) override;
+};
+
+class Tuple : public Expression
+{
+public:
+  Tuple(ExpressionList *elems, location loc);
+  ExpressionList *elems;
 
   void accept(Visitor &v) override;
 };
@@ -364,6 +375,7 @@ public:
   virtual void visit(FieldAccess &acc) = 0;
   virtual void visit(ArrayAccess &arr) = 0;
   virtual void visit(Cast &cast) = 0;
+  virtual void visit(Tuple &tuple) = 0;
   virtual void visit(ExprStatement &expr) = 0;
   virtual void visit(AssignMapStatement &assignment) = 0;
   virtual void visit(AssignVarStatement &assignment) = 0;

@@ -224,6 +224,11 @@ FieldAccess::FieldAccess(Expression *expr,
 {
 }
 
+FieldAccess::FieldAccess(Expression *expr, ssize_t index, location loc)
+    : Expression(loc), expr(expr), index(index)
+{
+}
+
 void FieldAccess::accept(Visitor &v) {
   v.visit(*this);
 }
@@ -256,6 +261,16 @@ Cast::Cast(const std::string &type,
 }
 
 void Cast::accept(Visitor &v) {
+  v.visit(*this);
+}
+
+Tuple::Tuple(ExpressionList *elems, location loc)
+    : Expression(loc), elems(elems)
+{
+}
+
+void Tuple::accept(Visitor &v)
+{
   v.visit(*this);
 }
 

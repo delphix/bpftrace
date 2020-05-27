@@ -26,7 +26,7 @@ namespace {
 bool shouldBeOnStackAlready(SizedType &type)
 {
   return type.IsStringTy() || type.IsBufferTy() || type.IsInetTy() ||
-         type.IsUsymTy();
+         type.IsUsymTy() || type.IsTupleTy();
 }
 } // namespace
 
@@ -965,7 +965,7 @@ void CodegenLLVM::visit(Map &map)
 
 void CodegenLLVM::visit(Variable &var)
 {
-  if (!var.type.IsArray())
+  if (!var.type.IsAggregate())
   {
     expr_ = b_.CreateLoad(variables_[var.ident]);
   }
@@ -1312,12 +1312,25 @@ void CodegenLLVM::visit(Ternary &ternary)
 void CodegenLLVM::visit(FieldAccess &acc)
 {
   SizedType &type = acc.expr->type;
-  assert(type.IsCastTy() || type.IsCtxTy());
+  assert(type.IsCastTy() || type.IsCtxTy() || type.IsTupleTy());
   acc.expr->accept(*this);
 
   if (type.is_kfarg)
   {
     expr_ = b_.CreatKFuncArg(ctx_, acc.type, acc.field);
+    return;
+  }
+  else if (type.IsTupleTy())
+  {
+    Value *src = b_.CreateGEP(expr_,
+                              { b_.getInt32(0), b_.getInt32(acc.index) });
+    SizedType &elem_type = type.tuple_elems[acc.index];
+
+    if (shouldBeOnStackAlready(elem_type))
+      expr_ = src;
+    else
+      expr_ = b_.CreateLoad(b_.GetType(elem_type), src);
+
     return;
   }
 
@@ -1478,6 +1491,33 @@ void CodegenLLVM::visit(Cast &cast)
   }
 }
 
+void CodegenLLVM::visit(Tuple &tuple)
+{
+  // Store elements on stack
+  llvm::Type *tuple_ty = b_.GetType(tuple.type);
+  AllocaInst *buf = b_.CreateAllocaBPF(tuple_ty, "tuple");
+  for (size_t i = 0; i < tuple.elems->size(); ++i)
+  {
+    Expression *elem = tuple.elems->at(i);
+    elem->accept(*this);
+
+    Value *dst = b_.CreateGEP(buf, { b_.getInt32(0), b_.getInt32(i) });
+
+    if (shouldBeOnStackAlready(elem->type))
+    {
+      b_.CREATE_MEMCPY(dst, expr_, elem->type.size, 1);
+      if (!elem->is_variable && dyn_cast<AllocaInst>(expr_))
+        b_.CreateLifetimeEnd(expr_);
+    }
+    else
+    {
+      b_.CreateStore(expr_, dst);
+    }
+  }
+
+  expr_ = buf;
+}
+
 void CodegenLLVM::visit(ExprStatement &expr)
 {
   expr.expr->accept(*this);
@@ -1550,7 +1590,7 @@ void CodegenLLVM::visit(AssignVarStatement &assignment)
     variables_[var.ident] = val;
   }
 
-  if (!var.type.IsArray())
+  if (!var.type.IsAggregate())
   {
     b_.CreateStore(expr_, variables_[var.ident]);
   }
@@ -2267,7 +2307,7 @@ void CodegenLLVM::createFormatStringCall(Call &call, int &id, CallArgs &call_arg
     expr_deleter_ = nullptr;
     arg.accept(*this);
     Value *offset = b_.CreateGEP(fmt_args, {b_.getInt32(0), b_.getInt32(i)});
-    if (arg.type.IsArray())
+    if (arg.type.IsAggregate())
     {
       b_.CREATE_MEMCPY(offset, expr_, arg.type.size, 1);
       if (!arg.is_variable && dyn_cast<AllocaInst>(expr_))
