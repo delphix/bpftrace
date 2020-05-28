@@ -24,12 +24,11 @@ std::ostream &operator<<(std::ostream &os, const SizedType &type)
   }
   else if (type.IsIntTy())
   {
-    os << (type.is_signed ? "" : "unsigned ") << "int" << 8*type.size;
+    os << (type.is_signed_ ? "" : "unsigned ") << "int" << 8 * type.size;
   }
   else if (type.IsArrayTy())
   {
-    os << (type.is_signed ? "" : "unsigned ") << "int" << 8 * type.pointee_size;
-    os << "[" << type.size << "]";
+    os << type.GetElementTy() << "[" << type.GetNumElements() << "]";
   }
   else if (type.IsStringTy() || type.IsBufferTy())
   {
@@ -60,7 +59,7 @@ std::ostream &operator<<(std::ostream &os, const SizedType &type)
 
 bool SizedType::IsEqual(const SizedType &t) const
 {
-  return type == t.type && size == t.size && is_signed == t.is_signed;
+  return type == t.type && size == t.size && is_signed_ == t.is_signed_;
 }
 
 bool SizedType::operator!=(const SizedType &t) const
@@ -275,14 +274,11 @@ SizedType CreateCTX(size_t size, std::string name)
   return SizedType(Type::ctx, size, name);
 }
 
-SizedType CreateArray(size_t num_elem,
-                      Type elem_type,
-                      size_t elem_size,
-                      bool elem_is_signed)
+SizedType CreateArray(size_t num_elements, const SizedType &element_type)
 {
-  auto ty = SizedType(Type::array, num_elem, elem_is_signed);
-  ty.elem_type = elem_type;
-  ty.pointee_size = elem_size;
+  auto ty = SizedType(Type::array, num_elements);
+  ty.num_elements_ = num_elements;
+  ty.element_type_ = new SizedType(element_type);
   return ty;
 }
 
@@ -372,7 +368,7 @@ SizedType CreateBuffer(size_t size)
 
 bool SizedType::IsSigned(void) const
 {
-  return is_signed;
+  return is_signed_;
 }
 
 } // namespace bpftrace
