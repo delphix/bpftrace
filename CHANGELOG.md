@@ -40,6 +40,8 @@ and this project adheres to
   - [#1276](https://github.com/iovisor/bpftrace/pull/1276)
 - Add tuples to language
   - [#1326](https://github.com/iovisor/bpftrace/pull/1326)
+- Add support for listing struct/union/enum definitions using BTF
+  - [#1340](https://github.com/iovisor/bpftrace/pull/1340)
 
 #### Changed
 
@@ -48,6 +50,10 @@ and this project adheres to
   - [#1259](https://github.com/iovisor/bpftrace/pull/1259)
 - Allow positional parameters in probe attachpoint definitions
   - [#1328](https://github.com/iovisor/bpftrace/pull/1328)
+- Only list uprobe and usdt probes when `-p` is given
+  - [#1340](https://github.com/iovisor/bpftrace/pull/1340)
+- Remove address space memory limit
+  - [#1358](https://github.com/iovisor/bpftrace/pull/1358)
 
 #### Deprecated
 
