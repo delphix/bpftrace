@@ -593,6 +593,7 @@ int main(int argc, char *argv[])
   }
   extra_flags.push_back("-include");
   extra_flags.push_back(CLANG_WORKAROUNDS_H);
+  extra_flags.push_back("-DCC_USING_FENTRY");
 
   for (auto dir : include_dirs)
   {
