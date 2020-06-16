@@ -44,6 +44,8 @@ and this project adheres to
   - [#1340](https://github.com/iovisor/bpftrace/pull/1340)
 - Add libbpf build into in --info
   - [#1367](https://github.com/iovisor/bpftrace/pull/1367)
+- Add support for time units `us` and `hz` for probe `interval`
+  - [#1377](https://github.com/iovisor/bpftrace/pull/1377)
 
 #### Changed
 
@@ -80,6 +82,8 @@ and this project adheres to
   - [#1365](https://github.com/iovisor/bpftrace/pull/1365)
 - Fix attaching to usdt probes in multiple binaries
   - [#1356](https://github.com/iovisor/bpftrace/pull/1356)
+- Decrement usdt semaphore count after bpftrace execution
+  - [#1370](https://github.com/iovisor/bpftrace/pull/1370)
 
 #### Tools
 
