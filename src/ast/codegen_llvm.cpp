@@ -270,7 +270,7 @@ void CodegenLLVM::visit(Builtin &builtin)
       std::cerr << "BUG: Invalid cpid: " << cpid << std::endl;
       abort();
     }
-    expr_ = b_.getInt32(cpid);
+    expr_ = b_.getInt64(cpid);
   }
   else
   {
@@ -546,7 +546,7 @@ void CodegenLLVM::visit(Call &call)
                                               false);
     AllocaInst *buf = b_.CreateAllocaBPF(buf_struct, "buffer");
 
-    b_.CreateStore(length,
+    b_.CreateStore(b_.CreateIntCast(length, b_.getInt8Ty(), false),
                    b_.CreateGEP(buf, { b_.getInt32(0), b_.getInt32(0) }));
     Value *buf_data_offset = b_.CreateGEP(buf,
                                           { b_.getInt32(0), b_.getInt32(1) });
@@ -1181,7 +1181,9 @@ void CodegenLLVM::visit(Unop &unop)
         }
         AllocaInst *dst = b_.CreateAllocaBPF(SizedType(type.type, size), "deref");
         b_.CreateProbeRead(ctx_, dst, size, expr_, unop.loc);
-        expr_ = b_.CreateLoad(dst);
+        expr_ = b_.CreateIntCast(b_.CreateLoad(dst),
+                                 b_.getInt64Ty(),
+                                 type.IsSigned());
         b_.CreateLifetimeEnd(dst);
         break;
       }
@@ -1200,7 +1202,9 @@ void CodegenLLVM::visit(Unop &unop)
           int size = unop.type.size;
           AllocaInst *dst = b_.CreateAllocaBPF(unop.type, "deref");
           b_.CreateProbeRead(ctx_, dst, size, expr_, unop.loc);
-          expr_ = b_.CreateLoad(dst);
+          expr_ = b_.CreateIntCast(b_.CreateLoad(dst),
+                                   b_.getInt64Ty(),
+                                   unop.type.IsSigned());
           b_.CreateLifetimeEnd(dst);
         }
         break;
@@ -1222,10 +1226,13 @@ void CodegenLLVM::visit(Ternary &ternary)
   BasicBlock *left_block = BasicBlock::Create(module_->getContext(), "left", parent);
   BasicBlock *right_block = BasicBlock::Create(module_->getContext(), "right", parent);
   BasicBlock *done = BasicBlock::Create(module_->getContext(), "done", parent);
-
   // ordering of all the following statements is important
-  Value *result = b_.CreateAllocaBPF(ternary.type, "result");
-  AllocaInst *buf = b_.CreateAllocaBPF(ternary.type, "buf");
+  Value *result = ternary.type.IsNoneTy()
+                      ? nullptr
+                      : b_.CreateAllocaBPF(ternary.type, "result");
+  AllocaInst *buf = ternary.type.IsNoneTy()
+                        ? nullptr
+                        : b_.CreateAllocaBPF(ternary.type, "buf");
   Value *cond;
   ternary.cond->accept(*this);
   cond = expr_;
@@ -1256,7 +1263,7 @@ void CodegenLLVM::visit(Ternary &ternary)
     b_.SetInsertPoint(done);
     expr_ = b_.CreateLoad(result);
   }
-  else
+  else if (ternary.type.IsStringTy())
   {
     // copy selected string via CreateMemCpy
     b_.SetInsertPoint(left_block);
@@ -1275,6 +1282,18 @@ void CodegenLLVM::visit(Ternary &ternary)
 
     b_.SetInsertPoint(done);
     expr_ = buf;
+  }
+  else
+  {
+    // Type::none
+    b_.SetInsertPoint(left_block);
+    ternary.left->accept(*this);
+    b_.CreateBr(done);
+    b_.SetInsertPoint(right_block);
+    ternary.right->accept(*this);
+    b_.CreateBr(done);
+    b_.SetInsertPoint(done);
+    expr_ = nullptr;
   }
 }
 
@@ -1410,12 +1429,15 @@ void CodegenLLVM::visit(FieldAccess &acc)
     {
       expr_ = b_.CreateLoad(b_.CreateIntToPtr(src, field_ty->getPointerTo()),
                             true);
+      expr_ = b_.CreateIntCast(expr_, b_.getInt64Ty(), field.type.IsSigned());
     }
     else
     {
       AllocaInst *dst = b_.CreateAllocaBPF(field.type, type.cast_type + "." + acc.field);
       b_.CreateProbeRead(ctx_, dst, field.type.size, src, acc.loc);
-      expr_ = b_.CreateLoad(dst);
+      expr_ = b_.CreateIntCast(b_.CreateLoad(dst),
+                               b_.getInt64Ty(),
+                               field.type.IsSigned());
       b_.CreateLifetimeEnd(dst);
     }
   }
@@ -1448,7 +1470,9 @@ void CodegenLLVM::visit(ArrayAccess &arr)
   {
     AllocaInst *dst = b_.CreateAllocaBPF(stype, "array_access");
     b_.CreateProbeRead(ctx_, dst, element_size, src, arr.loc);
-    expr_ = b_.CreateLoad(dst);
+    expr_ = b_.CreateIntCast(b_.CreateLoad(dst),
+                             b_.getInt64Ty(),
+                             arr.expr->type.IsSigned());
     b_.CreateLifetimeEnd(dst);
   }
 }
