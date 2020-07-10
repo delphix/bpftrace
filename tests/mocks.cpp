@@ -11,34 +11,36 @@ using ::testing::StrictMock;
 void setup_mock_bpftrace(MockBPFtrace &bpftrace)
 {
   ON_CALL(bpftrace,
-          get_symbols_from_file("/sys/kernel/debug/tracing/available_filter_functions"))
-      .WillByDefault([](const std::string &)
-      {
+          get_symbols_from_file(
+              "/sys/kernel/debug/tracing/available_filter_functions"))
+      .WillByDefault([](const std::string &) {
         std::string ksyms = "SyS_read\n"
                             "sys_read\n"
                             "sys_write\n"
                             "my_one\n"
-                            "my_two\n";
+                            "my_two\n"
+                            "func_in_mod [kernel_mod]\n";
         auto myval = std::unique_ptr<std::istream>(new std::istringstream(ksyms));
-        printf("doing ok\n");
         return myval;
       });
 
   ON_CALL(bpftrace,
           get_symbols_from_file("/sys/kernel/debug/tracing/available_events"))
-      .WillByDefault([](const std::string &)
-      {
+      .WillByDefault([](const std::string &) {
         std::string tracepoints = "sched:sched_one\n"
                                   "sched:sched_two\n"
                                   "sched:foo\n"
-                                  "notsched:bar\n";
+                                  "notsched:bar\n"
+                                  "file:filename\n";
         return std::unique_ptr<std::istream>(new std::istringstream(tracepoints));
       });
 
   std::string usyms = "first_open\n"
                       "second_open\n"
                       "open_as_well\n"
-                      "something_else\n";
+                      "something_else\n"
+                      "_Z11cpp_mangledi\n"
+                      "_Z11cpp_mangledv\n";
   ON_CALL(bpftrace, extract_func_symbols_from_path(_))
       .WillByDefault(Return(usyms));
 
@@ -52,6 +54,53 @@ void setup_mock_bpftrace(MockBPFtrace &bpftrace)
                                 "nahprov:tp\n";
         return std::unique_ptr<std::istream>(new std::istringstream(usdt_syms));
       });
+
+  // Fill in some default tracepoint struct definitions
+  bpftrace.structs_["struct _tracepoint_sched_sched_one"] = Struct{
+    .size = 8,
+    .fields = { { "common_field",
+                  Field{
+                      .type = CreateUInt64(),
+                      .offset = 8,
+                      .is_bitfield = false,
+                      .bitfield = {},
+                  } } },
+  };
+  bpftrace.structs_["struct _tracepoint_sched_sched_two"] = Struct{
+    .size = 8,
+    .fields = { { "common_field",
+                  Field{
+                      .type = CreateUInt64(),
+                      .offset = 16, // different offset than
+                                    // sched_one.common_field
+                      .is_bitfield = false,
+                      .bitfield = {},
+                  } } },
+  };
+  bpftrace.structs_["struct _tracepoint_tcp_some_tcp_tp"] = Struct{
+    .size = 16,
+    .fields = { { "saddr_v6",
+                  Field{
+                      .type = CreateArray(16, CreateUInt(8)),
+                      .offset = 0,
+                      .is_bitfield = false,
+                      .bitfield = {},
+                  } } },
+  };
+
+  auto ptr_type = CreateUInt64();
+  ptr_type.is_pointer = true;
+  ptr_type.pointee_size = 1;
+  bpftrace.structs_["struct _tracepoint_file_filename"] = Struct{
+    .size = 8,
+    .fields = { { "filename",
+                  Field{
+                      .type = ptr_type,
+                      .offset = 8,
+                      .is_bitfield = false,
+                      .bitfield = {},
+                  } } },
+  };
 }
 
 std::unique_ptr<MockBPFtrace> get_mock_bpftrace()

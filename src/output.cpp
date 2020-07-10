@@ -4,9 +4,21 @@
 
 namespace bpftrace {
 
+namespace {
+bool is_quoted_type(const SizedType &ty)
+{
+  return ty.IsKstackTy() || ty.IsUstackTy() || ty.IsKsymTy() || ty.IsUsymTy() ||
+         ty.IsInetTy() || ty.IsUsernameTy() || ty.IsStringTy() ||
+         ty.IsBufferTy() || ty.IsProbeTy();
+}
+} // namespace
+
 std::ostream& operator<<(std::ostream& out, MessageType type) {
   switch (type) {
     case MessageType::map: out << "map"; break;
+    case MessageType::value:
+      out << "value";
+      break;
     case MessageType::hist: out << "hist"; break;
     case MessageType::stats: out << "stats"; break;
     case MessageType::printf: out << "printf"; break;
@@ -152,7 +164,11 @@ void TextOutput::map(BPFtrace &bpftrace, IMap &map, uint32_t top, uint32_t div,
     }
 
     out_ << map.name_ << map.key_.argument_value_list_str(bpftrace, key) << ": ";
-    out_ << bpftrace.map_value_to_str(map, value, div);
+    if (map.type_.type == Type::tuple)
+      out_ << tuple_to_str(bpftrace, map.type_, value);
+    else
+      out_ << bpftrace.map_value_to_str(
+          map.type_, value, map.is_per_cpu_type(), div);
 
     if (map.type_.type != Type::kstack && map.type_.type != Type::ustack &&
         map.type_.type != Type::ksym && map.type_.type != Type::usym &&
@@ -250,7 +266,7 @@ void TextOutput::map_hist(BPFtrace &bpftrace, IMap &map, uint32_t top, uint32_t 
 
     out_ << map.name_ << map.key_.argument_value_list_str(bpftrace, key) << ": " << std::endl;
 
-    if (map.type_.type == Type::hist)
+    if (map.type_.IsHistTy())
       hist(value, div);
     else
       lhist(value, map.lqmin, map.lqmax, map.lqstep);
@@ -260,8 +276,8 @@ void TextOutput::map_hist(BPFtrace &bpftrace, IMap &map, uint32_t top, uint32_t 
 }
 
 void TextOutput::map_stats(BPFtrace &bpftrace, IMap &map,
-                           const std::map<std::vector<uint8_t>, std::vector<uint64_t>> &values_by_key,
-                           const std::vector<std::pair<std::vector<uint8_t>, uint64_t>> &total_counts_by_key) const
+                           const std::map<std::vector<uint8_t>, std::vector<int64_t>> &values_by_key,
+                           const std::vector<std::pair<std::vector<uint8_t>, int64_t>> &total_counts_by_key) const
 {
   for (auto &key_count : total_counts_by_key)
   {
@@ -269,18 +285,30 @@ void TextOutput::map_stats(BPFtrace &bpftrace, IMap &map,
     auto &value = values_by_key.at(key);
     out_ << map.name_ << map.key_.argument_value_list_str(bpftrace, key) << ": ";
 
-    uint64_t count = value.at(0);
-    uint64_t total = value.at(1);
-    uint64_t average = 0;
+    int64_t count = (int64_t)value.at(0);
+    int64_t total = value.at(1);
+    int64_t average = 0;
 
     if (count != 0)
       average = total / count;
 
-    if (map.type_.type == Type::stats)
+    if (map.type_.IsStatsTy())
       out_ << "count " << count << ", average " <<  average << ", total " << total << std::endl;
     else
       out_ << average << std::endl;
   }
+
+  out_ << std::endl;
+}
+
+void TextOutput::value(BPFtrace &bpftrace,
+                       const SizedType &ty,
+                       const std::vector<uint8_t> &value) const
+{
+  if (ty.type == Type::tuple)
+    out_ << tuple_to_str(bpftrace, ty, value);
+  else
+    out_ << bpftrace.map_value_to_str(ty, value, false, 1);
 
   out_ << std::endl;
 }
@@ -303,6 +331,39 @@ void TextOutput::attached_probes(uint64_t num_probes) const
     out_ << "Attaching " << num_probes << " probe..." << std::endl;
   else
     out_ << "Attaching " << num_probes << " probes..." << std::endl;
+}
+
+std::string TextOutput::tuple_to_str(BPFtrace &bpftrace,
+                                     const SizedType &ty,
+                                     const std::vector<uint8_t> &value) const
+{
+  bool first = true;
+  size_t offset = 0;
+  std::string ret;
+
+  ret += '(';
+
+  for (const SizedType &elemtype : ty.tuple_elems)
+  {
+    if (first)
+      first = false;
+    else
+      ret += ", ";
+
+    std::vector<uint8_t> elem_value(value.begin() + offset,
+                                    value.begin() + offset + elemtype.size);
+
+    if (elemtype.type == Type::tuple)
+      ret += tuple_to_str(bpftrace, elemtype, elem_value);
+    else
+      ret += bpftrace.map_value_to_str(elemtype, elem_value, false, 1);
+
+    offset += elemtype.size;
+  }
+
+  ret += ')';
+
+  return ret;
 }
 
 std::string JsonOutput::json_escape(const std::string &str) const
@@ -375,13 +436,20 @@ void JsonOutput::map(BPFtrace &bpftrace, IMap &map, uint32_t top, uint32_t div,
       out_ << "\"" << json_escape(str_join(args, ",")) << "\": ";
     }
 
-    if (map.type_.type == Type::kstack || map.type_.type == Type::ustack || map.type_.type == Type::ksym ||
-        map.type_.type == Type::usym || map.type_.type == Type::inet || map.type_.type == Type::username ||
-        map.type_.type == Type::string || map.type_.type == Type::probe) {
-        out_ << "\"" << json_escape(bpftrace.map_value_to_str(map, value, div)) << "\"";
+    if (is_quoted_type(map.type_))
+    {
+      out_ << "\""
+           << json_escape(bpftrace.map_value_to_str(
+                  map.type_, value, map.is_per_cpu_type(), div))
+           << "\"";
+    }
+    else if (map.type_.type == Type::tuple)
+    {
+      out_ << tuple_to_str(bpftrace, map.type_, value);
     }
     else {
-      out_ << bpftrace.map_value_to_str(map, value, div);
+      out_ << bpftrace.map_value_to_str(
+          map.type_, value, map.is_per_cpu_type(), div);
     }
 
     i++;
@@ -492,7 +560,7 @@ void JsonOutput::map_hist(BPFtrace &bpftrace, IMap &map, uint32_t top, uint32_t 
       out_ << "\"" << json_escape(str_join(args, ",")) << "\": ";
     }
 
-    if (map.type_.type == Type::hist)
+    if (map.type_.IsHistTy())
       hist(value, div);
     else
       lhist(value, map.lqmin, map.lqmax, map.lqstep);
@@ -506,8 +574,8 @@ void JsonOutput::map_hist(BPFtrace &bpftrace, IMap &map, uint32_t top, uint32_t 
 }
 
 void JsonOutput::map_stats(BPFtrace &bpftrace, IMap &map,
-                           const std::map<std::vector<uint8_t>, std::vector<uint64_t>> &values_by_key,
-                           const std::vector<std::pair<std::vector<uint8_t>, uint64_t>> &total_counts_by_key) const
+                           const std::map<std::vector<uint8_t>, std::vector<int64_t>> &values_by_key,
+                           const std::vector<std::pair<std::vector<uint8_t>, int64_t>> &total_counts_by_key) const
 {
   if (total_counts_by_key.empty())
     return;
@@ -531,13 +599,13 @@ void JsonOutput::map_stats(BPFtrace &bpftrace, IMap &map,
     }
 
     uint64_t count = value.at(0);
-    uint64_t total = value.at(1);
-    uint64_t average = 0;
+    int64_t total = value.at(1);
+    int64_t average = 0;
 
     if (count != 0)
       average = total / count;
 
-    if (map.type_.type == Type::stats)
+    if (map.type_.IsStatsTy())
       out_ << "{\"count\": " << count << ", \"average\": " <<  average << ", \"total\": " << total << "}";
     else
       out_ << average;
@@ -548,6 +616,29 @@ void JsonOutput::map_stats(BPFtrace &bpftrace, IMap &map,
   if (map.key_.size() > 0)
     out_ << "}";
   out_ << "}}" << std::endl;
+}
+
+void JsonOutput::value(BPFtrace &bpftrace,
+                       const SizedType &ty,
+                       const std::vector<uint8_t> &value) const
+{
+  out_ << "{\"type\": \"" << MessageType::value << "\", \"data\": ";
+
+  if (is_quoted_type(ty))
+  {
+    out_ << "\"" << json_escape(bpftrace.map_value_to_str(ty, value, false, 1))
+         << "\"";
+  }
+  else if (ty.type == Type::tuple)
+  {
+    out_ << tuple_to_str(bpftrace, ty, value);
+  }
+  else
+  {
+    out_ << bpftrace.map_value_to_str(ty, value, false, 1);
+  }
+
+  out_ << "}" << std::endl;
 }
 
 void JsonOutput::message(MessageType type, const std::string& msg, bool nl __attribute__((unused))) const
@@ -569,6 +660,48 @@ void JsonOutput::lost_events(uint64_t lost) const
 void JsonOutput::attached_probes(uint64_t num_probes) const
 {
   message(MessageType::attached_probes, "probes", num_probes);
+}
+
+std::string JsonOutput::tuple_to_str(BPFtrace &bpftrace,
+                                     const SizedType &ty,
+                                     const std::vector<uint8_t> &value) const
+{
+  bool first = true;
+  size_t offset = 0;
+  std::string ret;
+
+  ret += '[';
+
+  for (const SizedType &elemtype : ty.tuple_elems)
+  {
+    if (first)
+      first = false;
+    else
+      ret += ',';
+
+    std::vector<uint8_t> elem_value(value.begin() + offset,
+                                    value.begin() + offset + elemtype.size);
+
+    if (elemtype.type == Type::tuple)
+      ret += tuple_to_str(bpftrace, elemtype, elem_value);
+    else
+    {
+      if (is_quoted_type(elemtype))
+        ret += '"';
+
+      ret += json_escape(
+          bpftrace.map_value_to_str(elemtype, elem_value, false, 1));
+
+      if (is_quoted_type(elemtype))
+        ret += '"';
+    }
+
+    offset += elemtype.size;
+  }
+
+  ret += ']';
+
+  return ret;
 }
 
 } // namespace bpftrace

@@ -3,9 +3,13 @@
 #include <algorithm>
 #include <array>
 
+// SP + 8 points to the first argument that is passed on the stack
+#define ARG0_STACK 8
+
 namespace bpftrace {
 namespace arch {
 
+// clang-format off
 static std::array<std::string, 27> registers = {
   "r15",
   "r14",
@@ -28,12 +32,6 @@ static std::array<std::string, 27> registers = {
   "flags",
   "sp",
   "ss",
-  "fs_base",
-  "gs_base",
-  "ds",
-  "es",
-  "fs",
-  "gs",
 };
 
 static std::array<std::string, 6> arg_registers = {
@@ -44,6 +42,7 @@ static std::array<std::string, 6> arg_registers = {
   "r8",
   "r9",
 };
+// clang-format on
 
 int offset(std::string reg_name)
 {
@@ -71,6 +70,16 @@ int ret_offset()
 int pc_offset()
 {
   return offset("ip");
+}
+
+int sp_offset()
+{
+  return offset("sp");
+}
+
+int arg_stack_offset()
+{
+  return ARG0_STACK / 8;
 }
 
 std::string name()

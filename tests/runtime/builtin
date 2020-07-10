@@ -58,6 +58,27 @@ RUN bpftrace -v -e 'k:vfs_read { printf("SUCCESS '$test' %d\n", arg0); exit(); }
 EXPECT SUCCESS arg -?[0-9][0-9]*
 TIMEOUT 5
 
+NAME sarg
+RUN bpftrace -v -e 'uprobe:./testprogs/stack_args:too_many_args { printf("SUCCESS '$test' %d %d\n", sarg0, sarg1); exit(); }'
+EXPECT SUCCESS sarg 32 64
+ARCH x86_64
+TIMEOUT 5
+AFTER ./testprogs/stack_args
+
+NAME sarg
+RUN bpftrace -v -e 'uprobe:./testprogs/stack_args:too_many_args { printf("SUCCESS '$test' %d %d\n", sarg0, sarg1); exit(); }'
+EXPECT SUCCESS sarg 128 256
+ARCH aarch64|ppc64|ppc64le
+TIMEOUT 5
+AFTER ./testprogs/stack_args
+
+NAME sarg
+RUN bpftrace -v -e 'uprobe:./testprogs/stack_args:too_many_args { printf("SUCCESS '$test' %d %d\n", sarg0, sarg1); exit(); }'
+EXPECT SUCCESS sarg 16 32
+ARCH s390x
+TIMEOUT 5
+AFTER ./testprogs/stack_args
+
 NAME retval
 RUN bpftrace -v -e 'kretprobe:vfs_read { printf("SUCCESS '$test' %d\n", retval); exit(); }'
 EXPECT SUCCESS retval .*
@@ -66,6 +87,12 @@ TIMEOUT 5
 NAME func
 RUN bpftrace -v -e 'k:vfs_read { printf("SUCCESS '$test' %s\n", func); exit(); }'
 EXPECT SUCCESS func .*
+TIMEOUT 5
+
+NAME func_uprobe
+RUN bpftrace -v -e 'uprobe:./testprogs/uprobe_negative_retval:function1 { printf("SUCCESS %s\n", func); exit(); }'
+EXPECT SUCCESS .*
+AFTER ./testprogs/uprobe_negative_retval
 TIMEOUT 5
 
 NAME username
@@ -77,17 +104,22 @@ NAME probe
 RUN bpftrace -v -e 'k:do_nanosleep { printf("SUCCESS '$test' %s\n", probe); exit(); }'
 EXPECT SUCCESS probe kprobe:do_nanosleep
 TIMEOUT 5
-AFTER sleep 0.1
+AFTER ./testprogs/syscall nanosleep 1e8
 
 NAME begin probe
-RUN bpftrace -v -e 'BEGIN { printf("%s", probe);exit(); } END{printf("-%s\n", probe); }'
+RUN bpftrace -e 'BEGIN { printf("%s", probe);exit(); } END{printf("-%s\n", probe); }'
 EXPECT ^BEGIN-END$
 TIMEOUT 5
-AFTER sleep 0.1
+AFTER ./testprogs/syscall nanosleep 1e8
 
 NAME curtask
 RUN bpftrace -v -e 'i:ms:1 { printf("SUCCESS '$test' %d\n", curtask); exit(); }'
 EXPECT SUCCESS curtask -?[0-9][0-9]*
+TIMEOUT 5
+
+NAME curtask_field
+RUN bpftrace -v -e 'struct task_struct {int x;} i:ms:1 { printf("SUCCESS '$test' %d\n", curtask->x); exit(); }'
+EXPECT SUCCESS curtask_field -?[0-9][0-9]*
 TIMEOUT 5
 
 NAME rand
@@ -100,6 +132,11 @@ RUN bpftrace -v -e 'i:ms:1 { printf("SUCCESS '$test' %d\n", cgroup); exit(); }'
 EXPECT SUCCESS cgroup -?[0-9][0-9]*
 TIMEOUT 5
 MIN_KERNEL 4.18
+
+NAME ctx
+RUN bpftrace -v -e 'struct x {unsigned long x}; i:ms:1 { printf("SUCCESS '$test' %d\n", ((struct x*)ctx)->x); exit(); }'
+EXPECT SUCCESS ctx -?[0-9][0-9]*
+TIMEOUT 5
 
 NAME cat
 RUN bpftrace -e 'i:ms:1 { cat("/proc/loadavg"); exit(); }'
@@ -132,3 +169,25 @@ NAME cat "no such file"
 RUN bpftrace -e 'i:ms:1 { cat("/does/not/exist/file"); exit(); }'
 EXPECT ^Error opening file '/does/not/exist/file': No such file or directory$
 TIMEOUT 5
+
+NAME sizeof
+RUN bpftrace -e 'struct Foo { int x; char c; } BEGIN { $x = 1; printf("%d %d %d %d %d\n", sizeof(struct Foo), sizeof(((struct Foo)0).x), sizeof(((struct Foo)0).c), sizeof(1 == 1), sizeof($x)); exit(); }'
+EXPECT ^8 4 1 8 8$
+TIMEOUT 5
+
+NAME sizeof_ints
+RUN bpftrace -e 'BEGIN { printf("%d %d %d %d %d %d\n", sizeof(uint8), sizeof(int8), sizeof(uint16), sizeof(int16), sizeof(uint32), sizeof(int32)); exit(); }'
+EXPECT ^1 1 2 2 4 4$
+TIMEOUT 5
+
+# printf only takes 7 args
+NAME sizeof_ints_pt2
+RUN bpftrace -e 'BEGIN { printf("%d %d\n", sizeof(uint64), sizeof(int64)); exit(); }'
+EXPECT ^8 8$
+TIMEOUT 5
+
+NAME sizeof_btf
+RUN bpftrace --btf -e 'BEGIN { printf("size=%d\n", sizeof(struct task_struct)); exit(); }'
+EXPECT ^size=
+TIMEOUT 5
+REQUIRES bpftrace --info 2>&1 | grep "btf: yes"

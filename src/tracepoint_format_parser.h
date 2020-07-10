@@ -4,6 +4,7 @@
 #include <set>
 
 #include "ast/ast.h"
+#include "bpftrace.h"
 
 namespace bpftrace {
 
@@ -18,6 +19,7 @@ public:
   void visit(__attribute__((unused)) String &string) override { };  // Leaf
   void visit(__attribute__((unused)) StackMode &mode) override { };  // Leaf
   void visit(__attribute__((unused)) Identifier &identifier) override { };  // Leaf
+  void visit(__attribute__((unused)) Jump &jump) override{}; // Leaf
   void visit(Builtin &builtin) override {  // Leaf
     if (builtin.ident == "args")
       probe_->need_tp_args_structs = true;
@@ -58,6 +60,11 @@ public:
   void visit(Cast &cast) override {
     cast.expr->accept(*this);
   };
+  void visit(Tuple &tuple) override
+  {
+    for (Expression *expr : *tuple.elems)
+      expr->accept(*this);
+  };
   void visit(ExprStatement &expr) override {
     expr.expr->accept(*this);
   };
@@ -86,6 +93,15 @@ public:
       stmt->accept(*this);
     }
   };
+  void visit(While &while_block) override
+  {
+    while_block.cond->accept(*this);
+
+    for (Statement *stmt : *while_block.stmts)
+    {
+      stmt->accept(*this);
+    }
+  }
   void visit(Predicate &pred) override {
     pred.expr->accept(*this);
   };
@@ -119,16 +135,23 @@ private:
 class TracepointFormatParser
 {
 public:
-  static bool parse(ast::Program *program);
-  static std::string get_struct_name(const std::string &category, const std::string &event_name);
+  static bool parse(ast::Program *program, BPFtrace &bpftrace);
+  static std::string get_struct_name(const std::string &category,
+                                     const std::string &event_name);
 
 private:
-  static std::string parse_field(const std::string &line);
-  static std::string adjust_integer_types(const std::string &field_type, int size);
+  static std::string parse_field(const std::string &line,
+                                 int *last_offset,
+                                 BPFtrace &bpftrace);
+  static std::string adjust_integer_types(const std::string &field_type,
+                                          int size);
   static std::set<std::string> struct_list;
 
 protected:
-  static std::string get_tracepoint_struct(std::istream &format_file, const std::string &category, const std::string &event_name);
+  static std::string get_tracepoint_struct(std::istream &format_file,
+                                           const std::string &category,
+                                           const std::string &event_name,
+                                           BPFtrace &bpftrace);
 };
 
 } // namespace bpftrace

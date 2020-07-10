@@ -1,18 +1,20 @@
-#include <string.h>
+#include <cstring>
 
 #include <algorithm>
 #include <array>
-#include <map>
-#include <string>
-#include <tuple>
-#include <sstream>
+#include <fcntl.h>
 #include <fstream>
+#include <glob.h>
+#include <map>
 #include <memory>
-#include <unistd.h>
+#include <sstream>
+#include <string>
 #include <sys/stat.h>
+#include <tuple>
+#include <unistd.h>
 
 #include "utils.h"
-#include "bcc_usdt.h"
+#include <bcc/bcc_elf.h>
 
 namespace {
 
@@ -37,116 +39,78 @@ std::vector<int> read_cpu_range(std::string path)
   return cpus;
 }
 
+std::vector<std::string> expand_wildcard_path(const std::string& path)
+{
+  glob_t glob_result;
+  memset(&glob_result, 0, sizeof(glob_result));
+
+  if (glob(path.c_str(), GLOB_NOCHECK, nullptr, &glob_result)) {
+    globfree(&glob_result);
+    throw std::runtime_error("glob() failed");
+  }
+
+  std::vector<std::string> matching_paths;
+  for (size_t i = 0; i < glob_result.gl_pathc; ++i) {
+    matching_paths.push_back(std::string(glob_result.gl_pathv[i]));
+  }
+
+  globfree(&glob_result);
+  return matching_paths;
+}
+
+std::vector<std::string> expand_wildcard_paths(const std::vector<std::string>& paths)
+{
+  std::vector<std::string> expanded_paths;
+  for (const auto& p : paths)
+  {
+    auto ep = expand_wildcard_path(p);
+    expanded_paths.insert(expanded_paths.end(), ep.begin(), ep.end());
+  }
+  return expanded_paths;
+}
+
 } // namespace
 
 namespace bpftrace {
 
-static bool provider_cache_loaded = false;
+//'borrowed' from libbpf's bpf_core_find_kernel_btf
+// from Andrii Nakryiko
+const struct vmlinux_location vmlinux_locs[] = {
+  { "/sys/kernel/btf/vmlinux", true },
+  { "/boot/vmlinux-%1$s", false },
+  { "/lib/modules/%1$s/vmlinux-%1$s", false },
+  { "/lib/modules/%1$s/build/vmlinux", false },
+  { "/usr/lib/modules/%1$s/kernel/vmlinux", false },
+  { "/usr/lib/debug/boot/vmlinux-%1$s", false },
+  { "/usr/lib/debug/boot/vmlinux-%1$s.debug", false },
+  { "/usr/lib/debug/lib/modules/%1$s/vmlinux", false },
+  { nullptr, false },
+};
 
-// Maps all providers of pid to vector of tracepoints on that provider
-static std::map<std::string, usdt_probe_list> usdt_provider_cache;
+static bool pid_in_different_mountns(int pid);
+static std::vector<std::string>
+resolve_binary_path(const std::string &cmd, const char *env_paths, int pid);
 
-static void usdt_probe_each(struct bcc_usdt *usdt_probe)
+void StdioSilencer::silence()
 {
-  usdt_provider_cache[usdt_probe->provider].push_back(std::make_tuple(usdt_probe->bin_path, usdt_probe->provider, usdt_probe->name));
+  fflush(ofile);
+  int fd = fileno(ofile);
+  old_stdio_ = dup(fd);
+  int new_stdio_ = open("/dev/null", O_WRONLY);
+  dup2(new_stdio_, fd);
+  close(new_stdio_);
 }
 
-usdt_probe_entry USDTHelper::find(
-    int pid,
-    const std::string &target,
-    const std::string &provider,
-    const std::string &name)
+StdioSilencer::~StdioSilencer()
 {
-
-  if (pid > 0)
-    read_probes_for_pid(pid);
-  else
-    read_probes_for_path(target);
-
-  usdt_probe_list probes = usdt_provider_cache[provider];
-
-  auto it = std::find_if(probes.begin(), probes.end(), [&name](const usdt_probe_entry& e) {return std::get<USDT_FNAME_INDEX>(e) == name;});
-  if (it != probes.end()) {
-    return *it;
-  } else {
-    return std::make_tuple("", "", "");
-  }
-}
-
-usdt_probe_list USDTHelper::probes_for_provider(const std::string &provider)
-{
-  usdt_probe_list probes;
-
-  if(!provider_cache_loaded) {
-    std::cerr << "cannot read probes by provider before providers have been loaded by pid or path." << std::endl;
-    return probes;
-  }
-
-  read_probes_for_pid(0);
-  return usdt_provider_cache[provider];
-}
-
-usdt_probe_list USDTHelper::probes_for_pid(int pid)
-{
-  read_probes_for_pid(pid);
-
-  usdt_probe_list probes;
-  for (auto const& usdt_probes : usdt_provider_cache)
+  if (old_stdio_ != -1)
   {
-    probes.insert( probes.end(), usdt_probes.second.begin(), usdt_probes.second.end() );
+    fflush(ofile);
+    int fd = fileno(ofile);
+    dup2(old_stdio_, fd);
+    close(old_stdio_);
+    old_stdio_ = -1;
   }
-  return probes;
-}
-
-usdt_probe_list USDTHelper::probes_for_path(const std::string &path)
-{
-  read_probes_for_path(path);
-
-  usdt_probe_list probes;
-  for (auto const& usdt_probes : usdt_provider_cache)
-  {
-    probes.insert( probes.end(), usdt_probes.second.begin(), usdt_probes.second.end() );
-  }
-  return probes;
-}
-
-void USDTHelper::read_probes_for_pid(int pid)
-{
-  if(provider_cache_loaded)
-    return;
-
-  if (pid > 0) {
-    void *ctx = bcc_usdt_new_frompid(pid, nullptr);
-    if (ctx == nullptr) {
-      std::cerr << "failed to initialize usdt context for pid: " << pid << std::endl;
-      if (kill(pid, 0) == -1 && errno == ESRCH) {
-        std::cerr << "hint: process not running" << std::endl;
-      }
-      return;
-    }
-    bcc_usdt_foreach(ctx, usdt_probe_each);
-    bcc_usdt_close(ctx);
-
-    provider_cache_loaded = true;
-  } else {
-    std::cerr << "a pid must be specified to list USDT probes by PID" << std::endl;
-  }
-}
-
-void USDTHelper::read_probes_for_path(const std::string &path)
-{
-  if(provider_cache_loaded)
-    return;
-
-  void *ctx = bcc_usdt_new_frompath(path.c_str());
-  if (ctx == nullptr) {
-    std::cerr << "failed to initialize usdt context for path " << path << std::endl;
-    return;
-  }
-  bcc_usdt_foreach(ctx, usdt_probe_each);
-  bcc_usdt_close(ctx);
-
-  provider_cache_loaded = true;
 }
 
 bool get_uint64_env_var(const std::string &str, uint64_t &dest)
@@ -187,11 +151,17 @@ bool has_wildcard(const std::string &str)
           str.find("]") != std::string::npos);
 }
 
-std::vector<std::string> split_string(const std::string &str, char delimiter) {
+std::vector<std::string> split_string(const std::string &str,
+                                      char delimiter,
+                                      bool remove_empty)
+{
   std::vector<std::string> elems;
   std::stringstream ss(str);
   std::string value;
   while(std::getline(ss, value, delimiter)) {
+    if (remove_empty && value.empty())
+      continue;
+
     elems.push_back(value);
   }
   return elems;
@@ -286,7 +256,7 @@ std::vector<std::string> get_kernel_cflags(
   cflags.push_back("-D__HAVE_BUILTIN_BSWAP16__");
   cflags.push_back("-D__HAVE_BUILTIN_BSWAP32__");
   cflags.push_back("-D__HAVE_BUILTIN_BSWAP64__");
-  cflags.push_back("-DKBUILD_MODNAME='\"bpftrace\"'");
+  cflags.push_back("-DKBUILD_MODNAME=\"bpftrace\"");
 
   // If ARCH env variable is set, pass this along.
   if (archenv)
@@ -304,6 +274,81 @@ bool is_dir(const std::string& path)
 
   return S_ISDIR(buf.st_mode);
 }
+
+namespace {
+  struct KernelHeaderTmpDir {
+    KernelHeaderTmpDir(const std::string& prefix) : path{prefix + "XXXXXX"}
+    {
+      if (::mkdtemp(&path[0]) == nullptr) {
+        throw std::runtime_error("creating temporary path for kheaders.tar.xz failed");
+      }
+    }
+
+    ~KernelHeaderTmpDir()
+    {
+      if (path.size() > 0) {
+        // move_to either did not succeed or did not run, so clean up after ourselves
+        exec_system(("rm -rf " + path).c_str());
+      }
+    }
+
+    void move_to(const std::string& new_path)
+    {
+      int err = ::rename(path.c_str(), new_path.c_str());
+      if (err == 0) {
+        path = "";
+      }
+    }
+
+    std::string path;
+  };
+
+  std::string unpack_kheaders_tar_xz(const struct utsname& utsname)
+  {
+    std::string path_prefix{"/tmp"};
+    if (const char* tmpdir = ::getenv("TMPDIR")) {
+      path_prefix = tmpdir;
+    }
+    path_prefix += "/kheaders-";
+    std::string shared_path{path_prefix + utsname.release};
+
+    struct stat stat_buf;
+
+    if (::stat(shared_path.c_str(), &stat_buf) == 0) {
+      // already unpacked
+      return shared_path;
+    }
+
+    if (::stat("/sys/kernel/kheaders.tar.xz", &stat_buf) != 0) {
+      StderrSilencer silencer;
+      silencer.silence();
+
+      FILE* modprobe = ::popen("modprobe kheaders", "w");
+      if (modprobe == nullptr || pclose(modprobe) != 0) {
+        return "";
+      }
+
+      if (::stat("/sys/kernel/kheaders.tar.xz", &stat_buf) != 0) {
+        return "";
+      }
+    }
+
+    KernelHeaderTmpDir tmpdir{path_prefix};
+
+    FILE* tar = ::popen(("tar xf /sys/kernel/kheaders.tar.xz -C " + tmpdir.path).c_str(), "w");
+    if (!tar) {
+      return "";
+    }
+
+    int rc = ::pclose(tar);
+    if (rc == 0) {
+      tmpdir.move_to(shared_path);
+      return shared_path;
+    }
+
+    return "";
+  }
+} // namespace
 
 // get_kernel_dirs returns {ksrc, kobj} - directories for pristine and
 // generated kernel sources.
@@ -343,6 +388,10 @@ std::tuple<std::string, std::string> get_kernel_dirs(const struct utsname& utsna
     kobj = "";
   }
   if (ksrc == "" && kobj == "") {
+    const auto kheaders_tar_xz_path = unpack_kheaders_tar_xz(utsname);
+    if (kheaders_tar_xz_path.size() > 0) {
+      return std::make_tuple(kheaders_tar_xz_path, kheaders_tar_xz_path);
+    }
     return std::make_tuple("", "");
   }
   if (ksrc == "") {
@@ -355,7 +404,7 @@ std::tuple<std::string, std::string> get_kernel_dirs(const struct utsname& utsna
   return std::make_tuple(ksrc, kobj);
 }
 
-std::string is_deprecated(std::string &str)
+const std::string &is_deprecated(const std::string &str)
 {
 
   std::vector<DeprecatedName>::iterator item;
@@ -388,6 +437,13 @@ bool is_unsafe_func(const std::string &func_name)
       });
 }
 
+bool is_compile_time_func(const std::string &func_name)
+{
+  return std::any_of(COMPILE_TIME_FUNCS.begin(),
+                     COMPILE_TIME_FUNCS.end(),
+                     [&](const auto &cand) { return func_name == cand; });
+}
+
 std::string exec_system(const char* cmd)
 {
   std::array<char, 128> buffer;
@@ -401,26 +457,174 @@ std::string exec_system(const char* cmd)
   return result;
 }
 
-std::string resolve_binary_path(const std::string& cmd)
+/*
+Original resolve_binary_path API defaulting to bpftrace's mount namespace
+*/
+std::vector<std::string> resolve_binary_path(const std::string& cmd)
 {
-  std::string query;
-  query += "command -v ";
-  query += cmd;
-  std::string result = exec_system(query.c_str());
+  const char *env_paths = getenv("PATH");
+  return resolve_binary_path(cmd, env_paths, -1);
+}
 
-  if (result.size())
+/*
+If a pid is specified, the binary path is taken relative to its own PATH if
+it is in a different mount namespace. Otherwise, the path is resolved relative
+to the local PATH env var for bpftrace's own mount namespace if it is set
+*/
+std::vector<std::string> resolve_binary_path(const std::string &cmd, int pid)
+{
+  std::string env_paths = "";
+  std::ostringstream pid_environ_path;
+
+  if (pid > 0 && pid_in_different_mountns(pid))
   {
-    // Remove newline at the end
-    auto it = result.rfind('\n');
-    if (it != std::string::npos)
-      result.erase(it);
+    pid_environ_path << "/proc/" << pid << "/environ";
+    std::ifstream environ(pid_environ_path.str());
 
-    return result;
+    if (environ)
+    {
+      std::string env_var;
+      std::string pathstr = ("PATH=");
+      while (std::getline(environ, env_var, '\0'))
+      {
+        if (env_var.find(pathstr) != std::string::npos)
+        {
+          env_paths = env_var.substr(pathstr.length());
+          break;
+        }
+      }
+    }
+    return resolve_binary_path(cmd, env_paths.c_str(), pid);
   }
   else
   {
-    return cmd;
+    return resolve_binary_path(cmd, getenv("PATH"), pid);
   }
+}
+
+/*
+Private interface to resolve_binary_path, used for the exposed variants above,
+allowing for a PID whose mount namespace should be optionally considered.
+*/
+static std::vector<std::string>
+resolve_binary_path(const std::string &cmd, const char *env_paths, int pid)
+{
+  std::vector<std::string> candidate_paths = { cmd };
+
+  if (env_paths != nullptr && cmd.find("/") == std::string::npos)
+    for (const auto& path : split_string(env_paths, ':'))
+      candidate_paths.push_back(path + "/" + cmd);
+
+  if (cmd.find("*") != std::string::npos)
+    candidate_paths = ::expand_wildcard_paths(candidate_paths);
+
+  std::vector<std::string> valid_executable_paths;
+  for (const auto &path : candidate_paths)
+  {
+    std::string rel_path;
+    if (pid > 0 && pid_in_different_mountns(pid))
+      rel_path = path_for_pid_mountns(pid, path);
+    else
+      rel_path = path;
+    if (bcc_elf_is_exe(rel_path.c_str()) ||
+        bcc_elf_is_shared_obj(rel_path.c_str()))
+      valid_executable_paths.push_back(rel_path);
+  }
+
+  return valid_executable_paths;
+}
+
+std::string path_for_pid_mountns(int pid, const std::string &path)
+{
+  std::ostringstream pid_relative_path;
+  char pid_root[64];
+
+  snprintf(pid_root, sizeof(pid_root), "/proc/%d/root", pid);
+
+  if (path.find(pid_root) != 0)
+  {
+    std::string sep = (path.length() >= 1 && path.at(0) == '/') ? "" : "/";
+    pid_relative_path << pid_root << sep << path;
+  }
+  else
+  {
+    // The path is already relative to the pid's root
+    pid_relative_path << path;
+  }
+  return pid_relative_path.str();
+}
+
+/*
+Determines if the target process is in a different mount namespace from
+bpftrace.
+
+If a process is in a different mount namespace (eg, container) it is very
+likely that any references to local paths will not be valid, and that paths
+need to be made relative to the PID.
+
+If an invalid PID is specified or doesn't exist, it returns false.
+True is only returned if the namespace of the target process could be read and
+it doesn't match that of bpftrace. If there was an error reading either mount
+namespace, it will throw an exception
+*/
+static bool pid_in_different_mountns(int pid)
+{
+
+  struct stat self_stat, target_stat;
+  int self_fd = -1, target_fd = -1;
+  std::stringstream errmsg;
+  char buf[64];
+
+  if (pid <= 0)
+    return false;
+
+  if ((size_t)snprintf(buf, sizeof(buf), "/proc/%d/ns/mnt", pid) >= sizeof(buf))
+  {
+    errmsg << "Reading mountNS would overflow buffer.";
+    goto error;
+  }
+
+  self_fd = open("/proc/self/ns/mnt", O_RDONLY);
+  if (self_fd < 0)
+  {
+    errmsg << "open(/proc/self/ns/mnt): " << strerror(errno);
+    goto error;
+  }
+
+  target_fd = open(buf, O_RDONLY);
+  if (target_fd < 0)
+  {
+    errmsg << "open(/proc/<pid>/ns/mnt): " << strerror(errno);
+    goto error;
+  }
+
+  if (fstat(self_fd, &self_stat))
+  {
+    errmsg << "fstat(self_fd): " << strerror(errno);
+    goto error;
+  }
+
+  if (fstat(target_fd, &target_stat))
+  {
+    errmsg << "fstat(target_fd)" << strerror(errno);
+    goto error;
+  }
+
+  close(self_fd);
+  close(target_fd);
+  return self_stat.st_ino != target_stat.st_ino;
+
+error:
+  if (self_fd >= 0)
+    close(self_fd);
+  if (target_fd >= 0)
+    close(target_fd);
+
+  throw MountNSException("Failed to compare mount ns with PID " +
+                         std::to_string(pid) + ". " + "The error was " +
+                         errmsg.str());
+
+  return false;
 }
 
 void cat_file(const char *filename, size_t max_bytes, std::ostream &out)
@@ -468,6 +672,71 @@ std::string str_join(const std::vector<std::string> &list, const std::string &de
     str += elem;
   }
   return str;
+}
+
+bool is_numeric(const std::string &s)
+{
+  std::size_t idx;
+  try
+  {
+    std::stoll(s, &idx, 0);
+  }
+  catch (...)
+  {
+    return false;
+  }
+  return idx == s.size();
+}
+
+bool symbol_has_cpp_mangled_signature(const std::string &sym_name)
+{
+  if (!sym_name.rfind("_Z", 0) || !sym_name.rfind("____Z", 0))
+    return true;
+  else
+    return false;
+}
+
+pid_t parse_pid(const std::string &str)
+{
+  try
+  {
+    constexpr ssize_t pid_max = 4 * 1024 * 1024;
+    std::size_t idx = 0;
+    auto pid = std::stol(str, &idx, 10);
+    // Detect cases like `13ABC`
+    if (idx < str.size())
+      throw InvalidPIDException(str, "is not a valid decimal number");
+    if (pid < 1 || pid > pid_max)
+      throw InvalidPIDException(str,
+                                "out of valid pid range [1," +
+                                    std::to_string(pid_max) + "]");
+    return pid;
+  }
+  catch (const std::out_of_range &e)
+  {
+    throw InvalidPIDException(str, "outside of integer range");
+  }
+  catch (const std::invalid_argument &e)
+  {
+    throw InvalidPIDException(str, "is not a valid decimal number");
+  }
+}
+
+std::string hex_format_buffer(const char *buf, size_t size)
+{
+  // Allow enough space for every byte to be sanitized in the form "\x00"
+  char s[size * 4 + 1];
+
+  size_t offset = 0;
+  for (size_t i = 0; i < size; i++)
+    if (buf[i] >= 32 && buf[i] <= 126)
+      offset += sprintf(s + offset, "%c", ((const uint8_t *)buf)[i]);
+    else
+      offset += sprintf(s + offset, "\\x%02x", ((const uint8_t *)buf)[i]);
+
+  s[offset] = '\0';
+
+  return std::string(s);
 }
 
 } // namespace bpftrace

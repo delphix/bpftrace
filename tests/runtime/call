@@ -8,6 +8,16 @@ RUN bpftrace -v -e 'i:ms:1 { printf("value: %d100\n", 100); exit();}'
 EXPECT value: 100
 TIMEOUT 5
 
+NAME printf_argument_alignment
+RUN bpftrace -v -e 'struct Foo { int a; char b[10]; } uprobe:testprogs/uprobe_test:function2 { $foo = (struct Foo *)arg0; $foo2 = (struct Foo *)arg1; printf("%d %s %d %s\n", $foo->a, $foo->b, $foo2->a, $foo2->b) }' -c ./testprogs/uprobe_test
+EXPECT 123 hello 456 world
+TIMEOUT 5
+
+NAME printf_more_arguments
+RUN bpftrace -v -e 'BEGIN { printf("%d: %s; %d: %s;; %d: %s;;; %d: %s;;;;\\n", 1, "a", 2, "ab", 3, "abc", 4, "abcd"); exit(); }'
+EXPECT 1: a; 2: ab;; 3: abc;;; 4: abcd;;;;
+TIMEOUT 5
+
 NAME time
 RUN bpftrace -v -e 'i:ms:1 { time("%H:%M:%S\n"); exit();}'
 EXPECT [0-9]*:[0-9]*:[0-9]*
@@ -30,19 +40,61 @@ TIMEOUT 5
 
 NAME str
 RUN bpftrace -v -e 't:syscalls:sys_enter_execve { printf("P: %s\n", str(args->filename)); exit();}'
-AFTER ls
+AFTER ./testprogs/syscall execve /bin/ls
 EXPECT P: /*.
+TIMEOUT 5
+
+NAME buf
+RUN bpftrace -v -e 'struct MyStruct { const char* a; char b[4]; uint8_t c[4]; int d[4]; }; u:./testprogs/complex_struct:func { $s = (struct MyStruct *)arg0; printf("P: %r-%r-%r-%r\n", buf($s->a, 4), buf($s->b, 4), buf($s->c), buf($s->d)); exit(); }' -c ./testprogs/complex_struct
+EXPECT P: \\x09\\x08\\x07\\x06-\\x05\\x04\\x03\\x02-\\x01\\x02\\x03\\x04-\\x05\\x00\\x00\\x00\\x06\\x00\\x00\\x00\\x07\\x00\\x00\\x00\\x08\\x00\\x00\\x00
+TIMEOUT 5
+
+NAME buf_map_key
+RUN bpftrace -v -e 'i:ms:100 { @[buf("ok_key", 6)] = 1; exit(); }'
+EXPECT @\[ok_key\]: 1
+TIMEOUT 5
+
+NAME buf_map_value
+RUN bpftrace -v -e 'i:ms:100 { @ = buf("ok_value", 8); exit(); }'
+EXPECT @: ok_value
 TIMEOUT 5
 
 NAME ksym
 RUN bpftrace -v -e 'kprobe:do_nanosleep { printf("%s\n", ksym(reg("ip"))); exit();}'
 EXPECT do_nanosleep
 TIMEOUT 5
-AFTER sleep 0.1
+ARCH x86_64
+AFTER ./testprogs/syscall nanosleep 1e8
+
+NAME ksym
+RUN bpftrace -v -e 'kprobe:do_nanosleep { printf("%s\n", ksym(reg("pswaddr"))); exit();}'
+EXPECT do_nanosleep
+TIMEOUT 5
+ARCH s390x
+AFTER ./testprogs/syscall nanosleep 1e8
+
+NAME ksym
+RUN bpftrace -v -e 'kprobe:do_nanosleep { printf("%s\n", ksym(reg("pc"))); exit();}'
+EXPECT do_nanosleep
+TIMEOUT 5
+ARCH aarch64
+AFTER ./testprogs/syscall nanosleep 1e8
+
+NAME ksym
+RUN bpftrace -v -e 'kprobe:do_nanosleep { printf("%s\n", ksym(reg("nip"))); exit();}'
+EXPECT do_nanosleep
+TIMEOUT 5
+ARCH ppc64|ppc64le
+AFTER ./testprogs/syscall nanosleep 1e8
 
 NAME system
 RUN bpftrace --unsafe -v -e 'i:ms:100 { system("echo 'ok_system'"); exit();}'
 EXPECT ok_system
+TIMEOUT 5
+
+NAME system_more_args
+RUN bpftrace --unsafe -v -e 'i:ms:100 { system("echo %d %d %d %d %d %d %d", 1, 2, 3, 4, 5, 6, 7); exit();}'
+EXPECT 1 2 3 4 5 6 7
 TIMEOUT 5
 
 NAME count
@@ -54,57 +106,92 @@ NAME sum
 RUN bpftrace -v -e 'kprobe:vfs_read { @bytes[comm] = sum(arg2); exit();}'
 EXPECT @.*\[.*\]\:\s[0-9]*
 TIMEOUT 5
-AFTER cat /dev/null
+AFTER ./testprogs/syscall read
 
 NAME avg
 RUN bpftrace -v -e 'kprobe:vfs_read { @bytes[comm] = avg(arg2); exit();}'
 EXPECT @.*\[.*\]\:\s[0-9]*
 TIMEOUT 5
-AFTER cat /dev/null
+AFTER ./testprogs/syscall read
 
 NAME min
 RUN bpftrace -v -e 'kprobe:vfs_read { @bytes[comm] = min(arg2); exit();}'
 EXPECT @.*\[.*\]\:\s[0-9]*
 TIMEOUT 5
-AFTER cat /dev/null
+AFTER ./testprogs/syscall read
 
 NAME max
 RUN bpftrace -v -e 'kprobe:vfs_read { @bytes[comm] = max(arg2); exit();}'
 EXPECT @.*\[.*\]\:\s[0-9]*
-AFTER cat /dev/null
+AFTER ./testprogs/syscall read
 TIMEOUT 5
 
 NAME stats
 RUN bpftrace -v -e 'kprobe:vfs_read { @bytes[comm] = stats(arg2); exit();}'
 EXPECT @.*\[.*\]\:\scount\s[0-9]*\,\saverage\s[0-9]*\,\stotal\s[0-9]*
 TIMEOUT 5
-AFTER cat /dev/null
+AFTER ./testprogs/syscall read
 
 NAME hist
 RUN bpftrace -v -e 'kretprobe:vfs_read { @bytes = hist(retval); exit();}'
 EXPECT @bytes: *\n[\[(].*
-AFTER cat /dev/null
+AFTER ./testprogs/syscall read
 TIMEOUT 5
 
 NAME lhist
 RUN bpftrace -v -e 'kretprobe:vfs_read { @bytes = lhist(retval, 0, 10000, 1000); exit()}'
 EXPECT @bytes: *\n[\[(].*
 TIMEOUT 5
-AFTER cat /dev/null
+AFTER ./testprogs/syscall read
 
 NAME kstack
 RUN bpftrace -v -e 'k:do_nanosleep { printf("SUCCESS '$test' %s\n%s\n", kstack(), kstack(1)); exit(); }'
 EXPECT SUCCESS kstack
 TIMEOUT 5
-AFTER sleep 0.1
+AFTER ./testprogs/syscall nanosleep  1e8
 
 NAME ustack
 RUN bpftrace -v -e 'k:do_nanosleep { printf("SUCCESS '$test' %s\n%s\n", ustack(), ustack(1)); exit(); }'
 EXPECT SUCCESS ustack
 TIMEOUT 5
-AFTER sleep 0.1
+AFTER ./testprogs/syscall nanosleep  1e8
 
 NAME cat
 RUN bpftrace -v -e 'i:ms:1 { cat("/proc/uptime"); exit();}'
 EXPECT [0-9]*.[0-9]* [0-9]*.[0-9]*
 TIMEOUT 5
+
+NAME cat_more_args
+RUN bpftrace -v -e 'i:ms:1 { cat("/%s%s%s%s/%s%s%s", "p", "r", "o", "c", "u", "p", "time"); exit();}'
+EXPECT [0-9]*.[0-9]* [0-9]*.[0-9]*
+TIMEOUT 5
+
+NAME uaddr
+RUN bpftrace -v -e 'uprobe:testprogs/uprobe_test:function1 { printf("0x%lx -- 0x%lx\n", *uaddr("GLOBAL_A"), *uaddr("GLOBAL_C")); exit(); }' -c ./testprogs/uprobe_test
+EXPECT 0x55555555 -- 0x33333333
+TIMEOUT 5
+
+NAME ntop static ip
+RUN bpftrace -v -e 'i:ms:100 { printf("IP: %s, %s, %s, %s\n", ntop(1), ntop(0x0100007f), ntop(0xffff0000), ntop(0x0000ffff)); exit() }'
+EXPECT IP: 1.0.0.0, 127.0.0.1, 0.0.255.255, 255.255.0.0
+TIMEOUT 5
+
+NAME usym
+RUN bpftrace -e 'i:ms:100 { @=usym(1); @a=@; exit(); }'
+EXPECT ^@a: 0x1$
+TIMEOUT 5
+
+NAME print_non_map
+RUN bpftrace -e 'BEGIN { $x = 5; print($x); exit() }'
+EXPECT 5
+TIMEOUT 1
+
+NAME print_non_map_builtin
+RUN bpftrace -e 'BEGIN { print(comm); exit() }'
+EXPECT bpftrace
+TIMEOUT 1
+
+NAME print_non_map_tuple
+RUN bpftrace -e 'BEGIN { $t = (1, 2, "string"); print($t); exit() }'
+EXPECT (1, 2, string)
+TIMEOUT 1

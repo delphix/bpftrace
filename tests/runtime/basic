@@ -18,6 +18,11 @@ RUN bpftrace non_existent_file.bt
 EXPECT Error opening file 'non_existent_file.bt': No such file or directory
 TIMEOUT 1
 
+NAME piped script
+RUN bpftrace - < runtime/scripts/hello_world.bt
+EXPECT hello world!
+TIMEOUT 1
+
 NAME it lists kprobes
 RUN bpftrace -l | grep kprobes
 EXPECT kprobe
@@ -65,17 +70,22 @@ TIMEOUT 1
 
 NAME pid fails validation with leading non-number
 RUN bpftrace -p a1111
-EXPECT ERROR: pid 'a1111' is not a valid number.
+EXPECT ERROR: pid 'a1111' is not a valid decimal number
 TIMEOUT 1
 
 NAME pid fails validation with non-number in between
 RUN bpftrace -p 111a1
-EXPECT ERROR: pid '111a1' is not a valid number.
+EXPECT ERROR: pid '111a1' is not a valid decimal number
 TIMEOUT 1
 
 NAME pid fails validation with non-numeric argument
 RUN bpftrace -p not_a_pid
-EXPECT ERROR: pid 'not_a_pid' is not a valid number.
+EXPECT ERROR: pid 'not_a_pid' is not a valid decimal number
+TIMEOUT 1
+
+NAME pid outside of valid pid range
+RUN bpftrace -p 5000000
+EXPECT ERROR: pid '5000000' out of valid pid range \[1,4194304\]
 TIMEOUT 1
 
 NAME libraries under /usr/include are in the search path
@@ -102,3 +112,36 @@ NAME increment/decrement variable
 RUN bpftrace -e 'BEGIN { $x = 10; printf("%d", $x++); printf(" %d", ++$x); printf(" %d", $x--); printf(" %d\n", --$x); exit(); }'
 EXPECT 10 12 12 10
 TIMEOUT 1
+
+NAME spawn child
+RUN bpftrace -e 'i:ms:500 { printf("%d\n", cpid); }' -c './testprogs/syscall nanosleep 1e9'
+EXPECT [0-9]+
+TIMEOUT 1
+
+NAME info flag
+RUN bpftrace --info
+EXPECT perf_event_array: yes
+TIMEOUT 1
+
+NAME basic while loop
+RUN bpftrace -e 'BEGIN { $a = 0; while ($a <= 100) { @=avg($a++) } exit(); }'
+EXPECT @: 50
+TIMEOUT 5
+REQUIRES bpftrace --info 2>&1 | grep "Loop support: yes"
+
+NAME basic tuple
+RUN bpftrace -e 'BEGIN { $v = 99; $t = (0, 1, "str", (5, 6), $v); printf("%d %d %s %d %d %d\n", $t.0, $t.1, $t.2, $t.3.0, $t.3.1, $t.4); exit(); }'
+EXPECT 0 1 str 5 6 99
+TIMEOUT 5
+
+NAME basic tuple map
+RUN bpftrace -e 'BEGIN { $v = 99; @t = (0, 1, "str"); printf("%d %d %s\n", @t.0, @t.1, @t.2); exit(); }'
+EXPECT 0 1 str
+TIMEOUT 5
+
+# Careful with '(' and ')', they are read by the test engine as a regex group,
+# so make sure to escape them.
+NAME tuple print
+RUN bpftrace -e 'BEGIN { @ = (1, 2, "string", (4, 5)); exit(); }'
+EXPECT ^@: \(1, 2, string, \(4, 5\)\)$
+TIMEOUT 5

@@ -1,0 +1,157 @@
+name: Embedded Builds
+
+on: push
+jobs:
+  llvm_clang:
+    runs-on: ubuntu-18.04
+    strategy:
+      matrix:
+        env:
+        - TYPE: Debug
+          NAME: debian_llvm+libclang+glibc2.27
+          LLVM_VERSION: 8
+          STATIC_LINKING: ON
+          STATIC_LIBC: OFF
+          EMBED_LLVM: OFF
+          EMBED_CLANG: ON
+          EMBED_LIBCLANG_ONLY: ON
+          EMBED_BCC: OFF
+          EMBED_LIBELF: OFF
+          EMBED_BINUTILS: OFF
+          RUN_ALL_TESTS: 1
+          RUNTIME_TEST_DISABLE: builtin.cgroup,probe.kprobe_offset_fail_size
+          BASE: bionic
+          DISTRO: ubuntu-glibc
+        - TYPE: Release
+          NAME: debian_llvm+libclang+glibc2.27
+          LLVM_VERSION: 8
+          STATIC_LINKING: ON
+          STATIC_LIBC: OFF
+          EMBED_LLVM: OFF
+          EMBED_CLANG: ON
+          EMBED_LIBCLANG_ONLY: ON
+          EMBED_BCC: OFF
+          EMBED_LIBELF: OFF
+          EMBED_BINUTILS: OFF
+          RUN_ALL_TESTS: 1
+          RUNTIME_TEST_DISABLE: builtin.cgroup,probe.kprobe_offset_fail_size
+          BASE: bionic
+          DISTRO: ubuntu-glibc
+        - TYPE: Release
+          NAME: vanilla_llvm+clang+glibc2.27
+          LLVM_VERSION: 8
+          STATIC_LINKING: ON
+          STATIC_LIBC: OFF
+          EMBED_LLVM: ON
+          EMBED_CLANG: ON
+          EMBED_LIBCLANG_ONLY: OFF
+          EMBED_BCC: OFF
+          EMBED_LIBELF: OFF
+          EMBED_BINUTILS: OFF
+          RUN_ALL_TESTS: 1
+          RUNTIME_TEST_DISABLE: builtin.cgroup,probe.kprobe_offset_fail_size
+          BASE: bionic
+          DISTRO: ubuntu-glibc
+        - TYPE: Release
+          NAME: vanilla_llvm+clang+glibc2.27_edge
+          EDGE: ON
+          BCC_REF: master
+          LLVM_VERSION: 9
+          STATIC_LINKING: ON
+          STATIC_LIBC: OFF
+          EMBED_LLVM: ON
+          EMBED_CLANG: ON
+          EMBED_LIBCLANG_ONLY: OFF
+          EMBED_BCC: OFF
+          EMBED_LIBELF: OFF
+          EMBED_BINUTILS: OFF
+          RUN_ALL_TESTS: 1
+          RUNTIME_TEST_DISABLE: builtin.cgroup,probe.kprobe_offset_fail_size
+          BASE: bionic
+          DISTRO: ubuntu-glibc
+        - TYPE: Release
+          NAME: vanilla_llvm+clang+glibc2.23
+          LLVM_VERSION: 8
+          STATIC_LINKING: ON
+          STATIC_LIBC: OFF
+          EMBED_LLVM: ON
+          EMBED_CLANG: ON
+          EMBED_LIBCLANG_ONLY: OFF
+          EMBED_BCC: OFF
+          EMBED_LIBELF: OFF
+          EMBED_BINUTILS: OFF
+          RUN_ALL_TESTS: 1
+          RUNTIME_TEST_DISABLE: builtin.cgroup,probe.kprobe_offset_fail_size,other.string compare map lookup
+          BASE: xenial
+          DISTRO: ubuntu-glibc
+          CMAKE_EXTRA_FLAGS: "-DCMAKE_CXX_FLAGS='-include /usr/local/include/bcc/compat/linux/bpf.h -D__LINUX_BPF_H__'"
+        - TYPE: Debug
+          NAME: alpine
+          LLVM_VERSION: 9
+          STATIC_LINKING: ON
+          STATIC_LIBC: ON
+          EMBED_LLVM: OFF
+          EMBED_CLANG: OFF
+          EMBED_LIBCLANG_ONLY: OFF
+          EMBED_BCC: OFF
+          EMBED_LIBELF: OFF
+          EMBED_BINUTILS: OFF
+          RUN_ALL_TESTS: 1
+          TEST_GROUPS_DISABLE: "tools-parsing-test"
+          RUNTIME_TEST_DISABLE: json-output.join_delim,other.string compare map lookup,probe.kprobe_offset_fail_size,usdt."usdt probes - attach to fully specified probe of child",usdt."usdt probes - all probes by wildcard and file with child",usdt."usdt probes - attach to probe by wildcard and file with child",usdt."usdt probes - attach to probes by wildcard file with child",usdt."usdt probes - attach to probe with probe builtin and args by file with child",usdt."usdt probes - list probes by pid in separate mountns",usdt."usdt sized arguments",uprobe."uprobes - list probes by pid; uprobes only",uprobe."uprobes - list probes by pid in separate mount namespace"
+          BASE: alpine
+          DISTRO: alpine
+          ALPINE_VERSION: 3.11
+        - TYPE: Release
+          NAME: alpine
+          LLVM_VERSION: 9
+          STATIC_LINKING: ON
+          STATIC_LIBC: ON
+          EMBED_LLVM: OFF
+          EMBED_CLANG: OFF
+          EMBED_LIBCLANG_ONLY: OFF
+          EMBED_BCC: OFF
+          EMBED_LIBELF: OFF
+          EMBED_BINUTILS: OFF
+          RUN_ALL_TESTS: 1
+          RUNTIME_TEST_DISABLE: other.string compare map lookup,probe.kprobe_offset_fail_size,usdt."usdt probes - attach to fully specified probe of child",usdt."usdt probes - all probes by wildcard and file with child",usdt."usdt probes - attach to probe by wildcard and file with child",usdt."usdt probes - attach to probes by wildcard file with child",usdt."usdt probes - attach to probe with probe builtin and args by file with child",usdt."usdt probes - list probes by pid in separate mountns",usdt."usdt sized arguments",uprobe."uprobes - list probes by pid; uprobes only",uprobe."uprobes - list probes by pid in separate mount namespace"
+          BASE: alpine
+          DISTRO: alpine
+          ALPINE_VERSION: 3.11
+    steps:
+    - uses: actions/checkout@v2
+    - name: Build docker container
+      run: |
+        docker build -t bpftrace-embedded-${{ matrix.env['BASE'] }} -f docker/Dockerfile.${{ matrix.env['DISTRO'] }} --build-arg bcc_ref=${{ matrix.env['BCC_REF'] }} --build-arg BASE=${{ matrix.env['BASE'] }} --build-arg ALPINE_VERSION=${{ matrix.env['ALPINE_VERSION'] }} docker/
+    - name: bpftrace embedded build
+      env: ${{ matrix.env }}
+      run: |
+        docker run --privileged -v $(pwd):$(pwd) -w $(pwd) -v /sys/kernel/debug:/sys/kernel/debug:rw -v /lib/modules:/lib/modules:ro -v /usr/src:/usr/src:ro -e STATIC_LINKING=${STATIC_LINKING} -e STATIC_LIBC=${STATIC_LIBC} -e EMBED_LLVM=${EMBED_LLVM} -e EMBED_CLANG=${EMBED_CLANG} -e EMBED_BCC=${EMBED_BCC} -e EMBED_LIBELF=${EMBED_LIBELF} -e EMBED_LIBCLANG_ONLY=${EMBED_LIBCLANG_ONLY} -e EMBED_BINUTILS=${EMBED_BINUTILS} -e RUN_ALL_TESTS=${RUN_ALL_TESTS} -e CMAKE_EXTRA_FLAGS="${CMAKE_EXTRA_FLAGS}" -e TEST_GROUPS_DISABLE="${TEST_GROUPS_DISABLE}" -e RUNTIME_TEST_DISABLE="${RUNTIME_TEST_DISABLE}" bpftrace-embedded-${{ matrix.env['BASE'] }} $(pwd)/build-embedded ${TYPE} -j`nproc`
+    - name: Check linked libs
+      env: ${{ matrix.env }}
+      run: |
+        docker run --privileged -v $(pwd):$(pwd) -w $(pwd) -v /sys/kernel/debug:/sys/kernel/debug:rw -v /lib/modules:/lib/modules:ro -v /usr/src:/usr/src:ro -e STATIC_LINKING=${STATIC_LINKING} -e STATIC_LIBC=${STATIC_LIBC} -e EMBED_LLVM=${EMBED_LLVM} -e EMBED_CLANG=${EMBED_CLANG} -e EMBED_BCC=${EMBED_BCC} -e EMBED_LIBELF=${EMBED_LIBELF} -e EMBED_LIBCLANG_ONLY=${EMBED_LIBCLANG_ONLY} -e EMBED_BINUTILS=${EMBED_BINUTILS} --entrypoint /bin/bash bpftrace-embedded-${{ matrix.env['BASE'] }} -c "[[ -f $(pwd)/build-embedded/src/bpftrace ]] && ! readelf --dynamic $(pwd)/build-embedded/src/bpftrace | grep NEEDED | grep -v 'libm\|libc\|ld-linux\|libpthread\|libdl'"
+    - name: Strip artifacts
+      env: ${{ matrix.env }}
+      if: matrix.env['TYPE'] == 'Release'
+      run: |
+        docker run --privileged -v $(pwd):$(pwd) -w $(pwd) -v /sys/kernel/debug:/sys/kernel/debug:rw -v /lib/modules:/lib/modules:ro -v /usr/src:/usr/src:ro -e STATIC_LINKING=${STATIC_LINKING} -e STATIC_LIBC=${STATIC_LIBC} -e EMBED_LLVM=${EMBED_LLVM} -e EMBED_CLANG=${EMBED_CLANG} -e EMBED_BCC=${EMBED_BCC} -e EMBED_LIBELF=${EMBED_LIBELF} -e EMBED_LIBCLANG_ONLY=${EMBED_LIBCLANG_ONLY} -e EMBED_BINUTILS=${EMBED_BINUTILS} --entrypoint /bin/bash bpftrace-embedded-${{ matrix.env['BASE'] }} -c "strip --keep-symbol BEGIN_trigger $(pwd)/build-embedded/src/bpftrace"
+
+    - uses: actions/upload-artifact@v1
+      with:
+        name: bpftrace-${{ matrix.env['TYPE'] }}-${{ matrix.env['NAME'] }}
+        path: build-embedded/src/bpftrace
+    - uses: actions/upload-artifact@v1
+      with:
+        name: bpftrace_test-${{ matrix.env['TYPE'] }}-${{ matrix.env['NAME'] }}
+        path: build-embedded/tests/bpftrace_test
+
+    - name: Authenticate with docker registry
+      if: matrix.env['TYPE'] == 'Release' && github.ref == 'refs/heads/master' && github.repository == 'iovisor/bpftrace'
+      env:
+        QUAY_TOKEN: ${{ secrets.QUAY_TOKEN }}
+      run: ./docker/scripts/auth.sh ${{ github.repository }}
+
+    - name: Package docker image and push to quay.io
+      if: matrix.env['TYPE'] == 'Release' && github.ref == 'refs/heads/master' && github.repository == 'iovisor/bpftrace'
+      run: ./docker/scripts/push.sh ${{ github.repository }} ${{ github.ref }} ${{ github.sha }} ${{ matrix.env['NAME'] }} ${{ matrix.env['EDGE'] }}

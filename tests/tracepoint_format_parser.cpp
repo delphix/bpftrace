@@ -1,5 +1,8 @@
-#include "gtest/gtest.h"
 #include "tracepoint_format_parser.h"
+#include "mocks.h"
+#include "gtest/gtest.h"
+
+using namespace testing;
 
 namespace bpftrace {
 namespace test {
@@ -8,9 +11,12 @@ namespace tracepoint_format_parser {
 class MockTracepointFormatParser : public TracepointFormatParser
 {
 public:
-  static std::string get_tracepoint_struct_public(std::istream &format_file, const std::string &category, const std::string &event_name)
+  static std::string get_tracepoint_struct_public(std::istream &format_file,
+                                                  const std::string &category,
+                                                  const std::string &event_name,
+                                                  BPFtrace &bpftrace)
   {
-    return get_tracepoint_struct(format_file, category, event_name);
+    return get_tracepoint_struct(format_file, category, event_name, bpftrace);
   }
 };
 
@@ -32,22 +38,27 @@ TEST(tracepoint_format_parser, tracepoint_struct)
     "\n"
     "print fmt: \"fd: 0x%08lx, buf: 0x%08lx, count: 0x%08lx\", ((unsigned long)(REC->fd)), ((unsigned long)(REC->buf)), ((unsigned long)(REC->count))\n";
 
-  std::string expected =
-    "struct _tracepoint_syscalls_sys_enter_read\n"
-    "{\n"
-    "  unsigned short common_type;\n"
-    "  unsigned char common_flags;\n"
-    "  unsigned char common_preempt_count;\n"
-    "  int common_pid;\n"
-    "  int __syscall_nr;\n"
-    "  u64 fd;\n"
-    "  char * buf;\n"
-    "  size_t count;\n"
-    "};\n";
+  std::string expected = "struct _tracepoint_syscalls_sys_enter_read\n"
+                         "{\n"
+                         "  unsigned short common_type;\n"
+                         "  unsigned char common_flags;\n"
+                         "  unsigned char common_preempt_count;\n"
+                         "  int common_pid;\n"
+                         "  int __syscall_nr;\n"
+                         "  char __pad_12;\n"
+                         "  char __pad_13;\n"
+                         "  char __pad_14;\n"
+                         "  char __pad_15;\n"
+                         "  u64 fd;\n"
+                         "  char * buf;\n"
+                         "  size_t count;\n"
+                         "};\n";
 
   std::istringstream format_file(input);
 
-  std::string result = MockTracepointFormatParser::get_tracepoint_struct_public(format_file, "syscalls", "sys_enter_read");
+  MockBPFtrace bpftrace;
+  std::string result = MockTracepointFormatParser::get_tracepoint_struct_public(
+      format_file, "syscalls", "sys_enter_read", bpftrace);
 
   EXPECT_EQ(expected, result);
 }
@@ -67,7 +78,9 @@ TEST(tracepoint_format_parser, array)
 
   std::istringstream format_file(input);
 
-  std::string result = MockTracepointFormatParser::get_tracepoint_struct_public(format_file, "syscalls", "sys_enter_read");
+  MockBPFtrace bpftrace;
+  std::string result = MockTracepointFormatParser::get_tracepoint_struct_public(
+      format_file, "syscalls", "sys_enter_read", bpftrace);
 
   EXPECT_EQ(expected, result);
 }
@@ -84,7 +97,9 @@ TEST(tracepoint_format_parser, data_loc)
 
   std::istringstream format_file(input);
 
-  std::string result = MockTracepointFormatParser::get_tracepoint_struct_public(format_file, "syscalls", "sys_enter_read");
+  MockBPFtrace bpftrace;
+  std::string result = MockTracepointFormatParser::get_tracepoint_struct_public(
+      format_file, "syscalls", "sys_enter_read", bpftrace);
 
   EXPECT_EQ(expected, result);
 }
@@ -144,9 +159,96 @@ TEST(tracepoint_format_parser, adjust_integer_types)
 
   std::istringstream format_file(input);
 
-  std::string result = MockTracepointFormatParser::get_tracepoint_struct_public(format_file, "syscalls", "sys_enter_read");
+  MockBPFtrace bpftrace;
+  std::string result = MockTracepointFormatParser::get_tracepoint_struct_public(
+      format_file, "syscalls", "sys_enter_read", bpftrace);
 
   EXPECT_EQ(expected, result);
+}
+
+TEST(tracepoint_format_parser, padding)
+{
+  std::string input =
+      " field:unsigned short common_type;       offset:0;       size:2; "
+      "signed:0;\n"
+      " field:unsigned char common_flags;       offset:2;       size:1; "
+      "signed:0;\n"
+      " field:unsigned char common_preempt_count;       offset:3;       "
+      "size:1; signed:0;\n"
+      " field:int common_pid;   offset:4;       size:4; signed:1;\n"
+      " field:unsigned char common_migrate_disable;     offset:8;       "
+      "size:1; signed:0;\n"
+      " field:unsigned char common_preempt_lazy_count;  offset:9;       "
+      "size:1; signed:0;\n"
+
+      " field:char comm[16];    offset:12;      size:16;        signed:1;\n"
+      " field:pid_t pid;        offset:28;      size:4; signed:1;\n"
+      " field:int prio; offset:32;      size:4; signed:1;\n"
+      " field:int success;      offset:36;      size:4; signed:1;\n"
+      " field:int target_cpu;   offset:40;      size:4; signed:1;\n";
+
+  std::string expected = "struct _tracepoint_sched_sched_wakeup\n"
+                         "{\n"
+                         "  unsigned short common_type;\n"
+                         "  unsigned char common_flags;\n"
+                         "  unsigned char common_preempt_count;\n"
+                         "  int common_pid;\n"
+                         "  unsigned char common_migrate_disable;\n"
+                         "  unsigned char common_preempt_lazy_count;\n"
+                         "  char __pad_10;\n"
+                         "  char __pad_11;\n"
+                         "  char comm[16];\n"
+                         "  pid_t pid;\n"
+                         "  int prio;\n"
+                         "  int success;\n"
+                         "  int target_cpu;\n"
+                         "};\n";
+
+  std::istringstream format_file(input);
+
+  MockBPFtrace bpftrace;
+  std::string result = MockTracepointFormatParser::get_tracepoint_struct_public(
+      format_file, "sched", "sched_wakeup", bpftrace);
+
+  EXPECT_EQ(expected, result);
+}
+
+TEST(tracepoint_format_parser, tracepoint_struct_btf)
+{
+  std::string input =
+      "name: sys_enter_read\n"
+      "ID: 650\n"
+      "format:\n"
+      "	field:unsigned short common_type;	offset:0;	size:2;	"
+      "signed:0;\n"
+      "	field:unsigned char common_flags;	offset:2;	size:1;	"
+      "signed:0;\n"
+      "	field:unsigned char common_preempt_count;	offset:3;	"
+      "size:1;	signed:0;\n"
+      "	field:int common_pid;	offset:4;	size:4;	signed:1;\n"
+      "\n"
+      "	field:int __syscall_nr;	offset:8;	size:4;	signed:1;\n"
+      "	field:unsigned int fd;	offset:16;	size:8;	signed:0;\n"
+      "	field:char * buf;	offset:24;	size:8;	signed:0;\n"
+      "	field:size_t count;	offset:32;	size:8;	signed:0;\n"
+      "\n"
+      "print fmt: \"fd: 0x%08lx, buf: 0x%08lx, count: 0x%08lx\", ((unsigned "
+      "long)(REC->fd)), ((unsigned long)(REC->buf)), ((unsigned "
+      "long)(REC->count))\n";
+
+  std::istringstream format_file(input);
+
+  MockBPFtrace bpftrace;
+  std::string result = MockTracepointFormatParser::get_tracepoint_struct_public(
+      format_file, "syscalls", "sys_enter_read", bpftrace);
+
+  // Check that BTF types are populated
+  EXPECT_THAT(bpftrace.btf_set_, Contains("unsigned short"));
+  EXPECT_THAT(bpftrace.btf_set_, Contains("unsigned char"));
+  EXPECT_THAT(bpftrace.btf_set_, Contains("int"));
+  EXPECT_THAT(bpftrace.btf_set_, Contains("u64"));
+  EXPECT_THAT(bpftrace.btf_set_, Contains("char *"));
+  EXPECT_THAT(bpftrace.btf_set_, Contains("size_t"));
 }
 
 } // namespace tracepoint_format_parser

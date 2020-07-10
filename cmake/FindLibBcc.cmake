@@ -5,8 +5,11 @@
 #  LIBBCC_INCLUDE_DIRS - the libbcc include directory
 #  LIBBCC_LIBRARIES - Link these to use libbcc
 #  LIBBCC_DEFINITIONS - Compiler switches required for using libbcc
-#  LIBBPF_LIBRARY_STATIC - libbpf static library (for static compilation)
+#  LIBBCC_BPF_LIBRARY_STATIC - libbpf static library (for static compilation)
 #  LIBBCC_LOADER_LIBRARY_STATIC - libbcc helper static library (for static compilation)
+#
+# Note that the shared libbcc binary has libbpf and bcc_loader already compiled in but
+# the static doesn't. So when creating a static build those have to be included too.
 
 if (LIBBCC_LIBRARIES AND LIBBCC_INCLUDE_DIRS)
   set (LibBcc_FIND_QUIETLY TRUE)
@@ -14,7 +17,7 @@ endif (LIBBCC_LIBRARIES AND LIBBCC_INCLUDE_DIRS)
 
 find_path (LIBBCC_INCLUDE_DIRS
   NAMES
-    libbpf.h
+    bcc/libbpf.h
   PATHS
     /usr/include
     /usr/include/bcc
@@ -38,9 +41,9 @@ find_library (LIBBCC_LIBRARIES
     ENV LIBRARY_PATH
     ENV LD_LIBRARY_PATH)
 
-find_library (LIBBPF_LIBRARY_STATIC
+find_library (LIBBCC_BPF_LIBRARY_STATIC
   NAMES
-    bpf
+    bcc_bpf
   PATHS
     /usr/lib
     /usr/local/lib

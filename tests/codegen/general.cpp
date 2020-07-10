@@ -16,13 +16,36 @@ namespace codegen {
 
 using ::testing::_;
 
+class MockBPFtrace : public BPFtrace
+{
+public:
+#pragma GCC diagnostic push
+#ifdef __clang__
+#pragma GCC diagnostic ignored "-Winconsistent-missing-override"
+#endif
+  MOCK_METHOD1(add_probe, int(ast::Probe &p));
+#pragma GCC diagnostic pop
+
+  int resolve_uname(const std::string &name,
+                    struct symbol *sym,
+                    const std::string &path) const override
+  {
+    (void)path;
+    sym->name = name;
+    sym->address = 12345;
+    sym->size = 4;
+    return 0;
+  }
+};
+
 TEST(codegen, populate_sections)
 {
   BPFtrace bpftrace;
   Driver driver(bpftrace);
 
   ASSERT_EQ(driver.parse_str("kprobe:foo { 1 } kprobe:bar { 1 }"), 0);
-  ast::SemanticAnalyser semantics(driver.root_, bpftrace);
+  MockBPFfeature feature;
+  ast::SemanticAnalyser semantics(driver.root_, bpftrace, feature);
   ASSERT_EQ(semantics.analyse(), 0);
   std::stringstream out;
   ast::CodegenLLVM codegen(driver.root_, bpftrace);
@@ -39,11 +62,18 @@ TEST(codegen, printf_offsets)
   BPFtrace bpftrace;
   Driver driver(bpftrace);
 
-  // TODO (mmarchini): also test printf with a string argument
-  ASSERT_EQ(driver.parse_str("struct Foo { char c; int i; } kprobe:f { $foo = (Foo*)0; printf(\"%c %u\\n\", $foo->c, $foo->i) }"), 0);
+  ASSERT_EQ(driver.parse_str(
+                "struct Foo { char c; int i; char str[10]; }\n"
+                "kprobe:f\n"
+                "{\n"
+                "  $foo = (struct Foo*)0;\n"
+                "  printf(\"%c %u %s %p\\n\", $foo->c, $foo->i, $foo->str, 0)\n"
+                "}"),
+            0);
   ClangParser clang;
   clang.parse(driver.root_, bpftrace);
-  ast::SemanticAnalyser semantics(driver.root_, bpftrace);
+  MockBPFfeature feature;
+  ast::SemanticAnalyser semantics(driver.root_, bpftrace, feature);
   ASSERT_EQ(semantics.analyse(), 0);
   ASSERT_EQ(semantics.create_maps(true), 0);
   std::stringstream out;
@@ -54,12 +84,12 @@ TEST(codegen, printf_offsets)
   auto &fmt = std::get<0>(bpftrace.printf_args_[0]);
   auto &args = std::get<1>(bpftrace.printf_args_[0]);
 
-  EXPECT_EQ(fmt, "%c %u\n");
+  EXPECT_EQ(fmt, "%c %u %s %p\n");
 
-  EXPECT_EQ(args.size(), 2U);
+  EXPECT_EQ(args.size(), 4U);
 
-  // NOTE (mmarchini) type.size is the original arg size, and it might be
-  // different from the actual size we use to store in memory
+  // Note that scalar types are promoted to 64-bits when put into
+  // a perf event buffer
   EXPECT_EQ(args[0].type.type, Type::integer);
   EXPECT_EQ(args[0].type.size, 8U);
   EXPECT_EQ(args[0].offset, 8);
@@ -67,6 +97,14 @@ TEST(codegen, printf_offsets)
   EXPECT_EQ(args[1].type.type, Type::integer);
   EXPECT_EQ(args[1].type.size, 8U);
   EXPECT_EQ(args[1].offset, 16);
+
+  EXPECT_EQ(args[2].type.type, Type::string);
+  EXPECT_EQ(args[2].type.size, 10U);
+  EXPECT_EQ(args[2].offset, 24);
+
+  EXPECT_EQ(args[3].type.type, Type::integer);
+  EXPECT_EQ(args[3].type.size, 8U);
+  EXPECT_EQ(args[3].offset, 40);
 }
 
 TEST(codegen, probe_count)
@@ -77,7 +115,8 @@ TEST(codegen, probe_count)
   Driver driver(bpftrace);
 
   ASSERT_EQ(driver.parse_str("kprobe:f { 1; } kprobe:d { 1; }"), 0);
-  ast::SemanticAnalyser semantics(driver.root_, bpftrace);
+  MockBPFfeature feature;
+  ast::SemanticAnalyser semantics(driver.root_, bpftrace, feature);
   ASSERT_EQ(semantics.analyse(), 0);
   ast::CodegenLLVM codegen(driver.root_, bpftrace);
   codegen.compile();
