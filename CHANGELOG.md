@@ -8,6 +8,24 @@ and this project adheres to
 
 ## Unreleased
 
+#### Added
+- Fix `printf` not allowing format specifiers to be directly followed by
+  alphabetic characters
+  - [#1414](https://github.com/iovisor/bpftrace/pull/1414)
+
+#### Changed
+
+#### Deprecated
+
+#### Removed
+
+#### Tools
+
+#### Documentation
+
+
+## [0.11.0] 2020-07-15
+
 ### All Changes
 
 #### Added
