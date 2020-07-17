@@ -115,6 +115,7 @@ public:
   std::string resolve_usym(uintptr_t addr, int pid, bool show_offset=false, bool show_module=false);
   std::string resolve_inet(int af, const uint8_t* inet) const;
   std::string resolve_uid(uintptr_t addr) const;
+  std::string resolve_timestamp(uint32_t strftime_id, uint64_t nsecs);
   uint64_t resolve_kname(const std::string &name) const;
   virtual int resolve_uname(const std::string &name,
                             struct symbol *sym,
@@ -153,6 +154,7 @@ public:
   std::vector<std::tuple<std::string, std::vector<Field>>> system_args_;
   std::vector<std::string> join_args_;
   std::vector<std::string> time_args_;
+  std::vector<std::string> strftime_args_;
   std::vector<std::tuple<std::string, std::vector<Field>>> cat_args_;
   std::vector<SizedType> non_map_print_args_;
   std::unordered_map<int64_t, struct HelperErrorInfo> helper_error_info_;
@@ -180,6 +182,7 @@ public:
   bool has_usdt_ = false;
   bool usdt_file_activation_ = false;
   int helper_check_level_ = 0;
+  uint64_t btime = 0;
 
   static void sort_by_key(
       std::vector<SizedType> key_args,
