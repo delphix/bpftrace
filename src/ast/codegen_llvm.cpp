@@ -23,6 +23,34 @@
 namespace bpftrace {
 namespace ast {
 
+CodegenLLVM::CodegenLLVM(Node *root, BPFtrace &bpftrace)
+    : root_(root),
+      module_(std::make_unique<Module>("bpftrace", context_)),
+      b_(context_, *module_.get(), bpftrace),
+      layout_(module_.get()),
+      bpftrace_(bpftrace)
+{
+  LLVMInitializeBPFTargetInfo();
+  LLVMInitializeBPFTarget();
+  LLVMInitializeBPFTargetMC();
+  LLVMInitializeBPFAsmPrinter();
+
+  std::string targetTriple = "bpf-pc-linux";
+  module_->setTargetTriple(targetTriple);
+
+  std::string error;
+  const Target *target = TargetRegistry::lookupTarget(targetTriple, error);
+  if (!target)
+    throw std::runtime_error("Could not create LLVM target " + error);
+
+  TargetOptions opt;
+  auto RM = Reloc::Model();
+  auto *TM = target->createTargetMachine(targetTriple, "generic", "", opt, RM);
+  module_->setDataLayout(TM->createDataLayout());
+  layout_ = DataLayout(module_.get());
+  orc_ = std::make_unique<BpfOrc>(TM);
+}
+
 void CodegenLLVM::visit(Integer &integer)
 {
   expr_ = b_.getInt64(integer.n);
@@ -539,8 +567,11 @@ void CodegenLLVM::visit(Call &call)
                                               false);
     AllocaInst *buf = b_.CreateAllocaBPF(buf_struct, "buffer");
 
+    Value *buf_len_offset = b_.CreateGEP(buf,
+                                         { b_.getInt32(0), b_.getInt32(0) });
     b_.CreateStore(b_.CreateIntCast(length, b_.getInt8Ty(), false),
-                   b_.CreateGEP(buf, { b_.getInt32(0), b_.getInt32(0) }));
+                   buf_len_offset);
+
     Value *buf_data_offset = b_.CreateGEP(buf,
                                           { b_.getInt32(0), b_.getInt32(1) });
     b_.CREATE_MEMSET(buf_data_offset,
@@ -2254,17 +2285,20 @@ Function *CodegenLLVM::createLinearFunction()
   Value *max_alloc = b_.CreateAllocaBPF(CreateUInt64());
   Value *step_alloc = b_.CreateAllocaBPF(CreateUInt64());
   Value *result_alloc = b_.CreateAllocaBPF(CreateUInt64());
-  Value *value = linear_func->arg_begin()+0;
-  Value *min = linear_func->arg_begin()+1;
-  Value *max = linear_func->arg_begin()+2;
-  Value *step = linear_func->arg_begin()+3;
-  b_.CreateStore(value, value_alloc);
-  b_.CreateStore(min, min_alloc);
-  b_.CreateStore(max, max_alloc);
-  b_.CreateStore(step, step_alloc);
+
+  b_.CreateStore(linear_func->arg_begin() + 0, value_alloc);
+  b_.CreateStore(linear_func->arg_begin() + 1, min_alloc);
+  b_.CreateStore(linear_func->arg_begin() + 2, max_alloc);
+  b_.CreateStore(linear_func->arg_begin() + 3, step_alloc);
+
+  Value *cmp = nullptr;
 
   // algorithm
-  Value *cmp = b_.CreateICmpSLT(b_.CreateLoad(value_alloc), b_.CreateLoad(min_alloc));
+  {
+    Value *min = b_.CreateLoad(min_alloc);
+    Value *val = b_.CreateLoad(value_alloc);
+    cmp = b_.CreateICmpSLT(val, min);
+  }
   BasicBlock *lt_min = BasicBlock::Create(module_->getContext(), "lhist.lt_min", linear_func);
   BasicBlock *ge_min = BasicBlock::Create(module_->getContext(), "lhist.ge_min", linear_func);
   b_.CreateCondBr(cmp, lt_min, ge_min);
@@ -2273,20 +2307,34 @@ Function *CodegenLLVM::createLinearFunction()
   b_.CreateRet(b_.getInt64(0));
 
   b_.SetInsertPoint(ge_min);
-  Value *cmp1 = b_.CreateICmpSGT(b_.CreateLoad(value_alloc), b_.CreateLoad(max_alloc));
+  {
+    Value *max = b_.CreateLoad(max_alloc);
+    Value *val = b_.CreateLoad(value_alloc);
+    cmp = b_.CreateICmpSGT(val, max);
+  }
   BasicBlock *le_max = BasicBlock::Create(module_->getContext(), "lhist.le_max", linear_func);
   BasicBlock *gt_max = BasicBlock::Create(module_->getContext(), "lhist.gt_max", linear_func);
-  b_.CreateCondBr(cmp1, gt_max, le_max);
+  b_.CreateCondBr(cmp, gt_max, le_max);
 
   b_.SetInsertPoint(gt_max);
-  Value *div = b_.CreateUDiv(b_.CreateSub(b_.CreateLoad(max_alloc), b_.CreateLoad(min_alloc)), b_.CreateLoad(step_alloc));
-  b_.CreateStore(b_.CreateAdd(div, b_.getInt64(1)), result_alloc);
-  b_.CreateRet(b_.CreateLoad(result_alloc));
+  {
+    Value *step = b_.CreateLoad(step_alloc);
+    Value *min = b_.CreateLoad(min_alloc);
+    Value *max = b_.CreateLoad(max_alloc);
+    Value *div = b_.CreateUDiv(b_.CreateSub(max, min), step);
+    b_.CreateStore(b_.CreateAdd(div, b_.getInt64(1)), result_alloc);
+    b_.CreateRet(b_.CreateLoad(result_alloc));
+  }
 
   b_.SetInsertPoint(le_max);
-  Value *div3 = b_.CreateUDiv(b_.CreateSub(b_.CreateLoad(value_alloc), b_.CreateLoad(min_alloc)), b_.CreateLoad(step_alloc));
-  b_.CreateStore(b_.CreateAdd(div3, b_.getInt64(1)), result_alloc);
-  b_.CreateRet(b_.CreateLoad(result_alloc));
+  {
+    Value *step = b_.CreateLoad(step_alloc);
+    Value *min = b_.CreateLoad(min_alloc);
+    Value *val = b_.CreateLoad(value_alloc);
+    Value *div3 = b_.CreateUDiv(b_.CreateSub(val, min), step);
+    b_.CreateStore(b_.CreateAdd(div3, b_.getInt64(1)), result_alloc);
+    b_.CreateRet(b_.CreateLoad(result_alloc));
+  }
 
   b_.restoreIP(ip);
   return module_->getFunction("linear");
@@ -2434,32 +2482,16 @@ void CodegenLLVM::createPrintNonMapCall(Call &call, int &id)
   expr_ = nullptr;
 }
 
-std::unique_ptr<BpfOrc> CodegenLLVM::compile(DebugLevel debug, std::ostream &out)
+void CodegenLLVM::generate_ir()
 {
-  LLVMInitializeBPFTargetInfo();
-  LLVMInitializeBPFTarget();
-  LLVMInitializeBPFTargetMC();
-  LLVMInitializeBPFAsmPrinter();
-
-  std::string targetTriple = "bpf-pc-linux";
-  module_->setTargetTriple(targetTriple);
-
-  std::string error;
-  const Target *target = TargetRegistry::lookupTarget(targetTriple, error);
-  if (!target)
-    throw std::runtime_error("Could not create LLVM target " + error);
-
-  TargetOptions opt;
-  auto RM = Reloc::Model();
-  TargetMachine *targetMachine = target->createTargetMachine(targetTriple, "generic", "", opt, RM);
-  module_->setDataLayout(targetMachine->createDataLayout());
-  layout_ = DataLayout(module_.get());
-
   root_->accept(*this);
+}
 
-  legacy::PassManager PM;
+void CodegenLLVM::optimize()
+{
   PassManagerBuilder PMB;
   PMB.OptLevel = 3;
+  legacy::PassManager PM;
   PM.add(createFunctionInliningPass());
   /*
    * llvm < 4.0 needs
@@ -2470,39 +2502,33 @@ std::unique_ptr<BpfOrc> CodegenLLVM::compile(DebugLevel debug, std::ostream &out
    */
   LLVMAddAlwaysInlinerPass(reinterpret_cast<LLVMPassManagerRef>(&PM));
   PMB.populateModulePassManager(PM);
-  if (debug == DebugLevel::kFullDebug)
-  {
-    raw_os_ostream llvm_ostream(out);
-    llvm_ostream << "Before optimization\n";
-    llvm_ostream << "-------------------\n\n";
-    DumpIR(llvm_ostream);
-  }
 
   PM.run(*module_.get());
-
-  if (debug != DebugLevel::kNone)
-  {
-    raw_os_ostream llvm_ostream(out);
-    if (debug == DebugLevel::kFullDebug) {
-      llvm_ostream << "\nAfter optimization\n";
-      llvm_ostream << "------------------\n\n";
-    }
-    DumpIR(llvm_ostream);
-  }
-
-  auto bpforc = std::make_unique<BpfOrc>(targetMachine);
-  bpforc->compileModule(move(module_));
-
-  return bpforc;
 }
 
-void CodegenLLVM::DumpIR() {
-  raw_os_ostream llvm_ostream(std::cout);
-  DumpIR(llvm_ostream);
+std::unique_ptr<BpfOrc> CodegenLLVM::emit(void)
+{
+  orc_->compileModule(move(module_));
+  return std::move(orc_);
 }
 
-void CodegenLLVM::DumpIR(raw_os_ostream &out) {
-  module_->print(out, nullptr, false, true);
+std::unique_ptr<BpfOrc> CodegenLLVM::compile(void)
+{
+  generate_ir();
+  optimize();
+  return emit();
+}
+
+void CodegenLLVM::DumpIR(void)
+{
+  DumpIR(std::cout);
+}
+
+void CodegenLLVM::DumpIR(std::ostream &out)
+{
+  assert(module_.get() != nullptr);
+  raw_os_ostream os(out);
+  module_->print(os, nullptr, false, true);
 }
 
 } // namespace ast
