@@ -372,6 +372,9 @@ void IRBuilderBPF::CreateProbeRead(Value *ctx,
                                    const location &loc)
 {
   assert(ctx && ctx->getType() == getInt8PtrTy());
+  assert(size && size->getType()->getIntegerBitWidth() <= 32);
+  size = CreateIntCast(size, getInt32Ty(), false);
+
   // int bpf_probe_read(void *dst, int size, void *src)
   // Return: 0 on success or negative error
   FunctionType *proberead_func_type = FunctionType::get(
@@ -575,7 +578,7 @@ Value *IRBuilderBPF::CreateStrncmp(Value *ctx __attribute__((unused)),
 
   Function *parent = GetInsertBlock()->getParent();
   BasicBlock *str_ne = BasicBlock::Create(module_.getContext(), "strcmp.false", parent);
-  AllocaInst *store = CreateAllocaBPF(getInt8Ty(), "strcmp.result");
+  AllocaInst *store = CreateAllocaBPF(getInt1Ty(), "strcmp.result");
 
   CreateStore(getInt1(!inverse), store);
 
@@ -652,7 +655,7 @@ Value *IRBuilderBPF::CreateStrncmp(Value *ctx,
 #endif
 
   Function *parent = GetInsertBlock()->getParent();
-  AllocaInst *store = CreateAllocaBPF(getInt8Ty(), "strcmp.result");
+  AllocaInst *store = CreateAllocaBPF(getInt1Ty(), "strcmp.result");
   BasicBlock *str_ne = BasicBlock::Create(module_.getContext(),
                                           "strcmp.false",
                                           parent);

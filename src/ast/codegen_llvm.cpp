@@ -578,8 +578,8 @@ void CodegenLLVM::visit(Call &call)
 
     Value *buf_len_offset = b_.CreateGEP(buf,
                                          { b_.getInt32(0), b_.getInt32(0) });
-    b_.CreateStore(b_.CreateIntCast(length, b_.getInt8Ty(), false),
-                   buf_len_offset);
+    length = b_.CreateIntCast(length, buf_struct->getElementType(0), false);
+    b_.CreateStore(length, buf_len_offset);
 
     Value *buf_data_offset = b_.CreateGEP(buf,
                                           { b_.getInt32(0), b_.getInt32(1) });
@@ -2469,7 +2469,11 @@ void CodegenLLVM::createPrintNonMapCall(Call &call, int &id)
   if (needMemcpy(arg.type))
     b_.CREATE_MEMCPY(content_offset, expr_, arg.type.size, 1);
   else
-    b_.CreateStore(expr_, content_offset);
+  {
+    auto ptr = b_.CreatePointerCast(content_offset,
+                                    expr_->getType()->getPointerTo());
+    b_.CreateStore(expr_, ptr);
+  }
 
   id++;
   b_.CreatePerfEventOutput(ctx_, buf, struct_size);
