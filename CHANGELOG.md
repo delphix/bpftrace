@@ -20,10 +20,14 @@ and this project adheres to
   - [#1416](https://github.com/iovisor/bpftrace/pull/1416)
 
 #### Changed
+- Warn if using `print` on `stats` maps with top and div arguments
+  - [#1433](https://github.com/iovisor/bpftrace/pull/1433)
 
 #### Deprecated
 
 #### Removed
+
+#### Fixed
 
 #### Tools
 
