@@ -21,6 +21,7 @@ add_executable(bpftrace_test
   bpftrace.cpp
   child.cpp
   clang_parser.cpp
+  log.cpp
   main.cpp
   mocks.cpp
   parser.cpp
@@ -41,6 +42,7 @@ add_executable(bpftrace_test
   ${CMAKE_SOURCE_DIR}/src/disasm.cpp
   ${CMAKE_SOURCE_DIR}/src/driver.cpp
   ${CMAKE_SOURCE_DIR}/src/fake_map.cpp
+  ${CMAKE_SOURCE_DIR}/src/log.cpp
   ${CMAKE_SOURCE_DIR}/src/map.cpp
   ${CMAKE_SOURCE_DIR}/src/mapkey.cpp
   ${CMAKE_SOURCE_DIR}/src/output.cpp
