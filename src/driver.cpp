@@ -2,6 +2,7 @@
 
 #include "ast/attachpoint_parser.h"
 #include "driver.h"
+#include "log.h"
 
 extern void *yy_scan_string(const char *yy_str, yyscan_t yyscanner);
 extern int yylex_init(yyscan_t *scanner);
@@ -23,7 +24,7 @@ Driver::~Driver()
 
 void Driver::source(std::string filename, std::string script)
 {
-  bpftrace_.source(filename, script);
+  Log::get().set_source(filename, script);
 }
 
 // Kept for the test suite
@@ -37,7 +38,7 @@ int Driver::parse()
 {
   // Reset source location info on every pass
   loc.initialize();
-  yy_scan_string(bpftrace_.source().c_str(), scanner_);
+  yy_scan_string(Log::get().get_source().c_str(), scanner_);
   parser_->parse();
 
   ast::AttachPointParser ap_parser(root_, bpftrace_, out_);
@@ -52,13 +53,13 @@ int Driver::parse()
 
 void Driver::error(const location &l, const std::string &m)
 {
-  bpftrace_.error(out_, l, m);
+  LOG(ERROR, l, out_) << m;
   failed_ = true;
 }
 
 void Driver::error(const std::string &m)
 {
-  out_ << m << std::endl;
+  LOG(ERROR, out_) << m;
   failed_ = true;
 }
 
