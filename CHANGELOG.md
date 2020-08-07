@@ -24,6 +24,8 @@ and this project adheres to
   - [#1433](https://github.com/iovisor/bpftrace/pull/1433)
 - Prefer BTF data if available to resolve tracepoint arguments
   - [#1439](https://github.com/iovisor/bpftrace/pull/1439)
+- Improve error messages for kfunc probe types
+  - [#1451](https://github.com/iovisor/bpftrace/pull/1451)
 
 #### Deprecated
 
@@ -36,6 +38,8 @@ and this project adheres to
   - [#1436](https://github.com/iovisor/bpftrace/pull/1436)
 - Fix `print` outputs nothing when used on hist() maps with large top args
   - [#1437](https://github.com/iovisor/bpftrace/pull/1437)
+- Fix array indexing regression
+  - [#1457](https://github.com/iovisor/bpftrace/pull/1457)
 
 #### Tools
 
