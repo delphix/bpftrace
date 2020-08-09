@@ -9,6 +9,8 @@ and this project adheres to
 ## Unreleased
 
 #### Added
+- Allow wildcards for tracepoint categories
+  - [#1445](https://github.com/iovisor/bpftrace/pull/1445)
 - Add wildcard support for kfunc probe types
   - [#1410](https://github.com/iovisor/bpftrace/pull/1410)
 - Add builtin function: `strftime`
@@ -18,6 +20,8 @@ and this project adheres to
   - [#1414](https://github.com/iovisor/bpftrace/pull/1414)
 - Fix `top` and `div` arguments of `print()` not working for Type::avg maps
   - [#1416](https://github.com/iovisor/bpftrace/pull/1416)
+- Add an option to disable warning messages
+  - [#1444](https://github.com/iovisor/bpftrace/pull/1444)
 
 #### Changed
 - Warn if using `print` on `stats` maps with top and div arguments
