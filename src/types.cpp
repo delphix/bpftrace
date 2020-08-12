@@ -14,13 +14,15 @@ std::ostream &operator<<(std::ostream &os, Type type)
 
 std::ostream &operator<<(std::ostream &os, const SizedType &type)
 {
-  if (type.IsCastTy())
+  if (type.IsRecordTy())
   {
-    os << type.cast_type;
+    os << type.GetName();
   }
-  else if (type.IsCtxTy())
+  else if (type.IsPtrTy())
   {
-    os << "(ctx) " << type.cast_type;
+    if (type.IsCtxAccess())
+      os << "(ctx) ";
+    os << *type.GetPointeeTy() << " *";
   }
   else if (type.IsIntTy())
   {
@@ -34,7 +36,7 @@ std::ostream &operator<<(std::ostream &os, const SizedType &type)
   {
     os << type.type << "[" << type.size << "]";
   }
-  else if (type.type == Type::tuple)
+  else if (type.IsTupleTy())
   {
     os << "(";
     size_t n = type.tuple_elems.size();
@@ -51,14 +53,34 @@ std::ostream &operator<<(std::ostream &os, const SizedType &type)
     os << type.type;
   }
 
-  if (type.is_pointer)
-    os << "*";
-
   return os;
+}
+
+bool SizedType::IsSameType(const SizedType &t) const
+{
+  if (t.type != type)
+    return false;
+
+  if (IsRecordTy())
+    return t.GetName() == GetName();
+
+  if (IsPtrTy() && t.IsPtrTy())
+    return GetPointeeTy()->IsSameType(*t.GetPointeeTy());
+
+  return type == t.type;
 }
 
 bool SizedType::IsEqual(const SizedType &t) const
 {
+  if (t.type != type)
+    return false;
+
+  if (IsRecordTy())
+    return t.GetName() == GetName() && t.size == size;
+
+  if (IsPtrTy())
+    return *t.GetPointeeTy() == *GetPointeeTy();
+
   return type == t.type && size == t.size && is_signed_ == t.is_signed_;
 }
 
@@ -75,13 +97,12 @@ bool SizedType::operator==(const SizedType &t) const
 bool SizedType::IsArray() const
 {
   return type == Type::array || type == Type::string || type == Type::usym ||
-         type == Type::inet || type == Type::buffer ||
-         ((type == Type::cast || type == Type::ctx) && !is_pointer);
+         type == Type::inet || type == Type::buffer || type == Type::record;
 }
 
 bool SizedType::IsAggregate() const
 {
-  return IsArray() || IsTupleTy();
+  return IsArray() || IsTupleTy() || IsRecordTy();
 }
 
 bool SizedType::IsStack() const
@@ -96,6 +117,8 @@ std::string typestr(Type t)
     // clang-format off
     case Type::none:     return "none";     break;
     case Type::integer:  return "integer";  break;
+    case Type::pointer:  return "pointer";  break;
+    case Type::record:   return "record";   break;
     case Type::hist:     return "hist";     break;
     case Type::lhist:    return "lhist";    break;
     case Type::count:    return "count";    break;
@@ -109,14 +132,12 @@ std::string typestr(Type t)
     case Type::string:   return "string";   break;
     case Type::ksym:     return "ksym";     break;
     case Type::usym:     return "usym";     break;
-    case Type::cast:     return "cast";     break;
     case Type::join:     return "join";     break;
     case Type::probe:    return "probe";    break;
     case Type::username: return "username"; break;
     case Type::inet:     return "inet";     break;
     case Type::stack_mode:return "stack mode";break;
     case Type::array:    return "array";    break;
-    case Type::ctx:      return "ctx";      break;
     case Type::buffer:   return "buffer";   break;
     case Type::tuple:    return "tuple";    break;
     case Type::timestamp:return "timestamp";break;
@@ -264,23 +285,26 @@ SizedType CreateStackMode()
   return SizedType(Type::stack_mode, 0);
 }
 
-SizedType CreateCast(size_t size, std::string name)
-{
-  assert(size % 8 == 0);
-  return SizedType(Type::cast, size / 8, name);
-}
-
-SizedType CreateCTX(size_t size, std::string name)
-{
-  return SizedType(Type::ctx, size, name);
-}
-
 SizedType CreateArray(size_t num_elements, const SizedType &element_type)
 {
   auto ty = SizedType(Type::array, num_elements);
   ty.num_elements_ = num_elements;
   ty.element_type_ = new SizedType(element_type);
-  ty.pointee_size = element_type.size;
+  return ty;
+}
+
+SizedType CreatePointer(const SizedType &pointee_type)
+{
+  // Pointer itself is always an uint64
+  auto ty = SizedType(Type::pointer, 8);
+  ty.element_type_ = new SizedType(pointee_type);
+  return ty;
+}
+
+SizedType CreateRecord(size_t size, const std::string &name)
+{
+  auto ty = SizedType(Type::record, size);
+  ty.name_ = name;
   return ty;
 }
 

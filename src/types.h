@@ -21,6 +21,8 @@ enum class Type
   // clang-format off
   none,
   integer,
+  pointer,
+  record, // struct/union, as struct is a protected keyword
   hist,
   lhist,
   count,
@@ -34,7 +36,6 @@ enum class Type
   string,
   ksym,
   usym,
-  cast,
   join,
   probe,
   username,
@@ -42,8 +43,6 @@ enum class Type
   stack_mode,
   array,
   // BPF program context; needing a different access method to satisfy the verifier
-  ctx,
-  record, // struct or union
   buffer,
   tuple,
   timestamp
@@ -72,30 +71,20 @@ class SizedType
 {
 public:
   SizedType() : type(Type::none), size(0) { }
-  SizedType(Type type,
-            size_t size_,
-            bool is_signed,
-            const std::string &cast_type = "")
-      : type(type), size(size_), cast_type(cast_type), is_signed_(is_signed)
+  SizedType(Type type, size_t size_, bool is_signed)
+      : type(type), size(size_), is_signed_(is_signed)
   {
   }
-  SizedType(Type type, size_t size_, const std::string &cast_type = "")
-      : type(type), size(size_), cast_type(cast_type)
+  SizedType(Type type, size_t size_) : type(type), size(size_)
   {
   }
 
   Type type;
-  Type elem_type = Type::none; // Array element type if accessing elements of an
-                               // array
-
   size_t size;                 // in bytes
   StackType stack_type;
-  std::string cast_type;
   bool is_internal = false;
-  bool is_pointer = false;
   bool is_tparg = false;
   bool is_kfarg = false;
-  size_t pointee_size = 0;
   int kfarg_idx = -1;
   // Only valid if `type == Type::tuple`
   std::vector<SizedType> tuple_elems;
@@ -105,8 +94,20 @@ private:
   SizedType *element_type_ = nullptr; // for "container" and pointer
                                       // (like) types
   size_t num_elements_;               // for array like types
+  std::string name_; // name of this type, for named types like struct
+  bool ctx_ = false; // Is bpf program context
 
 public:
+  bool IsCtxAccess() const
+  {
+    return ctx_;
+  };
+
+  void MarkCtxAccess()
+  {
+    ctx_ = true;
+  };
+
   bool IsArray() const;
   bool IsAggregate() const;
   bool IsStack() const;
@@ -114,12 +115,13 @@ public:
   bool IsEqual(const SizedType &t) const;
   bool operator==(const SizedType &t) const;
   bool operator!=(const SizedType &t) const;
+  bool IsSameType(const SizedType &t) const;
 
   bool IsPrintableTy()
   {
-    return type != Type::none && type != Type::cast && type != Type::ctx &&
-           type != Type::stack_mode && type != Type::array &&
-           type != Type::record;
+    return type != Type::none && type != Type::record &&
+           type != Type::pointer && type != Type::stack_mode &&
+           type != Type::array && type != Type::record && !IsCtxAccess();
   }
 
   bool IsSigned(void) const;
@@ -136,22 +138,32 @@ public:
     return size;
   };
 
+  const std::string GetName() const
+  {
+    assert(IsRecordTy());
+    return name_;
+  }
+
   const SizedType *GetElementTy() const
   {
-    assert(IsArrayTy() || IsCtxTy());
+    assert(IsArrayTy());
+    return element_type_;
+  }
+
+  const SizedType *GetPointeeTy() const
+  {
+    assert(IsPtrTy());
     return element_type_;
   }
 
   bool IsPtrTy() const
   {
-    return IsIntTy() && is_pointer;
+    return type == Type::pointer;
   };
-
   bool IsIntTy() const
   {
     return type == Type::integer;
   };
-
   bool IsNoneTy(void) const
   {
     return type == Type::none;
@@ -212,10 +224,7 @@ public:
   {
     return type == Type::usym;
   };
-  bool IsCastTy(void) const
-  {
-    return type == Type::cast;
-  };
+
   bool IsJoinTy(void) const
   {
     return type == Type::join;
@@ -239,10 +248,6 @@ public:
   bool IsArrayTy(void) const
   {
     return type == Type::array;
-  };
-  bool IsCtxTy(void) const
-  {
-    return type == Type::ctx;
   };
   bool IsRecordTy(void) const
   {
@@ -268,6 +273,9 @@ public:
 
   friend SizedType CreateArray(size_t num_elements,
                                const SizedType &element_type);
+
+  friend SizedType CreatePointer(const SizedType &pointee_type);
+  friend SizedType CreateRecord(size_t size, const std::string &name);
 };
 // Type helpers
 
@@ -286,13 +294,14 @@ SizedType CreateUInt64();
 
 SizedType CreateString(size_t size);
 SizedType CreateArray(size_t num_elements, const SizedType &element_type);
+SizedType CreatePointer(const SizedType &pointee_type);
+/**
+   size in bytes
+ */
+SizedType CreateRecord(size_t size, const std::string &name);
 
 SizedType CreateStackMode();
 SizedType CreateStack(bool kernel, StackType st = StackType());
-
-// Size in bits
-SizedType CreateCast(size_t size, std::string name = "");
-SizedType CreateCTX(size_t size, std::string name);
 
 SizedType CreateMin(bool is_signed);
 SizedType CreateMax(bool is_signed);
