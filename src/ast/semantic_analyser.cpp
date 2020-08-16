@@ -531,8 +531,8 @@ void SemanticAnalyser::visit(Call &call)
       if (!t.IsIntegerTy() && !t.IsPtrTy())
       {
         LOG(ERROR, call.loc, err_)
-            << "() expects an integer or a pointer type as first "
-            << "argument ( " << t << " provided)";
+            << call.func << "() expects an integer or a pointer type as first "
+            << "argument (" << t << " provided)";
       }
       call.type = CreateString(bpftrace_.strlen_);
       if (is_final_pass() && call.vargs->size() > 1) {
@@ -1387,23 +1387,16 @@ void SemanticAnalyser::visit(Unop &unop)
     {
       unop.type = SizedType(*type.GetPointeeTy());
       if (type.IsCtxAccess())
+      {
         unop.type.MarkCtxAccess();
-      unop.type.is_kfarg = type.is_kfarg;
-      unop.type.is_tparg = type.is_tparg;
+        unop.type.is_kfarg = type.is_kfarg;
+        unop.type.is_tparg = type.is_tparg;
+      }
     }
     else if (type.IsRecordTy())
     {
-      if (type.is_kfarg)
-      {
-        // args->arg access, we need to push the args builtin
-        // type further through the expression ladder
-        unop.type = type;
-      }
-      else {
-        LOG(ERROR, unop.loc, err_)
-            << "Can not dereference struct/union of type '" << type.GetName()
-            << "'. It is not a pointer.";
-      }
+      LOG(ERROR, unop.loc, err_) << "Can not dereference struct/union of type '"
+                                 << type.GetName() << "'. It is not a pointer.";
     }
     else if (type.IsIntTy())
     {
@@ -1580,7 +1573,7 @@ void SemanticAnalyser::visit(FieldAccess &acc)
     if (it != ap_args_.end())
       acc.type = it->second;
     else
-      LOG(ERROR, acc.loc, err_) << "Can't find a field";
+      LOG(ERROR, acc.loc, err_) << "Can't find a field " << acc.field;
     return;
   }
 
@@ -1852,6 +1845,12 @@ void SemanticAnalyser::visit(AssignVarStatement &assignment)
   std::string var_ident = assignment.var->ident;
   auto search = variable_val_.find(var_ident);
   assignment.var->type = assignment.expr->type;
+
+  auto *builtin = dynamic_cast<Builtin *>(assignment.expr);
+  if (builtin && builtin->ident == "args" && builtin->type.is_kfarg)
+  {
+    LOG(ERROR, assignment.loc, err_) << "args cannot be assigned to a variable";
+  }
 
   if (search != variable_val_.end()) {
     if (search->second.IsNoneTy())
