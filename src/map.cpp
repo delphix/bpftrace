@@ -4,6 +4,7 @@
 #include <linux/version.h>
 
 #include "bpftrace.h"
+#include "log.h"
 #include "utils.h"
 #include <bcc/libbpf.h>
 
@@ -62,8 +63,8 @@ Map::Map(const std::string &name, const SizedType &type, const MapKey &key, int 
   mapfd_ = create_map(map_type_, name.c_str(), key_size, value_size, max_entries, flags);
   if (mapfd_ < 0)
   {
-    std::cerr << "Error creating map: '" << name_ << "': " << strerror(errno)
-              << std::endl;
+    LOG(ERROR) << "failed to create map: '" << name_
+               << "': " << strerror(errno);
   }
 }
 
@@ -71,8 +72,8 @@ Map::Map(const SizedType &type) {
 #ifdef DEBUG
   // TODO (mmarchini): replace with DCHECK
   if (!type.IsStack()) {
-    std::cerr << "Map::Map(SizedType) constructor should be called only with stack types" << std::endl;
-    abort();
+    LOG(FATAL) << "Map::Map(SizedType) constructor should be called only with "
+                  "stack types";
   }
 #endif
   type_ = type;
@@ -86,12 +87,13 @@ Map::Map(const SizedType &type) {
   mapfd_ = create_map(map_type, name.c_str(), key_size, value_size, max_entries, flags);
   if (mapfd_ < 0)
   {
-    std::cerr << "Error creating stack id map" << std::endl;
-    // TODO (mmarchini): Check perf_event_max_stack in the semantic_analyzer
-    std::cerr << "This might have happened because kernel.perf_event_max_stack "
-      << "is smaller than " << type.stack_type.limit
-      << ". Try to tweak this value with "
-      << "sysctl kernel.perf_event_max_stack=<new value>" << std::endl;
+    LOG(ERROR)
+        << "failed to create stack id map\n"
+        // TODO (mmarchini): Check perf_event_max_stack in the semantic_analyzer
+        << "This might have happened because kernel.perf_event_max_stack "
+        << "is smaller than " << type.stack_type.limit
+        << ". Try to tweak this value with "
+        << "sysctl kernel.perf_event_max_stack=<new value>";
   }
 }
 
@@ -105,8 +107,7 @@ Map::Map(enum bpf_map_type map_type)
   // TODO (mmarchini): replace with DCHECK
   if (map_type == BPF_MAP_TYPE_STACK_TRACE)
   {
-    std::cerr << "Use Map::Map(SizedType) constructor instead" << std::endl;
-    abort();
+    LOG(FATAL) << "Use Map::Map(SizedType) constructor instead";
   }
 #endif
   if (map_type == BPF_MAP_TYPE_PERF_EVENT_ARRAY)
@@ -120,14 +121,13 @@ Map::Map(enum bpf_map_type map_type)
   }
   else
   {
-    std::cerr << "invalid map type" << std::endl;
-    abort();
+    LOG(FATAL) << "invalid map type";
   }
 
   mapfd_ = create_map(map_type, name.c_str(), key_size, value_size, max_entries, flags);
   if (mapfd_ < 0)
   {
-    std::cerr << "Error creating " << name << " map: " << strerror(errno) << std::endl;
+    LOG(ERROR) << "failed to create " << name << " map: " << strerror(errno);
   }
 }
 

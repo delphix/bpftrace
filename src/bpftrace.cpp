@@ -125,9 +125,7 @@ std::string format(std::string fmt,
   auto check_snprintf_ret = [](int r) {
     if (r < 0)
     {
-      std::cerr << "format() error occurred: " << std::strerror(errno)
-                << std::endl;
-      abort();
+      LOG(FATAL) << "format() error occurred: " << std::strerror(errno);
     }
   };
   // Args have been made safe for printing by now, so replace nonstandard format
@@ -226,7 +224,7 @@ int BPFtrace::add_probe(ast::Probe &p)
       }
       catch (const WildcardException &e)
       {
-        std::cerr << e.what() << std::endl;
+        LOG(ERROR) << e.what();
         return 1;
       }
       attach_funcs.insert(attach_funcs.end(), matches.begin(), matches.end());
@@ -557,14 +555,14 @@ void perf_event_printer(void *cb_cookie, void *data, int size __attribute__((unu
     t = time(NULL);
     if (!localtime_r(&t, &tmp))
     {
-      std::cerr << "localtime_r: " << strerror(errno) << std::endl;
+      LOG(ERROR) << "localtime_r: " << strerror(errno);
       return;
     }
     auto time = static_cast<AsyncEvent::Time *>(data);
     auto fmt = bpftrace->time_args_[time->time_id].c_str();
     if (strftime(timestr, sizeof(timestr), fmt, &tmp) == 0)
     {
-      std::cerr << "strftime returned 0" << std::endl;
+      LOG(ERROR) << "strftime returned 0";
       return;
     }
     bpftrace->out_->message(MessageType::time, timestr, false);
@@ -606,8 +604,7 @@ void perf_event_printer(void *cb_cookie, void *data, int size __attribute__((unu
   {
     if (bpftrace->safe_mode_)
     {
-      std::cerr << "syscall() not allowed in safe mode" << std::endl;
-      abort();
+      LOG(FATAL) << "syscall() not allowed in safe mode";
     }
 
     auto id = printf_id - asyncactionint(AsyncAction::syscall);
@@ -670,10 +667,9 @@ std::vector<std::unique_ptr<IPrintable>> BPFtrace::get_arg_values(const std::vec
                 *reinterpret_cast<uint8_t *>(arg_data + arg.offset)));
             break;
           default:
-            std::cerr << "get_arg_values: invalid integer size. 8, 4, 2 and "
-                         "byte supported. "
-                      << arg.type.size << "provided" << std::endl;
-            abort();
+            LOG(FATAL) << "get_arg_values: invalid integer size. 8, 4, 2 and "
+                          "byte supported. "
+                       << arg.type.size << "provided";
         }
         break;
       case Type::string:
@@ -750,8 +746,7 @@ std::vector<std::unique_ptr<IPrintable>> BPFtrace::get_arg_values(const std::vec
         break;
         // fall through
       default:
-        std::cerr << "invalid argument type" << std::endl;
-        abort();
+        LOG(FATAL) << "invalid argument type";
     }
   }
 
@@ -807,7 +802,7 @@ std::vector<std::unique_ptr<AttachedProbe>> BPFtrace::attach_usdt_probe(
   const char *p;
   if (!(p = realpath(probe.path.c_str(), nullptr)))
   {
-    std::cerr << "Failed to resolve " << probe.path << std::endl;
+    LOG(ERROR) << "Failed to resolve " << probe.path;
     return ret;
   }
   std::string resolved(p);
@@ -854,7 +849,7 @@ std::vector<std::unique_ptr<AttachedProbe>> BPFtrace::attach_usdt_probe(
   }
 
   if (ret.empty())
-    std::cerr << "Failed to find processes running " << probe.path << std::endl;
+    LOG(ERROR) << "Failed to find processes running " << probe.path;
 
   return ret;
 }
@@ -879,9 +874,10 @@ std::vector<std::unique_ptr<AttachedProbe>> BPFtrace::attach_probe(
   if (func == bpforc.sections_.end())
   {
     if (probe.name != probe.orig_name)
-      std::cerr << "Code not generated for probe: " << probe.name << " from: " << probe.orig_name << std::endl;
+      LOG(ERROR) << "Code not generated for probe: " << probe.name
+                 << " from: " << probe.orig_name;
     else
-      std::cerr << "Code not generated for probe: " << probe.name << std::endl;
+      LOG(ERROR) << "Code not generated for probe: " << probe.name;
     return ret;
   }
   try
@@ -912,7 +908,7 @@ std::vector<std::unique_ptr<AttachedProbe>> BPFtrace::attach_probe(
   }
   catch (std::runtime_error &e)
   {
-    std::cerr << e.what() << std::endl;
+    LOG(ERROR) << e.what();
     ret.clear();
   }
   return ret;
@@ -992,7 +988,7 @@ int BPFtrace::run(std::unique_ptr<BpfOrc> bpforc)
     }
     catch (std::runtime_error &e)
     {
-      std::cerr << "Failed to setup child: " << e.what() << std::endl;
+      LOG(ERROR) << "Failed to setup child: " << e.what();
       return -1;
     }
   }
@@ -1041,7 +1037,7 @@ int BPFtrace::run(std::unique_ptr<BpfOrc> bpforc)
     }
     catch (std::runtime_error &e)
     {
-      std::cerr << "Failed to run child: " << e.what() << std::endl;
+      LOG(ERROR) << "Failed to run child: " << e.what();
       return -1;
     }
   }
@@ -1069,7 +1065,7 @@ int BPFtrace::setup_perf_events()
   int epollfd = epoll_create1(EPOLL_CLOEXEC);
   if (epollfd == -1)
   {
-    std::cerr << "Failed to create epollfd" << std::endl;
+    LOG(ERROR) << "Failed to create epollfd";
     return -1;
   }
 
@@ -1081,7 +1077,7 @@ int BPFtrace::setup_perf_events()
         &perf_event_printer, &perf_event_lost, this, -1, cpu, perf_rb_pages_);
     if (reader == nullptr)
     {
-      std::cerr << "Failed to open perf buffer" << std::endl;
+      LOG(ERROR) << "Failed to open perf buffer";
       return -1;
     }
 
@@ -1093,7 +1089,7 @@ int BPFtrace::setup_perf_events()
     bpf_update_elem(perf_event_map_->mapfd_, &cpu, &reader_fd, 0);
     if (epoll_ctl(epollfd, EPOLL_CTL_ADD, reader_fd, &ev) == -1)
     {
-      std::cerr << "Failed to add perf reader to epoll" << std::endl;
+      LOG(ERROR) << "Failed to add perf reader to epoll";
       return -1;
     }
   }
@@ -1162,8 +1158,8 @@ int BPFtrace::clear_map(IMap &map)
   }
   catch (std::runtime_error &e)
   {
-    std::cerr << "Error getting key for map '" << map.name_ << "': "
-              << e.what() << std::endl;
+    LOG(ERROR) << "failed to get key for map '" << map.name_
+               << "': " << e.what();
     return -2;
   }
   auto key(old_key);
@@ -1181,7 +1177,7 @@ int BPFtrace::clear_map(IMap &map)
     int err = bpf_delete_elem(map.mapfd_, key.data());
     if (err)
     {
-      std::cerr << "Error looking up elem: " << err << std::endl;
+      LOG(ERROR) << "failed to look up elem: " << err;
       return -1;
     }
   }
@@ -1205,8 +1201,8 @@ int BPFtrace::zero_map(IMap &map)
   }
   catch (std::runtime_error &e)
   {
-    std::cerr << "Error getting key for map '" << map.name_ << "': "
-              << e.what() << std::endl;
+    LOG(ERROR) << "failed to get key for map '" << map.name_
+               << "': " << e.what();
     return -2;
   }
   auto key(old_key);
@@ -1227,7 +1223,7 @@ int BPFtrace::zero_map(IMap &map)
 
     if (err)
     {
-      std::cerr << "Error looking up elem: " << err << std::endl;
+      LOG(ERROR) << "failed to look up elem: " << err;
       return -1;
     }
   }
@@ -1304,8 +1300,8 @@ int BPFtrace::print_map(IMap &map, uint32_t top, uint32_t div)
   }
   catch (std::runtime_error &e)
   {
-    std::cerr << "Error getting key for map '" << map.name_ << "': "
-              << e.what() << std::endl;
+    LOG(ERROR) << "failed to get key for map '" << map.name_
+               << "': " << e.what();
     return -2;
   }
   auto key(old_key);
@@ -1326,7 +1322,7 @@ int BPFtrace::print_map(IMap &map, uint32_t top, uint32_t div)
     }
     else if (err)
     {
-      std::cerr << "Error looking up elem: " << err << std::endl;
+      LOG(ERROR) << "failed to look up elem: " << err;
       return -1;
     }
 
@@ -1385,8 +1381,8 @@ int BPFtrace::print_map_hist(IMap &map, uint32_t top, uint32_t div)
   }
   catch (std::runtime_error &e)
   {
-    std::cerr << "Error getting key for map '" << map.name_ << "': "
-              << e.what() << std::endl;
+    LOG(ERROR) << "failed to get key for map '" << map.name_
+               << "': " << e.what();
     return -2;
   }
   auto key(old_key);
@@ -1412,7 +1408,7 @@ int BPFtrace::print_map_hist(IMap &map, uint32_t top, uint32_t div)
     }
     else if (err)
     {
-      std::cerr << "Error looking up elem: " << err << std::endl;
+      LOG(ERROR) << "failed to look up elem: " << err;
       return -1;
     }
 
@@ -1464,8 +1460,8 @@ int BPFtrace::print_map_stats(IMap &map, uint32_t top, uint32_t div)
   }
   catch (std::runtime_error &e)
   {
-    std::cerr << "Error getting key for map '" << map.name_ << "': "
-              << e.what() << std::endl;
+    LOG(ERROR) << "failed to get key for map '" << map.name_
+               << "': " << e.what();
     return -2;
   }
   auto key(old_key);
@@ -1491,7 +1487,7 @@ int BPFtrace::print_map_stats(IMap &map, uint32_t top, uint32_t div)
     }
     else if (err)
     {
-      std::cerr << "Error looking up elem: " << err << std::endl;
+      LOG(ERROR) << "failed to look up elem: " << err;
       return -1;
     }
 
@@ -1611,7 +1607,8 @@ std::string BPFtrace::get_stack(uint64_t stackidpid, bool ustack, StackType stac
   {
     // ignore EFAULT errors: eg, kstack used but no kernel stack
     if (stackid != -EFAULT)
-      std::cerr << "Error looking up stack id " << stackid << " (pid " << pid << "): " << err << std::endl;
+      LOG(ERROR) << "failed to look up stack id " << stackid << " (pid " << pid
+                 << "): " << err;
     return "";
   }
 
@@ -1654,7 +1651,7 @@ std::string BPFtrace::resolve_uid(uintptr_t addr) const
   std::ifstream file(file_name);
   if (file.fail())
   {
-    std::cerr << strerror(errno) << ": " << file_name << std::endl;
+    LOG(ERROR) << strerror(errno) << ": " << file_name;
     return username;
   }
 
@@ -1682,9 +1679,9 @@ std::string BPFtrace::resolve_timestamp(uint32_t strftime_id,
 {
   if (btime == 0)
   {
-    std::cerr << "Cannot resolve the timestamp returned by strftime due to the "
-                 "previous failure to get btime from /proc/stat."
-              << std::endl;
+    LOG(ERROR)
+        << "Cannot resolve the timestamp returned by strftime due to the "
+           "previous failure to get btime from /proc/stat.";
     return "(?)";
   }
   auto fmt = strftime_args_[strftime_id].c_str();
@@ -1693,12 +1690,12 @@ std::string BPFtrace::resolve_timestamp(uint32_t strftime_id,
   time_t time = btime + nsecs_since_boot / 1e9;
   if (!localtime_r(&time, &tmp))
   {
-    std::cerr << "localtime_r: " << strerror(errno) << std::endl;
+    LOG(ERROR) << "localtime_r: " << strerror(errno);
     return "(?)";
   }
   if (strftime(timestr, sizeof(timestr), fmt, &tmp) == 0)
   {
-    std::cerr << "strftime returned 0" << std::endl;
+    LOG(ERROR) << "strftime returned 0";
     return "(?)";
   }
   return timestr;
@@ -1739,7 +1736,7 @@ uint64_t BPFtrace::resolve_kname(const std::string &name) const
   std::ifstream file(file_name);
   if (file.fail())
   {
-    std::cerr << strerror(errno) << ": " << file_name << std::endl;
+    LOG(ERROR) << strerror(errno) << ": " << file_name;
     return addr;
   }
 
@@ -1879,8 +1876,8 @@ std::string BPFtrace::resolve_inet(int af, const uint8_t* inet) const
       addrstr = resolve_inetv6(inet);
       break;
     default:
-    std::cerr << "ntop() got unsupported AF type: " << af << std::endl;
-    addrstr = std::string("");
+      LOG(ERROR) << "ntop() got unsupported AF type: " << af;
+      addrstr = std::string("");
   }
 
   // TODO(mmarchini): handle inet_ntop errors
@@ -1901,8 +1898,7 @@ bool BPFtrace::is_aslr_enabled(int pid)
     if (file.fail())
     {
       if (bt_verbose)
-        std::cerr << strerror(errno) << ": " << randomize_va_space_file
-                  << std::endl;
+        LOG(ERROR) << strerror(errno) << ": " << randomize_va_space_file;
       // conservatively return true
       return true;
     }
@@ -1920,7 +1916,7 @@ bool BPFtrace::is_aslr_enabled(int pid)
     if (file.fail())
     {
       if (bt_verbose)
-        std::cerr << strerror(errno) << ": " << personality_file << std::endl;
+        LOG(ERROR) << strerror(errno) << ": " << personality_file;
       return true;
     }
     std::string line;
@@ -2034,8 +2030,8 @@ void BPFtrace::sort_by_key(std::vector<SizedType> key_args,
       }
       else
       {
-        std::cerr << "invalid integer argument size. 4 or 8  expected, but " << arg.size << " provided" << std::endl;
-        abort();
+        LOG(FATAL) << "invalid integer argument size. 4 or 8  expected, but "
+                   << arg.size << " provided";
       }
 
     }

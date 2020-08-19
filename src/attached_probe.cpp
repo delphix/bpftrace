@@ -17,6 +17,7 @@
 #include "bpftrace.h"
 #include "disasm.h"
 #include "list.h"
+#include "log.h"
 #include "usdt.h"
 #include <bcc/bcc_elf.h>
 #include <bcc/bcc_syms.h>
@@ -51,9 +52,9 @@ bpf_probe_attach_type attachtype(ProbeType t)
     case ProbeType::uretprobe: return BPF_PROBE_RETURN; break;
     case ProbeType::usdt:      return BPF_PROBE_ENTRY;  break;
     default:
-      std::cerr << "invalid probe attachtype \"" << probetypeName(t) << "\"" << std::endl;
-      abort();
+      LOG(FATAL) << "invalid probe attachtype \"" << probetypeName(t) << "\"";
   }
+  // lgtm[cpp/missing-return]
 }
 
 bpf_prog_type progtype(ProbeType t)
@@ -78,9 +79,9 @@ bpf_prog_type progtype(ProbeType t)
       return static_cast<enum ::bpf_prog_type>(libbpf::BPF_PROG_TYPE_TRACING);
       break;
     default:
-      std::cerr << "program type not found" << std::endl;
-      abort();
+      LOG(FATAL) << "program type not found";
   }
+  // lgtm[cpp/missing-return]
 }
 
 std::string progtypeName(bpf_prog_type t)
@@ -93,14 +94,15 @@ std::string progtypeName(bpf_prog_type t)
     case BPF_PROG_TYPE_PERF_EVENT: return "BPF_PROG_TYPE_PERF_EVENT"; break;
     // clang-format on
     default:
-      std::cerr << "invalid program type: " << t << std::endl;
-      abort();
+      LOG(FATAL) << "invalid program type: " << t;
   }
+  // lgtm[cpp/missing-return]
 }
 
 void check_banned_kretprobes(std::string const& kprobe_name) {
   if (banned_kretprobes.find(kprobe_name) != banned_kretprobes.end()) {
-    std::cerr << "error: kretprobe:" << kprobe_name << " can't be used as it might lock up your system." << std::endl;
+    LOG(ERROR) << "error: kretprobe:" << kprobe_name
+               << " can't be used as it might lock up your system.";
     exit(1);
   }
 }
@@ -128,8 +130,7 @@ void AttachedProbe::attach_kfunc(void)
 
 int AttachedProbe::detach_kfunc(void)
 {
-  std::cerr << "kfunc not available for linked against bcc version"
-            << std::endl;
+  LOG(ERROR) << "kfunc not available for linked against bcc version";
   return -1;
 }
 #endif // HAVE_BCC_KFUNC
@@ -173,8 +174,8 @@ AttachedProbe::AttachedProbe(Probe &probe, std::tuple<uint8_t *, uintptr_t> func
       attach_kfunc();
       break;
     default:
-      std::cerr << "invalid attached probe type \"" << probetypeName(probe_.type) << "\"" << std::endl;
-      abort();
+      LOG(FATAL) << "invalid attached probe type \""
+                 << probetypeName(probe_.type) << "\"";
   }
 }
 
@@ -191,8 +192,8 @@ AttachedProbe::AttachedProbe(Probe &probe, std::tuple<uint8_t *, uintptr_t> func
       attach_watchpoint(pid, probe.mode);
       break;
     default:
-      std::cerr << "invalid attached probe type \"" << probetypeName(probe_.type) << "\"" << std::endl;
-      abort();
+      LOG(FATAL) << "invalid attached probe type \""
+                 << probetypeName(probe_.type) << "\"";
   }
 }
 
@@ -203,7 +204,7 @@ AttachedProbe::~AttachedProbe()
   {
     err = bpf_close_perf_event_fd(perf_event_fd);
     if (err)
-      std::cerr << "Error closing perf event FDs for probe: " << probe_.name << std::endl;
+      LOG(ERROR) << "failed to close perf event FDs for probe: " << probe_.name;
   }
 
   err = 0;
@@ -234,11 +235,11 @@ AttachedProbe::~AttachedProbe()
     case ProbeType::hardware:
       break;
     default:
-      std::cerr << "invalid attached probe type \"" << probetypeName(probe_.type) << "\" at destructor" << std::endl;
-      abort();
+      LOG(FATAL) << "invalid attached probe type \""
+                 << probetypeName(probe_.type) << "\" at destructor";
   }
   if (err)
-    std::cerr << "Error detaching probe: " << probe_.name << std::endl;
+    LOG(ERROR) << "failed to detach probe: " << probe_.name;
 
   if (progfd_ >= 0)
     close(progfd_);
@@ -253,9 +254,9 @@ std::string AttachedProbe::eventprefix() const
     case BPF_PROBE_RETURN:
       return "r_";
     default:
-      std::cerr << "invalid eventprefix" << std::endl;
-      abort();
+      LOG(FATAL) << "invalid eventprefix";
   }
+  // lgtm[cpp/missing-return]
 }
 
 std::string AttachedProbe::eventname() const
@@ -277,8 +278,8 @@ std::string AttachedProbe::eventname() const
     case ProbeType::tracepoint:
       return probe_.attach_point;
     default:
-      std::cerr << "invalid eventname probe \"" << probetypeName(probe_.type) << "\"" << std::endl;
-      abort();
+      LOG(FATAL) << "invalid eventname probe \"" << probetypeName(probe_.type)
+                 << "\"";
   }
 }
 
@@ -362,9 +363,9 @@ static void check_alignment(std::string &path,
         throw std::runtime_error("Could not add " + probe_name +
                                  " into middle of instruction: " + tmp);
       else
-        std::cerr << "Unsafe " + probe_name +
-                         " in the middle of the instruction: "
-                  << tmp << std::endl;
+        LOG(WARNING) << "Unsafe " + probe_name +
+                            " in the middle of the instruction: "
+                     << tmp;
       break;
 
     case AlignState::Fail:
@@ -372,7 +373,7 @@ static void check_alignment(std::string &path,
         throw std::runtime_error("Failed to check if " + probe_name +
                                  " is in proper place: " + tmp);
       else
-        std::cerr << "Unchecked " + probe_name + ": " << tmp << std::endl;
+        LOG(WARNING) << "Unchecked " + probe_name + ": " << tmp;
       break;
 
     case AlignState::NotSupp:
@@ -382,7 +383,7 @@ static void check_alignment(std::string &path,
                                  "(k|u)probe offset support): " +
                                  tmp);
       else
-        std::cerr << "Unchecked " + probe_name + " : " << tmp << std::endl;
+        LOG(WARNING) << "Unchecked " + probe_name + " : " << tmp;
       break;
 
     default:
@@ -417,11 +418,10 @@ void AttachedProbe::resolve_offset_uprobe(bool safe_mode)
       }
       else
       {
-        std::cerr << "WARNING: could not determine instruction boundary for "
-                  << probe_.name
-                  << " (binary appears stripped). Misaligned probes "
-                     "can lead to tracee crashes!"
-                  << std::endl;
+        LOG(WARNING) << "Could not determine instruction boundary for "
+                     << probe_.name
+                     << " (binary appears stripped). Misaligned probes "
+                        "can lead to tracee crashes!";
         offset_ = probe_.address;
         return;
       }
@@ -644,8 +644,8 @@ static unsigned kernel_version(int attempt)
     default:
       break;
   }
-  std::cerr << "invalid kernel version" << std::endl;
-  abort();
+  LOG(FATAL) << "invalid kernel version";
+  // lgtm[cpp/missing-return]
 }
 
 void AttachedProbe::load_prog()
@@ -776,7 +776,7 @@ void AttachedProbe::attach_kprobe(bool safe_mode)
     if (probe_.orig_name != probe_.name) {
       // a wildcard expansion couldn't probe something, just print a warning
       // as this is normal for some kernel functions (eg, do_debug())
-      std::cerr << "Warning: could not attach probe " << probe_.name << ", skipping." << std::endl;
+      LOG(WARNING) << "could not attach probe " << probe_.name << ", skipping.";
     } else {
       // an explicit match failed, so fail as the user must have wanted it
       throw std::runtime_error("Error attaching probe: '" + probe_.name + "'");
@@ -957,8 +957,7 @@ void AttachedProbe::attach_profile()
   }
   else
   {
-    std::cerr << "invalid profile path \"" << probe_.path << "\"" << std::endl;
-    abort();
+    LOG(FATAL) << "invalid profile path \"" << probe_.path << "\"";
   }
 
   std::vector<int> cpus = get_online_cpus();
@@ -999,8 +998,7 @@ void AttachedProbe::attach_interval()
   }
   else
   {
-    std::cerr << "invalid interval path \"" << probe_.path << "\"" << std::endl;
-    abort();
+    LOG(FATAL) << "invalid interval path \"" << probe_.path << "\"";
   }
 
   int perf_event_fd = bpf_attach_perf_event(progfd_,

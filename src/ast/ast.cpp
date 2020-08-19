@@ -1,4 +1,5 @@
 #include "ast.h"
+#include "log.h"
 #include "parser.tab.hh"
 #include <iostream>
 
@@ -429,9 +430,9 @@ std::string opstr(Binop &binop)
     case bpftrace::Parser::token::BOR:   return "|";
     case bpftrace::Parser::token::BXOR:  return "^";
     default:
-      std::cerr << "unknown binary operator" << std::endl;
-      abort();
+      LOG(FATAL) << "unknown binary operator";
   }
+  // lgtm[cpp/missing-return]
 }
 
 std::string opstr(Unop &unop)
@@ -444,9 +445,9 @@ std::string opstr(Unop &unop)
     case bpftrace::Parser::token::INCREMENT: return "++";
     case bpftrace::Parser::token::DECREMENT: return "--";
     default:
-      std::cerr << "unknown unary operator" << std::endl;
-      abort();
+      LOG(FATAL) << "unknown unary operator";
   }
+  // lgtm[cpp/missing-return]
 }
 
 std::string AttachPoint::name(const std::string &attach_target,
