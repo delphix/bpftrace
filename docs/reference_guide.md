@@ -1984,6 +1984,11 @@ This prints the current time using the format string supported by libc `strftime
 
 If a format string is not provided, it defaults to "%H:%M:%S\n".
 
+Note that this builtin is asynchronous. The printed timestamp is the time at
+which userspace has processed the queued up event, _not_ the time at which the
+bpf prog calls `time()`. For a more precise timestamp, see
+[strftime()](#24-strftime-formatted-timestamp).
+
 ## 4. `join()`: Join
 
 Syntax: `join(char *arr[] [, char *delim])`
@@ -2710,9 +2715,12 @@ Syntax:
 - `strftime(const char *format, int nsecs)`
 
 This returns a formatted timestamp that is printable with `printf`. The format
-string must be supported by `strftime(3)`. Use format specifier "%s" when
-printing the return value. Note that `strftime` does not actually return a
-string in bpf (kernel), the formatting happens in userspace.
+string must be supported by `strftime(3)`. `nsecs` is nanoseconds since boot,
+typically derived from [nsecs](#6-nsecs-timestamps-and-time-deltas).
+
+Use format specifier "%s" when printing the return value. Note that `strftime`
+does not actually return a string in bpf (kernel), the formatting happens in
+userspace.
 
 Examples:
 
