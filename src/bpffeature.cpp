@@ -25,24 +25,40 @@ static bool try_load(const char* name,
   int ret = 0;
   StderrSilencer silencer;
   silencer.silence();
-#ifdef HAVE_BCC_PROG_LOAD
-  ret = bcc_prog_load(
-#else
-  ret = bpf_prog_load(
-#endif
-      static_cast<enum ::bpf_prog_type>(prog_type),
-      name,
-      insns,
-      insns_cnt * sizeof(struct bpf_insn),
-      "GPL",
-      0, /* version */
-      loglevel,
-      logbuf,
-      logbuf_size);
-  if (ret >= 0)
-    close(ret);
+  for (int attempt = 0; attempt < 3; attempt++)
+  {
+    auto version = kernel_version(attempt);
+    if (version == 0 && attempt > 0)
+    {
+      // Recent kernels don't check the version so we should try to call
+      // bcc_prog_load during first iteration even if we failed to determine
+      // the version. We should not do that in subsequent iterations to avoid
+      // zeroing of log_buf on systems with older kernels.
+      continue;
+    }
 
-  return ret >= 0;
+#ifdef HAVE_BCC_PROG_LOAD
+    ret = bcc_prog_load(
+#else
+    ret = bpf_prog_load(
+#endif
+        static_cast<enum ::bpf_prog_type>(prog_type),
+        name,
+        insns,
+        insns_cnt * sizeof(struct bpf_insn),
+        "GPL",
+        version,
+        loglevel,
+        logbuf,
+        logbuf_size);
+    if (ret >= 0)
+    {
+      close(ret);
+      return true;
+    }
+  }
+
+  return false;
 }
 
 static bool try_load(enum libbpf::bpf_prog_type prog_type,
@@ -77,17 +93,30 @@ bool BPFfeature::detect_helper(enum libbpf::bpf_func_id func_id,
 {
   // Stolen from libbpf's  bpf_probe_helper
   char logbuf[4096] = {};
+  char* buf = logbuf;
   struct bpf_insn insns[] = {
     BPF_RAW_INSN(BPF_JMP | BPF_CALL, 0, 0, 0, func_id),
     BPF_EXIT_INSN(),
   };
 
-  try_load(nullptr, prog_type, insns, ARRAY_SIZE(insns), 1, logbuf, 4096);
+  if (try_load(nullptr, prog_type, insns, ARRAY_SIZE(insns), 1, logbuf, 4096))
+    return true;
+
   if (errno == EPERM)
     return false;
 
-  return (strstr(logbuf, "invalid func ") == nullptr) &&
-         (strstr(logbuf, "unknown func ") == nullptr);
+  // On older kernels the first byte can be zero, skip leading 0 bytes
+  // $2 = "\000: (85) call 4\nR1 type=ctx expected=fp\n", '\000' <repeats 4056
+  // times>
+  //       ^^
+  for (int i = 0; i < 8 && *buf == 0; i++, buf++)
+    ;
+
+  if (*buf == 0)
+    return false;
+
+  return (strstr(buf, "invalid func ") == nullptr) &&
+         (strstr(buf, "unknown func ") == nullptr);
 }
 
 bool BPFfeature::detect_prog_type(enum libbpf::bpf_prog_type prog_type)
@@ -182,18 +211,24 @@ int BPFfeature::instruction_limit(void)
   // processed 2 insns (limit 131072), stack depth 0
   std::string log(logbuf, logsize);
   std::size_t line_start = log.find("processed 2 insns");
-  if (line_start != std::string::npos)
-  {
-    std::size_t begin = log.find("limit", line_start) + /* "limit " = 6*/ 6;
-    std::size_t end = log.find(")", begin);
-    std::string cnt = log.substr(begin, end - begin);
-    insns_limit_ = std::make_optional<int>(std::stoi(cnt));
-  }
-  else
+  if (line_start == std::string::npos)
   {
     insns_limit_ = std::make_optional<int>(-1);
+    return *insns_limit_;
   }
 
+  // Old kernels don't have the instruction limit in the verifier output
+  auto begin = log.find("limit", line_start);
+  if (begin == std::string::npos)
+  {
+    insns_limit_ = std::make_optional<int>(-1);
+    return *insns_limit_;
+  }
+
+  begin += 6; /* "limit " = 6*/
+  std::size_t end = log.find(")", begin);
+  std::string cnt = log.substr(begin, end - begin);
+  insns_limit_ = std::make_optional<int>(std::stoi(cnt));
   return *insns_limit_;
 }
 
