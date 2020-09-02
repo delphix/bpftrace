@@ -140,7 +140,7 @@ public:
                        uint64_t n,
                        const location &loc,
                        bool inverse = false);
-  CallInst *CreateGetNs();
+  CallInst *CreateGetNs(bool boot_time);
   CallInst   *CreateGetPidTgid();
   CallInst   *CreateGetCurrentCgroupId();
   CallInst   *CreateGetUidGid();
@@ -177,7 +177,6 @@ private:
   libbpf::bpf_func_id selectProbeReadHelper(AddrSpace as, bool str);
 
   std::map<std::string, StructType *> structs_;
-  // clang-format on
 };
 
 } // namespace ast
