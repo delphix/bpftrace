@@ -36,23 +36,26 @@ void setup_mock_bpftrace(MockBPFtrace &bpftrace)
         return std::unique_ptr<std::istream>(new std::istringstream(tracepoints));
       });
 
-  std::string usyms = "first_open\n"
-                      "second_open\n"
-                      "open_as_well\n"
-                      "something_else\n"
-                      "_Z11cpp_mangledi\n"
-                      "_Z11cpp_mangledv\n";
-  ON_CALL(bpftrace, extract_func_symbols_from_path(_))
-      .WillByDefault(Return(usyms));
+  std::string sh_usyms = "/bin/sh:first_open\n"
+                         "/bin/sh:second_open\n"
+                         "/bin/sh:open_as_well\n"
+                         "/bin/sh:something_else\n"
+                         "/bin/sh:_Z11cpp_mangledi\n"
+                         "/bin/sh:_Z11cpp_mangledv\n";
+  std::string bash_usyms = "/bin/bash:first_open\n";
+  ON_CALL(bpftrace, extract_func_symbols_from_path("/bin/sh"))
+      .WillByDefault(Return(sh_usyms));
+  ON_CALL(bpftrace, extract_func_symbols_from_path("/bin/*sh"))
+      .WillByDefault(Return(sh_usyms + bash_usyms));
 
   ON_CALL(bpftrace, get_symbols_from_usdt(_, _))
-      .WillByDefault([](int, const std::string &)
-      {
-        std::string usdt_syms = "prov1:tp1\n"
-                                "prov1:tp2\n"
-                                "prov2:tp\n"
-                                "prov2:notatp\n"
-                                "nahprov:tp\n";
+      .WillByDefault([](int, const std::string &) {
+        std::string usdt_syms = "/bin/sh:prov1:tp1\n"
+                                "/bin/sh:prov1:tp2\n"
+                                "/bin/sh:prov2:tp\n"
+                                "/bin/sh:prov2:notatp\n"
+                                "/bin/sh:nahprov:tp\n"
+                                "/bin/bash:prov1:tp3";
         return std::unique_ptr<std::istream>(new std::istringstream(usdt_syms));
       });
 

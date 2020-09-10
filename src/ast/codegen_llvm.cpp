@@ -783,15 +783,24 @@ void CodegenLLVM::visit(Call &call)
   }
   else if (call.func == "printf")
   {
-    createFormatStringCall(call, printf_id_, bpftrace_.printf_args_, "printf", AsyncAction::printf);
+    createFormatStringCall(call,
+                           printf_id_,
+                           bpftrace_.printf_args_,
+                           "printf",
+                           AsyncAction::printf);
   }
   else if (call.func == "system")
   {
-    createFormatStringCall(call, system_id_, bpftrace_.system_args_, "system", AsyncAction::syscall);
+    createFormatStringCall(call,
+                           system_id_,
+                           bpftrace_.system_args_,
+                           "system",
+                           AsyncAction::syscall);
   }
   else if (call.func == "cat")
   {
-    createFormatStringCall(call, cat_id_, bpftrace_.cat_args_, "cat", AsyncAction::cat);
+    createFormatStringCall(
+        call, cat_id_, bpftrace_.cat_args_, "cat", AsyncAction::cat);
   }
   else if (call.func == "exit")
   {
@@ -2001,23 +2010,26 @@ void CodegenLLVM::visit(Probe &probe)
       {
         reset_ids();
 
-        // USDT probes must specify both a provider and a function name
-        // So we will extract out the provider namespace to get just the function name
+        // USDT probes must specify a target binary path, a provider,
+        // and a function name.
+        // So we will extract out the path and the provider namespace to get
+        // just the function name.
         if (probetype(attach_point->provider) == ProbeType::usdt) {
           std::string func_id = match;
-          std::string orig_ns = attach_point->ns;
+          std::string target = erase_prefix(func_id);
           std::string ns = erase_prefix(func_id);
 
-          // Ensure that the full probe name used is the resolved one for this probe,
+          std::string orig_target = attach_point->target;
+          std::string orig_ns = attach_point->ns;
+
+          // Ensure that the full probe name used is the resolved one for this
+          // probe.
+          attach_point->target = target;
           attach_point->ns = ns;
           probefull_ = attach_point->name(func_id);
 
-          // But propagate the originally specified namespace in case it has a wildcard,
-          attach_point->ns = orig_ns;
-
           // Set the probe identifier so that we can read arguments later
-          auto usdt = USDTHelper::find(
-              bpftrace_.pid(), attach_point->target, ns, func_id);
+          auto usdt = USDTHelper::find(bpftrace_.pid(), target, ns, func_id);
           if (!usdt.has_value())
             throw std::runtime_error("Failed to find usdt probe: " +
                                      probefull_);
@@ -2041,16 +2053,24 @@ void CodegenLLVM::visit(Probe &probe)
             generateProbe(probe, full_func_id, section_name, func_type, true);
             current_usdt_location_index_++;
           }
+
+          // Propagate the originally specified target and namespace in case
+          // they contain a wildcard.
+          attach_point->target = orig_target;
+          attach_point->ns = orig_ns;
         }
         else
         {
           if (attach_point->provider == "BEGIN" ||
               attach_point->provider == "END")
             probefull_ = attach_point->provider;
-          else if (probetype(attach_point->provider) == ProbeType::tracepoint)
+          else if ((probetype(attach_point->provider) ==
+                        ProbeType::tracepoint ||
+                    probetype(attach_point->provider) == ProbeType::uprobe ||
+                    probetype(attach_point->provider) == ProbeType::uretprobe))
           {
-            // Tracepoint probes must specify both a category (target) and
-            // a function name
+            // Tracepoint and uprobe probes must specify both a target
+            // (tracepoint category) and a function name
             std::string func = match;
             std::string category = erase_prefix(func);
 
@@ -2451,10 +2471,12 @@ void CodegenLLVM::createFormatStringCall(Call &call, int &id, CallArgs &call_arg
   }
 
   AllocaInst *fmt_args = b_.CreateAllocaBPF(fmt_struct, call_name + "_args");
+  // as the struct is not packed we need to memset it.
   b_.CREATE_MEMSET(fmt_args, b_.getInt8(0), struct_size, 1);
 
   Value *id_offset = b_.CreateGEP(fmt_args, {b_.getInt32(0), b_.getInt32(0)});
   b_.CreateStore(b_.getInt64(id + asyncactionint(async_action)), id_offset);
+
   for (size_t i=1; i<call.vargs->size(); i++)
   {
     Expression &arg = *call.vargs->at(i);

@@ -344,6 +344,30 @@ TEST(bpftrace, add_probes_uprobe_wildcard)
   check_uprobe(bpftrace->get_probes().at(1), "/bin/sh", "second_open", probe_orig_name);
 }
 
+TEST(bpftrace, add_probes_uprobe_wildcard_file)
+{
+  ast::AttachPoint a("");
+  a.provider = "uprobe";
+  a.target = "/bin/*sh";
+  a.func = "first_open";
+  a.need_expansion = true;
+  ast::AttachPointList attach_points = { &a };
+  ast::Probe probe(&attach_points, nullptr, nullptr);
+
+  auto bpftrace = get_strict_mock_bpftrace();
+  EXPECT_CALL(*bpftrace, extract_func_symbols_from_path("/bin/*sh")).Times(1);
+
+  ASSERT_EQ(0, bpftrace->add_probe(probe));
+  ASSERT_EQ(2U, bpftrace->get_probes().size());
+  ASSERT_EQ(0U, bpftrace->get_special_probes().size());
+
+  std::string probe_orig_name = "uprobe:/bin/*sh:first_open";
+  check_uprobe(
+      bpftrace->get_probes().at(0), "/bin/bash", "first_open", probe_orig_name);
+  check_uprobe(
+      bpftrace->get_probes().at(1), "/bin/sh", "first_open", probe_orig_name);
+}
+
 TEST(bpftrace, add_probes_uprobe_wildcard_no_matches)
 {
   ast::AttachPoint a("");
@@ -513,7 +537,7 @@ TEST(bpftrace, add_probes_usdt_wildcard)
 {
   ast::AttachPoint a("");
   a.provider = "usdt";
-  a.target = "/bin/sh";
+  a.target = "/bin/*sh";
   a.ns = "prov*";
   a.func = "tp*";
   a.usdt.num_locations = 1;
@@ -522,19 +546,30 @@ TEST(bpftrace, add_probes_usdt_wildcard)
   ast::Probe probe(&attach_points, nullptr, nullptr);
 
   auto bpftrace = get_strict_mock_bpftrace();
-  EXPECT_CALL(*bpftrace, get_symbols_from_usdt(0, "/bin/sh")).Times(1);
+  EXPECT_CALL(*bpftrace, get_symbols_from_usdt(0, "/bin/*sh")).Times(1);
 
   ASSERT_EQ(0, bpftrace->add_probe(probe));
-  ASSERT_EQ(3U, bpftrace->get_probes().size());
+  ASSERT_EQ(4U, bpftrace->get_probes().size());
   ASSERT_EQ(0U, bpftrace->get_special_probes().size());
   check_usdt(bpftrace->get_probes().at(0),
-             "/bin/sh", "prov1", "tp1",
-             "usdt:/bin/sh:prov1:tp1");
+             "/bin/bash",
+             "prov1",
+             "tp3",
+             "usdt:/bin/bash:prov1:tp3");
   check_usdt(bpftrace->get_probes().at(1),
-             "/bin/sh", "prov1", "tp2",
-             "usdt:/bin/sh:prov1:tp2");
+             "/bin/sh",
+             "prov1",
+             "tp1",
+             "usdt:/bin/sh:prov1:tp1");
   check_usdt(bpftrace->get_probes().at(2),
-             "/bin/sh", "prov2", "tp",
+             "/bin/sh",
+             "prov1",
+             "tp2",
+             "usdt:/bin/sh:prov1:tp2");
+  check_usdt(bpftrace->get_probes().at(3),
+             "/bin/sh",
+             "prov2",
+             "tp",
              "usdt:/bin/sh:prov2:tp");
 }
 
