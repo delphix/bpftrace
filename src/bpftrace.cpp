@@ -564,13 +564,13 @@ void perf_event_printer(void *cb_cookie, void *data, int size __attribute__((unu
   else if (printf_id == asyncactionint(AsyncAction::print))
   {
     auto print = static_cast<AsyncEvent::Print *>(data);
-    IMap &map = bpftrace->get_map_by_id(print->mapid);
+    IMap *map = *bpftrace->maps[print->mapid];
 
-    err = bpftrace->print_map(map, print->top, print->div);
+    err = bpftrace->print_map(*map, print->top, print->div);
 
     if (err)
-      throw std::runtime_error("Could not print map with ident \"" + map.name_ +
-                               "\", err=" + std::to_string(err));
+      throw std::runtime_error("Could not print map with ident \"" +
+                               map->name_ + "\", err=" + std::to_string(err));
     return;
   }
   else if (printf_id == asyncactionint(AsyncAction::print_non_map))
@@ -589,20 +589,20 @@ void perf_event_printer(void *cb_cookie, void *data, int size __attribute__((unu
   else if (printf_id == asyncactionint(AsyncAction::clear))
   {
     auto mapevent = static_cast<AsyncEvent::MapEvent *>(data);
-    IMap &map = bpftrace->get_map_by_id(mapevent->mapid);
-    err = bpftrace->clear_map(map);
+    IMap *map = *bpftrace->maps[mapevent->mapid];
+    err = bpftrace->clear_map(*map);
     if (err)
-      throw std::runtime_error("Could not clear map with ident \"" + map.name_ +
-                               "\", err=" + std::to_string(err));
+      throw std::runtime_error("Could not clear map with ident \"" +
+                               map->name_ + "\", err=" + std::to_string(err));
     return;
   }
   else if (printf_id == asyncactionint(AsyncAction::zero))
   {
     auto mapevent = static_cast<AsyncEvent::MapEvent *>(data);
-    IMap &map = bpftrace->get_map_by_id(mapevent->mapid);
-    err = bpftrace->zero_map(map);
+    IMap *map = *bpftrace->maps[mapevent->mapid];
+    err = bpftrace->zero_map(*map);
     if (err)
-      throw std::runtime_error("Could not zero map with ident \"" + map.name_ +
+      throw std::runtime_error("Could not zero map with ident \"" + map->name_ +
                                "\", err=" + std::to_string(err));
     return;
   }
@@ -1024,14 +1024,17 @@ int BPFtrace::run(std::unique_ptr<BpfOrc> bpforc)
   if (epollfd < 0)
     return epollfd;
 
-  if (elapsed_map_)
+  if (maps.Has(MapManager::Type::Elapsed))
   {
     struct timespec ts;
     clock_gettime(CLOCK_BOOTTIME, &ts);
     auto nsec = 1000000000ULL * ts.tv_sec + ts.tv_nsec;
     uint64_t key = 0;
 
-    if (bpf_update_elem(elapsed_map_->mapfd_, &key, &nsec, 0) < 0)
+    if (bpf_update_elem(maps[MapManager::Type::Elapsed].value()->mapfd_,
+                        &key,
+                        &nsec,
+                        0) < 0)
     {
       perror("Failed to write start time to elapsed map");
       return -1;
@@ -1147,7 +1150,8 @@ int BPFtrace::setup_perf_events()
     ev.data.ptr = reader;
     int reader_fd = perf_reader_fd((perf_reader*)reader);
 
-    bpf_update_elem(perf_event_map_->mapfd_, &cpu, &reader_fd, 0);
+    bpf_update_elem(
+        maps[MapManager::Type::PerfEvent].value()->mapfd_, &cpu, &reader_fd, 0);
     if (epoll_ctl(epollfd, EPOLL_CTL_ADD, reader_fd, &ev) == -1)
     {
       LOG(ERROR) << "Failed to add perf reader to epoll";
@@ -1194,9 +1198,9 @@ void BPFtrace::poll_perf_events(int epollfd, bool drain)
 
 int BPFtrace::print_maps()
 {
-  for(auto &mapmap : maps_)
+  for (auto &mapmap : maps)
   {
-    int err = print_map(*mapmap.second.get(), 0, 0);
+    int err = print_map(*mapmap.get(), 0, 0);
     if (err)
       return err;
   }
@@ -1638,6 +1642,8 @@ int64_t BPFtrace::min_value(const std::vector<uint8_t> &value, int nvalues)
 
 std::vector<uint8_t> BPFtrace::find_empty_key(IMap &map, size_t size) const
 {
+  // 4.12 and above kernel supports passing NULL to BPF_MAP_GET_NEXT_KEY
+  // to get first key of the map. For older kernels, the call will fail.
   if (size == 0) size = 8;
   auto key = std::vector<uint8_t>(size);
   uint32_t nvalues = map.is_per_cpu_type() ? ncpus_ : 1;
@@ -1663,7 +1669,9 @@ std::string BPFtrace::get_stack(uint64_t stackidpid, bool ustack, StackType stac
   int32_t stackid = stackidpid & 0xffffffff;
   int pid = stackidpid >> 32;
   auto stack_trace = std::vector<uint64_t>(stack_type.limit);
-  int err = bpf_lookup_elem(stackid_maps_[stack_type]->mapfd_, &stackid, stack_trace.data());
+  int err = bpf_lookup_elem(maps[stack_type].value()->mapfd_,
+                            &stackid,
+                            stack_trace.data());
   if (err)
   {
     // ignore EFAULT errors: eg, kstack used but no kernel stack
