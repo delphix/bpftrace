@@ -3,7 +3,6 @@
 #include <cstdio>
 #include <cstring>
 #include <ctime>
-#include <cxxabi.h>
 #include <fstream>
 #include <glob.h>
 #include <iomanip>
@@ -27,6 +26,8 @@
 
 #include <bcc/bcc_syms.h>
 #include <bcc/perf_reader.h>
+
+#include <llvm/Demangle/Demangle.h>
 
 #include "ast/async_event_types.h"
 #include "attached_probe.h"
@@ -88,7 +89,7 @@ std::set<std::string> find_wildcard_matches_internal(
                         : "";
       if (symbol_has_cpp_mangled_signature(fun_line))
       {
-        char *demangled_name = abi::__cxa_demangle(
+        char *demangled_name = llvm::itaniumDemangle(
             fun_line.c_str(), nullptr, nullptr, nullptr);
         if (demangled_name)
         {
@@ -447,7 +448,7 @@ std::set<std::string> BPFtrace::find_symbol_matches(
     {
       if (symbol_has_cpp_mangled_signature(line_func))
       {
-        char *demangled_name = abi::__cxa_demangle(
+        char *demangled_name = llvm::itaniumDemangle(
             line_func.c_str(), nullptr, nullptr, nullptr);
         if (demangled_name)
         {
@@ -1121,6 +1122,9 @@ int BPFtrace::run(std::unique_ptr<BpfOrc> bpforc)
 
   poll_perf_events(epollfd, true);
 
+  // Calls perf_reader_free() on all open perf buffers.
+  open_perf_buffers_.clear();
+
   return 0;
 }
 
@@ -1144,6 +1148,10 @@ int BPFtrace::setup_perf_events()
       LOG(ERROR) << "Failed to open perf buffer";
       return -1;
     }
+    // Store the perf buffer pointers in a vector of unique_ptrs.
+    // When open_perf_buffers_ is cleared or destroyed,
+    // perf_reader_free is automatically called.
+    open_perf_buffers_.emplace_back(reader, perf_reader_free);
 
     struct epoll_event ev = {};
     ev.events = EPOLLIN;
