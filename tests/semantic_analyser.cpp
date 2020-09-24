@@ -1306,12 +1306,21 @@ TEST(semantic_analyser, positional_parameters)
   test(bpftrace, "kprobe:f { printf(\"%s\", str($0)); }", 1);
 
   test(bpftrace, "kprobe:f { printf(\"%d\", $1); }", 0);
-  test(bpftrace, "kprobe:f { printf(\"%s\", str($1)); }", 10);
+  test(bpftrace, "kprobe:f { printf(\"%s\", str($1)); }", 0);
 
   test(bpftrace, "kprobe:f { printf(\"%s\", str($2)); }", 0);
+  test(bpftrace, "kprobe:f { printf(\"%s\", str($2 + 1)); }", 0);
   test(bpftrace, "kprobe:f { printf(\"%d\", $2); }", 10);
 
   test(bpftrace, "kprobe:f { printf(\"%d\", $3); }", 0);
+
+  // Pointer arithmetic in str() for parameters
+  // Only str($1 + CONST) where CONST <= strlen($1) should be allowed
+  test(bpftrace, "kprobe:f { printf(\"%s\", str($1 + 1)); }", 0);
+  test(bpftrace, "kprobe:f { printf(\"%s\", str(1 + $1)); }", 0);
+  test(bpftrace, "kprobe:f { printf(\"%s\", str($1 + 4)); }", 10);
+  test(bpftrace, "kprobe:f { printf(\"%s\", str($1 * 2)); }", 10);
+  test(bpftrace, "kprobe:f { printf(\"%s\", str($1 + 1 + 1)); }", 1);
 
   // Parameters are not required to exist to be used:
   test(bpftrace, "kprobe:f { printf(\"%s\", str($4)); }", 0);
@@ -1319,6 +1328,9 @@ TEST(semantic_analyser, positional_parameters)
 
   test(bpftrace, "kprobe:f { printf(\"%d\", $#); }", 0);
   test(bpftrace, "kprobe:f { printf(\"%s\", str($#)); }", 10);
+
+  // Parameters can be used as string literals
+  test(bpftrace, "kprobe:f { printf(\"%d\", cgroupid(str($2))); }", 0);
 
   Driver driver(bpftrace);
   test(driver, "k:f { $1 }", 0);

@@ -41,6 +41,11 @@ void SemanticAnalyser::visit(Integer &integer)
 void SemanticAnalyser::visit(PositionalParameter &param)
 {
   param.type = CreateInt64();
+  if (is_in_str)
+  {
+    param.is_in_str = true;
+    has_pos_param = true;
+  }
   switch (param.ptype)
   {
     case PositionalParameterType::positional:
@@ -54,14 +59,6 @@ void SemanticAnalyser::visit(PositionalParameter &param)
           LOG(ERROR, param.loc, err_)
               << "$" << param.n << " used numerically but given \"" << pstr
               << "\". Try using str($" << param.n << ").";
-        }
-        if (is_numeric(pstr) && param.is_in_str)
-        {
-          // This is blocked due to current limitations in our codegen
-          LOG(ERROR, param.loc, err_)
-              << "$" << param.n
-              << " used in str(), but given numeric value: " << pstr
-              << ". Try $" << param.n << " instead of str($" << param.n << ").";
         }
       }
       break;
@@ -400,6 +397,9 @@ void SemanticAnalyser::visit(Call &call)
 
   func_setter scope_bound_func_setter{ *this, call.func };
 
+  if (call.func == "str")
+    is_in_str = true;
+
   if (call.vargs) {
     for (Expression *expr : *call.vargs) {
       expr->accept(*this);
@@ -527,7 +527,8 @@ void SemanticAnalyser::visit(Call &call)
   }
   else if (call.func == "str") {
     if (check_varargs(call, 1, 2)) {
-      auto &t = call.vargs->at(0)->type;
+      auto *arg = call.vargs->at(0);
+      auto &t = arg->type;
       if (!t.IsIntegerTy() && !t.IsPtrTy())
       {
         LOG(ERROR, call.loc, err_)
@@ -535,13 +536,30 @@ void SemanticAnalyser::visit(Call &call)
             << "argument (" << t << " provided)";
       }
       call.type = CreateString(bpftrace_.strlen_);
+      if (has_pos_param)
+      {
+        if (dynamic_cast<PositionalParameter *>(arg))
+          call.is_literal = true;
+        else
+        {
+          auto binop = dynamic_cast<Binop *>(arg);
+          if (!(binop && (dynamic_cast<PositionalParameter *>(binop->left) ||
+                          dynamic_cast<PositionalParameter *>(binop->right))))
+          {
+            // Only str($1), str($1 + CONST), or str(CONST + $1) are allowed
+            LOG(ERROR, call.loc, err_)
+                << call.func << "() only accepts positional parameters"
+                << " directly or with a single constant offset added";
+          }
+          has_pos_param = false;
+        }
+      }
+
       if (is_final_pass() && call.vargs->size() > 1) {
         check_arg(call, Type::integer, 1, false);
       }
-      if (auto *param = dynamic_cast<PositionalParameter*>(call.vargs->at(0))) {
-        param->is_in_str = true;
-      }
     }
+    is_in_str = false;
   }
   else if (call.func == "buf")
   {
@@ -591,11 +609,6 @@ void SemanticAnalyser::visit(Call &call)
 
     buffer_size++; // extra byte is used to embed the length of the buffer
     call.type = CreateBuffer(buffer_size);
-
-    if (auto *param = dynamic_cast<PositionalParameter *>(call.vargs->at(0)))
-    {
-      param->is_in_str = true;
-    }
   }
   else if (call.func == "ksym" || call.func == "usym") {
     if (check_nargs(call, 1)) {
@@ -667,9 +680,8 @@ void SemanticAnalyser::visit(Call &call)
     {
       if (check_arg(call, Type::string, 1, true))
       {
-        auto &join_delim_arg = *call.vargs->at(1);
-        String &join_delim_str = static_cast<String &>(join_delim_arg);
-        bpftrace_.join_args_.push_back(join_delim_str.str);
+        auto join_delim_str = bpftrace_.get_string_literal(call.vargs->at(1));
+        bpftrace_.join_args_.push_back(join_delim_str);
       }
     }
     else
@@ -690,8 +702,7 @@ void SemanticAnalyser::visit(Call &call)
       }
 
       if (check_arg(call, Type::string, 0, true)) {
-        auto &arg = *call.vargs->at(0);
-        auto &reg_name = static_cast<String&>(arg).str;
+        auto reg_name = bpftrace_.get_string_literal(call.vargs->at(0));
         int offset = arch::offset(reg_name);;
         if (offset == -1) {
           LOG(ERROR, call.loc, err_)
@@ -718,7 +729,7 @@ void SemanticAnalyser::visit(Call &call)
       return;
 
     std::vector<int> sizes;
-    auto &name = static_cast<String &>(*call.vargs->at(0)).str;
+    auto name = bpftrace_.get_string_literal(call.vargs->at(0));
     for (auto &ap : *probe_->attach_points)
     {
       ProbeType type = probetype(ap->provider);
@@ -966,7 +977,7 @@ void SemanticAnalyser::visit(Call &call)
     auto &arg = *call.vargs->at(0);
     if (arg.type.IsStringTy() && arg.is_literal)
     {
-      auto sig = static_cast<String&>(arg).str;
+      auto sig = bpftrace_.get_string_literal(&arg);
       if (signal_name_to_num(sig) < 1) {
         LOG(ERROR, call.loc, err_) << sig << " is not a valid signal";
       }
@@ -1335,6 +1346,32 @@ void SemanticAnalyser::visit(Binop &binop)
               << "signed operands for '" << opstr(binop)
               << "' can lead to undefined behavior "
               << "(cast to unsigned to silence warning)";
+        }
+      }
+
+      if (is_in_str)
+      {
+        // Check if one of the operands is a positional parameter
+        // The other one should be a constant offset
+        auto pos_param = dynamic_cast<PositionalParameter *>(left);
+        auto offset = dynamic_cast<Integer *>(right);
+        if (!pos_param)
+        {
+          pos_param = dynamic_cast<PositionalParameter *>(right);
+          offset = dynamic_cast<Integer *>(left);
+        }
+
+        if (pos_param)
+        {
+          auto len = bpftrace_.get_param(pos_param->n, true).length();
+          if (!offset || binop.op != bpftrace::Parser::token::PLUS ||
+              offset->n < 0 || (size_t)offset->n > len)
+          {
+            LOG(ERROR, binop.loc + binop.right->loc, err_)
+                << "only addition of a single constant less or equal to the "
+                << "length of $" << pos_param->n << " (which is " << len << ")"
+                << " is allowed inside str()";
+          }
         }
       }
     }
@@ -2511,6 +2548,15 @@ bool SemanticAnalyser::check_arg(const Call &call, Type type, int arg_num, bool 
   {
     LOG(ERROR, call.loc, err_) << call.func << "() expects a " << type
                                << " literal (" << arg.type.type << " provided)";
+    if (type == Type::string)
+    {
+      // If the call requires a string literal and a positional parameter is
+      // given, tell user to use str()
+      auto *pos_param = dynamic_cast<PositionalParameter *>(&arg);
+      if (pos_param)
+        LOG(ERROR) << "Use str($" << pos_param->n << ") to treat $"
+                   << pos_param->n << " as a string";
+    }
     return false;
   }
   else if (is_final_pass() && arg.type.type != type) {
@@ -2527,7 +2573,7 @@ bool SemanticAnalyser::check_symbol(const Call &call, int arg_num __attribute__(
   if (!call.vargs)
     return false;
 
-  auto &arg = static_cast<String&>(*call.vargs->at(0)).str;
+  auto arg = bpftrace_.get_string_literal(call.vargs->at(0));
 
   std::string re = "^[a-zA-Z0-9./_-]+$";
   bool is_valid = std::regex_match(arg, std::regex(re));

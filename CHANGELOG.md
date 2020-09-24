@@ -30,6 +30,8 @@ and this project adheres to
   - [#1485](https://github.com/iovisor/bpftrace/pull/1485)
 - Support multi-matched globbed targets for uprobe and ustd probes
   - [#1499](https://github.com/iovisor/bpftrace/pull/1499)
+- Positional parameters: support numbers as strings and params as string literals
+  - [#1514](https://github.com/iovisor/bpftrace/pull/1514)
 
 #### Changed
 - Warn if using `print` on `stats` maps with top and div arguments
@@ -58,6 +60,10 @@ and this project adheres to
   - [#1457](https://github.com/iovisor/bpftrace/pull/1457)
 - Fix type resolution for struct field access via variables
   - [#1450](https://github.com/iovisor/bpftrace/pull/1450)
+- Fix wrong setting of vmlinux_location.raw when offset kprobe used
+  - [#1530](https://github.com/iovisor/bpftrace/pull/1530)
+- Fix pointer arithmetic for positional parameters
+  - [#1514](https://github.com/iovisor/bpftrace/pull/1514)
 
 #### Tools
 - Hook up execsnoop.bt script onto `execveat` call
@@ -67,6 +73,14 @@ and this project adheres to
 
 #### Documentation
 
+## [0.11.1] 2020-09-22
+
+Bug fix release for the [Docker build](https://quay.io/repository/iovisor/bpftrace)
+
+### Fixed
+
+- Don't strip END_trigger
+  - [#1513](https://github.com/iovisor/bpftrace/pull/1513)
 
 ## [0.11.0] 2020-07-15
 
