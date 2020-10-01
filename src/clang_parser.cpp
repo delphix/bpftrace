@@ -435,26 +435,14 @@ bool ClangParser::visit_children(CXCursor &cursor, BPFtrace &bpftrace)
           Bitfield bitfield;
           bool is_bitfield = getBitfield(c, bitfield);
 
-          // Warn if we already have the struct member defined and is
-          // different type and keep the current definition in place.
-          if (structs.count(ptypestr) != 0 &&
-              structs[ptypestr].fields.count(ident)    != 0 &&
-              structs[ptypestr].fields[ident].offset   != offset &&
-              structs[ptypestr].fields[ident].type     != get_sized_type(type) &&
-              structs[ptypestr].fields[ident].is_bitfield && is_bitfield &&
-              structs[ptypestr].fields[ident].bitfield != bitfield &&
-              structs[ptypestr].size                   != ptypesize)
-          {
-            LOG(WARNING) << "type mismatch for " << ptypestr << "::" << ident;
-          }
-          else
-          {
-            structs[ptypestr].fields[ident].offset = offset;
-            structs[ptypestr].fields[ident].type = get_sized_type(type);
-            structs[ptypestr].fields[ident].is_bitfield = is_bitfield;
-            structs[ptypestr].fields[ident].bitfield = bitfield;
-            structs[ptypestr].size = ptypesize;
-          }
+          // No need to worry about redefined types b/c we should have already
+          // checked clang diagnostics. The diagnostics will tell us if we have
+          // duplicated types.
+          structs[ptypestr].fields[ident].offset = offset;
+          structs[ptypestr].fields[ident].type = get_sized_type(type);
+          structs[ptypestr].fields[ident].is_bitfield = is_bitfield;
+          structs[ptypestr].fields[ident].bitfield = bitfield;
+          structs[ptypestr].size = ptypesize;
         }
 
         return CXChildVisit_Recurse;
@@ -593,8 +581,11 @@ bool ClangParser::parse(ast::Program *program, BPFtrace &bpftrace, std::vector<s
     args.push_back(flag.c_str());
   }
 
-  bool process_btf = program->c_definitions.empty() ||
-                     (bpftrace.force_btf_ && bpftrace.btf_.has_data());
+  // Don't parse BTF for programs containing userspace probes if the user
+  // defined some custom data types, since those may conflict with BTF types.
+  bool process_btf = bpftrace.btf_.has_data() &&
+                     (!program->has_userspace_probes() ||
+                      program->c_definitions.empty());
 
   // We set these args early because some systems may not have <linux/types.h>
   // (containers) and fully rely on BTF.
@@ -662,10 +653,10 @@ bool ClangParser::parse(ast::Program *program, BPFtrace &bpftrace, std::vector<s
   {
     for (auto &msg : error_msgs)
     {
-      if (get_unknown_type(msg) != "" && !bpftrace.force_btf_)
+      if (get_unknown_type(msg))
       {
-        LOG(ERROR) << "Try running with --btf to force BTF processing or "
-                      "include headers with missing type definitions";
+        LOG(ERROR) << "Include headers with missing type definitions or "
+                      "install BTF information to your system";
       }
     }
     return false;
