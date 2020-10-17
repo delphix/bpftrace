@@ -1663,6 +1663,30 @@ TEST(Parser, while_loop)
 )PROG");
 }
 
+TEST(Parser, tuple_assignment_error_message)
+{
+  BPFtrace bpftrace;
+  std::stringstream out;
+  Driver driver(bpftrace, out);
+  EXPECT_EQ(driver.parse_str("i:s:1 { @x = (1, 2); $x.1 = 1; }"), 1);
+  std::string expected =
+      R"(stdin:1:22-30: ERROR: Tuples are immutable once created. Consider creating a new tuple and assigning it instead.
+i:s:1 { @x = (1, 2); $x.1 = 1; }
+                     ~~~~~~~~
+)";
+  EXPECT_EQ(out.str(), expected);
+}
+
+TEST(Parser, tuple_assignment_error)
+{
+  test_parse_failure("i:s:1 { (1, 0) = 0 }");
+  test_parse_failure("i:s:1 { ((1, 0), 3).0.0 = 3 }");
+  test_parse_failure("i:s:1 { ((1, 0), 3).0 = (0, 1) }");
+  test_parse_failure("i:s:1 { (1, \"two\", (3, 4)).5 = \"six\"; }");
+  test_parse_failure("i:s:1 { $a = 1; $a.2 = 3 }");
+  test_parse_failure("i:s:1 { 0.1 = 1.0 }");
+}
+
 } // namespace parser
 } // namespace test
 } // namespace bpftrace
