@@ -56,6 +56,8 @@ and this project adheres to
   - [#1553](https://github.com/iovisor/bpftrace/pull/1553)
 - Improve tuple assignment error message
   - [#1563](https://github.com/iovisor/bpftrace/pull/1563)
+- Remove "BTF: using data from ..." message when using -v flag
+  - [#1554](https://github.com/iovisor/bpftrace/pull/1554)
 
 #### Deprecated
 
@@ -78,6 +80,8 @@ and this project adheres to
   - [#1514](https://github.com/iovisor/bpftrace/pull/1514)
 - SEGV when using perf format for stacks
   - [#1524](https://github.com/iovisor/bpftrace/pull/1524)
+- Fix llvm errors of PositonalParameter
+  - [#1565](https://github.com/iovisor/bpftrace/pull/1565)
 
 #### Tools
 - Hook up execsnoop.bt script onto `execveat` call
