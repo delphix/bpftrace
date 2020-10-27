@@ -215,7 +215,9 @@ ternary : expr QUES expr COLON expr { $$ = new ast::Ternary($1, $3, $5, @$); }
 
 param : PARAM      {
                      try {
-                       $$ = new ast::PositionalParameter(PositionalParameterType::positional, std::stol($1.substr(1, $1.size()-1)), @$);
+                       long n = std::stol($1.substr(1, $1.size()-1));
+                       if (n == 0) throw std::exception();
+                       $$ = new ast::PositionalParameter(PositionalParameterType::positional, n, @$);
                      } catch (std::exception const& e) {
                        error(@1, "param " + $1 + " is out of integer range [1, " +
                              std::to_string(std::numeric_limits<long>::max()) + "]");
@@ -333,8 +335,9 @@ expr : int                                      { $$ = $1; }
      | expr DOT INT                             { $$ = new ast::FieldAccess($1, $3, @3); }
      | expr PTR ident                           { $$ = new ast::FieldAccess(new ast::Unop(token::MUL, $1, @2), $3, @$); }
      | expr "[" expr "]"                        { $$ = new ast::ArrayAccess($1, $3, @2 + @4); }
-     | "(" IDENT ")" expr %prec CAST            { $$ = new ast::Cast($2, false, $4, @1 + @3); }
-     | "(" IDENT MUL ")" expr %prec CAST        { $$ = new ast::Cast($2, true, $5, @1 + @4); }
+     | "(" IDENT ")" expr %prec CAST            { $$ = new ast::Cast($2, false, false, $4, @1 + @3); }
+     | "(" IDENT MUL ")" expr %prec CAST        { $$ = new ast::Cast($2, true, false, $5, @1 + @4); }
+     | "(" IDENT MUL MUL ")" expr %prec CAST    { $$ = new ast::Cast($2, true, true, $6, @1 + @5); }
      | "(" expr "," vargs ")"                   {
                                                   auto args = new ast::ExpressionList;
                                                   args->emplace_back($2);
