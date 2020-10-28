@@ -1594,7 +1594,19 @@ void SemanticAnalyser::visit(Unop &unop)
     }
   }
   else if (unop.op == Parser::token::LNOT) {
-    unop.type = CreateUInt(type.size);
+    // CreateUInt() abort if a size is invalid, so check the size here
+    if (!(type.size == 0 || type.size == 1 || type.size == 2 ||
+          type.size == 4 || type.size == 8))
+    {
+      LOG(ERROR, unop.loc, err_)
+          << "The " << opstr(unop)
+          << " operator can not be used on expressions of type '" << type
+          << "'";
+    }
+    else
+    {
+      unop.type = CreateUInt(8 * type.size);
+    }
   }
   else {
     unop.type = CreateInteger(64, type.IsSigned());
@@ -1934,6 +1946,11 @@ void SemanticAnalyser::visit(Tuple &tuple)
     Expression *elem = tuple.elems->at(i);
     elem->accept(*this);
 
+    // If elem type is none that means that the tuple contains some
+    // invalid cast (e.g., (0, (aaa)0)). In this case, skip the tuple
+    // creation. Cast already emits the error.
+    if (elem->type.IsNoneTy())
+      return;
     elements.emplace_back(elem->type);
   }
 

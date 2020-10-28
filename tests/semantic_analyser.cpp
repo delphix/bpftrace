@@ -917,6 +917,15 @@ TEST(semantic_analyser, unop_not)
   test("kprobe:f { ~\"0\"; }", 10);
 }
 
+TEST(semantic_analyser, unop_lnot)
+{
+  test("kprobe:f { !0; }", 0);
+  test("kprobe:f { !(int32)0; }", 0);
+  test("struct X { int n; } kprobe:f { $x = (struct X*)0; !$x; }", 10);
+  test("struct X { int n; } kprobe:f { $x = (struct X)0; !$x; }", 10);
+  test("kprobe:f { !\"0\"; }", 1);
+}
+
 TEST(semantic_analyser, unop_increment_decrement)
 {
   test("kprobe:f { $x = 0; $x++; }", 0);
@@ -1827,6 +1836,7 @@ TEST(semantic_analyser, tuple)
   test(R"_(BEGIN { @t = (1, 2); @t = (4, "other"); })_", 10);
   test(R"_(BEGIN { @t = (1, 2); @t = 5; })_", 1);
   test(R"_(BEGIN { @t = (1, count()) })_", 1);
+  test(R"_(BEGIN { @t = (1, (aaa)0) })_", 1);
 }
 
 TEST(semantic_analyser, tuple_indexing)
