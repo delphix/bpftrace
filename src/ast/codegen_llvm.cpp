@@ -89,7 +89,7 @@ void CodegenLLVM::visit(PositionalParameter &param)
 
 void CodegenLLVM::visit(String &string)
 {
-  string.str.resize(string.type.size-1);
+  string.str.resize(string.type.GetSize() - 1);
   Constant *const_str = ConstantDataArray::getString(module_->getContext(), string.str, true);
   AllocaInst *buf = b_.CreateAllocaBPF(string.type, "str");
   b_.CreateStore(const_str, buf);
@@ -191,8 +191,8 @@ void CodegenLLVM::visit(Builtin &builtin)
   {
     AllocaInst *buf = b_.CreateAllocaBPF(builtin.type, "comm");
     // initializing memory needed for older kernels:
-    b_.CREATE_MEMSET(buf, b_.getInt8(0), builtin.type.size, 1);
-    b_.CreateGetCurrentComm(ctx_, buf, builtin.type.size, builtin.loc);
+    b_.CREATE_MEMSET(buf, b_.getInt8(0), builtin.type.GetSize(), 1);
+    b_.CreateGetCurrentComm(ctx_, buf, builtin.type.GetSize(), builtin.loc);
     expr_ = buf;
     expr_deleter_ = [this, buf]() { b_.CreateLifetimeEnd(buf); };
   }
@@ -561,7 +561,7 @@ void CodegenLLVM::visit(Call &call)
     {
       auto &arg = *call.vargs->at(0);
       fixed_buffer_length = arg.type.GetNumElements() *
-                            arg.type.GetElementTy()->size;
+                            arg.type.GetElementTy()->GetSize();
       length = b_.getInt8(fixed_buffer_length);
     }
 
@@ -737,7 +737,7 @@ void CodegenLLVM::visit(Call &call)
     auto inet = call.vargs->at(0);
     if (call.vargs->size() == 1)
     {
-      if (inet->type.IsIntegerTy() || inet->type.size == 4)
+      if (inet->type.IsIntegerTy() || inet->type.GetSize() == 4)
       {
         af_type = b_.getInt64(AF_INET);
       }
@@ -762,7 +762,7 @@ void CodegenLLVM::visit(Call &call)
     {
       b_.CreateProbeRead(ctx_,
                          static_cast<AllocaInst *>(inet_offset),
-                         inet->type.size,
+                         inet->type.GetSize(),
                          expr_,
                          inet->type.GetAS(),
                          call.loc);
@@ -947,7 +947,7 @@ void CodegenLLVM::visit(Call &call)
   }
   else if (call.func == "sizeof")
   {
-    expr_ = b_.getInt64(call.vargs->at(0)->type.size);
+    expr_ = b_.getInt64(call.vargs->at(0)->type.GetSize());
   }
   else if (call.func == "strncmp") {
     uint64_t size = static_cast<Integer *>(call.vargs->at(2))->n;
@@ -1074,7 +1074,8 @@ void CodegenLLVM::binop_string(Binop &binop)
     auto scoped_del_left = accept(binop.left);
     Value *left_string = expr_;
 
-    size_t len = std::min(binop.left->type.size, binop.right->type.size);
+    size_t len = std::min(binop.left->type.GetSize(),
+                          binop.right->type.GetSize());
     expr_ = b_.CreateStrncmp(ctx_,
                              left_string,
                              left_as,
@@ -1108,7 +1109,8 @@ void CodegenLLVM::binop_buf(Binop &binop)
   Value *left_string = expr_;
   auto left_as = binop.left->type.GetAS();
 
-  size_t len = std::min(binop.left->type.size, binop.right->type.size);
+  size_t len = std::min(binop.left->type.GetSize(),
+                        binop.right->type.GetSize());
   expr_ = b_.CreateStrncmp(ctx_,
                            left_string,
                            left_as,
@@ -1332,14 +1334,13 @@ void CodegenLLVM::visit(Unop &unop)
       }
       case bpftrace::Parser::token::MUL:
       {
-        int size = type.size;
-        if (type.IsPtrTy())
-        {
-          // When dereferencing a 32-bit integer, only read in 32-bits, etc.
-          size = type.GetPointeeTy()->size;
-        }
+        // When dereferencing a 32-bit integer, only read in 32-bits, etc.
+        int size = type.IsPtrTy() ? type.GetPointeeTy()->GetSize()
+                                  : type.GetSize();
+        auto as =  type.GetAS();
+
         AllocaInst *dst = b_.CreateAllocaBPF(SizedType(type.type, size), "deref");
-        b_.CreateProbeRead(ctx_, dst, size, expr_, type.GetAS(), unop.loc);
+        b_.CreateProbeRead(ctx_, dst, size, expr_, as, unop.loc);
         expr_ = b_.CreateIntCast(b_.CreateLoad(dst),
                                  b_.getInt64Ty(),
                                  type.IsSigned());
@@ -1426,12 +1427,12 @@ void CodegenLLVM::visit(Ternary &ternary)
     // copy selected string via CreateMemCpy
     b_.SetInsertPoint(left_block);
     auto scoped_del_left = accept(ternary.left);
-    b_.CREATE_MEMCPY(buf, expr_, ternary.type.size, 1);
+    b_.CREATE_MEMCPY(buf, expr_, ternary.type.GetSize(), 1);
     b_.CreateBr(done);
 
     b_.SetInsertPoint(right_block);
     auto scoped_del_right = accept(ternary.right);
-    b_.CREATE_MEMCPY(buf, expr_, ternary.type.size, 1);
+    b_.CREATE_MEMCPY(buf, expr_, ternary.type.GetSize(), 1);
     b_.CreateBr(done);
 
     b_.SetInsertPoint(done);
@@ -1521,7 +1522,7 @@ void CodegenLLVM::visit(FieldAccess &acc)
       AllocaInst *dst = b_.CreateAllocaBPF(field.type,
                                            "internal_" + type.GetName() + "." +
                                                acc.field);
-      b_.CREATE_MEMCPY(dst, src, field.type.size, 1);
+      b_.CREATE_MEMCPY(dst, src, field.type.GetSize(), 1);
       expr_ = dst;
       expr_deleter_ = [this, dst]() { b_.CreateLifetimeEnd(dst); };
     }
@@ -1582,13 +1583,13 @@ void CodegenLLVM::visit(FieldAccess &acc)
         b_.CREATE_MEMCPY_VOLATILE(dst,
                                   b_.CreateIntToPtr(src,
                                                     field_ty->getPointerTo()),
-                                  field.type.size,
+                                  field.type.GetSize(),
                                   1);
       }
       else
       {
         b_.CreateProbeRead(
-            ctx_, dst, field.type.size, src, type.GetAS(), acc.loc);
+            ctx_, dst, field.type.GetSize(), src, type.GetAS(), acc.loc);
       }
       expr_ = dst;
       expr_deleter_ = [this, dst]() { b_.CreateLifetimeEnd(dst); };
@@ -1604,7 +1605,7 @@ void CodegenLLVM::visit(FieldAccess &acc)
         AllocaInst *dst = b_.CreateAllocaBPF(field.type,
                                              type.GetName() + "." + acc.field);
         // memset so verifier doesn't complain about reading uninitialized stack
-        b_.CREATE_MEMSET(dst, b_.getInt8(0), field.type.size, 1);
+        b_.CREATE_MEMSET(dst, b_.getInt8(0), field.type.GetSize(), 1);
         b_.CreateProbeRead(
             ctx_, dst, field.bitfield.read_bytes, src, type.GetAS(), acc.loc);
         raw = b_.CreateLoad(dst);
@@ -1647,7 +1648,7 @@ void CodegenLLVM::visit(FieldAccess &acc)
       AllocaInst *dst = b_.CreateAllocaBPF(field.type,
                                            type.GetName() + "." + acc.field);
       b_.CreateProbeRead(
-          ctx_, dst, field.type.size, src, type.GetAS(), acc.loc);
+          ctx_, dst, field.type.GetSize(), src, type.GetAS(), acc.loc);
       expr_ = b_.CreateIntCast(b_.CreateLoad(dst),
                                b_.getInt64Ty(),
                                field.type.IsSigned());
@@ -1660,7 +1661,7 @@ void CodegenLLVM::visit(ArrayAccess &arr)
 {
   Value *array, *index, *offset;
   SizedType &type = arr.expr->type;
-  size_t element_size = type.GetElementTy()->size;
+  size_t element_size = type.GetElementTy()->GetSize();
 
   auto scoped_del_expr = accept(arr.expr);
   array = expr_;
@@ -1705,8 +1706,10 @@ void CodegenLLVM::visit(Cast &cast)
   auto scoped_del = accept(cast.expr);
   if (cast.type.IsIntTy())
   {
-    expr_ = b_.CreateIntCast(
-        expr_, b_.getIntNTy(8 * cast.type.size), cast.type.IsSigned(), "cast");
+    expr_ = b_.CreateIntCast(expr_,
+                             b_.getIntNTy(8 * cast.type.GetSize()),
+                             cast.type.IsSigned(),
+                             "cast");
   }
 }
 
@@ -1721,7 +1724,7 @@ void CodegenLLVM::compareStructure(SizedType &our_type, llvm::Type *llvm_type)
   // But offset is only used for printing, so we can recover
   // from that by storing the correct offset.
   //
-  size_t our_size = our_type.size;
+  size_t our_size = our_type.GetSize();
   size_t llvm_size = layout_.getTypeAllocSize(llvm_type);
 
   if (llvm_size != our_size)
@@ -1767,7 +1770,7 @@ void CodegenLLVM::visit(Tuple &tuple)
     Value *dst = b_.CreateGEP(buf, { b_.getInt32(0), b_.getInt32(i) });
 
     if (shouldBeOnStackAlready(elem->type))
-      b_.CREATE_MEMCPY(dst, expr_, elem->type.size, 1);
+      b_.CREATE_MEMCPY(dst, expr_, elem->type.GetSize(), 1);
     else
       b_.CreateStore(expr_, dst);
   }
@@ -1810,7 +1813,7 @@ void CodegenLLVM::visit(AssignMapStatement &assignment)
       AllocaInst *dst = b_.CreateAllocaBPF(map.type, map.ident + "_val");
       b_.CreateProbeRead(ctx_,
                          dst,
-                         map.type.size,
+                         map.type.GetSize(),
                          expr,
                          assignment.expr->type.GetAS(),
                          assignment.loc);
@@ -1858,7 +1861,7 @@ void CodegenLLVM::visit(AssignVarStatement &assignment)
 
   if (needMemcpy(var.type))
   {
-    b_.CREATE_MEMCPY(variables_[var.ident], expr_, var.type.size, 1);
+    b_.CREATE_MEMCPY(variables_[var.ident], expr_, var.type.GetSize(), 1);
   }
   else
   {
@@ -2254,7 +2257,7 @@ AllocaInst *CodegenLLVM::getMapKey(Map &map)
       }
       else
       {
-        key = b_.CreateAllocaBPF(expr->type.size, map.ident + "_key");
+        key = b_.CreateAllocaBPF(expr->type.GetSize(), map.ident + "_key");
         b_.CreateStore(
             b_.CreateIntCast(expr_, b_.getInt64Ty(), expr->type.IsSigned()),
             b_.CreatePointerCast(key, expr_->getType()->getPointerTo()));
@@ -2266,7 +2269,7 @@ AllocaInst *CodegenLLVM::getMapKey(Map &map)
       size_t size = 0;
       for (Expression *expr : *map.vargs)
       {
-        size += expr->type.size;
+        size += expr->type.GetSize();
       }
       key = b_.CreateAllocaBPF(size, map.ident + "_key");
 
@@ -2279,7 +2282,7 @@ AllocaInst *CodegenLLVM::getMapKey(Map &map)
             key, { b_.getInt64(0), b_.getInt64(offset) });
 
         if (shouldBeOnStackAlready(expr->type))
-          b_.CREATE_MEMCPY(offset_val, expr_, expr->type.size, 1);
+          b_.CREATE_MEMCPY(offset_val, expr_, expr->type.GetSize(), 1);
         else
         {
           // promote map key to 64-bit:
@@ -2288,7 +2291,7 @@ AllocaInst *CodegenLLVM::getMapKey(Map &map)
               b_.CreatePointerCast(offset_val,
                                    expr_->getType()->getPointerTo()));
         }
-        offset += expr->type.size;
+        offset += expr->type.GetSize();
       }
     }
   }
@@ -2308,7 +2311,7 @@ AllocaInst *CodegenLLVM::getHistMapKey(Map &map, Value *log2)
     size_t size = 8; // Extra space for the bucket value
     for (Expression *expr : *map.vargs)
     {
-      size += expr->type.size;
+      size += expr->type.GetSize();
     }
     key = b_.CreateAllocaBPF(size, map.ident + "_key");
 
@@ -2317,10 +2320,10 @@ AllocaInst *CodegenLLVM::getHistMapKey(Map &map, Value *log2)
       auto scoped_del = accept(expr);
       Value *offset_val = b_.CreateGEP(key, {b_.getInt64(0), b_.getInt64(offset)});
       if (shouldBeOnStackAlready(expr->type))
-        b_.CREATE_MEMCPY(offset_val, expr_, expr->type.size, 1);
+        b_.CREATE_MEMCPY(offset_val, expr_, expr->type.GetSize(), 1);
       else
         b_.CreateStore(expr_, offset_val);
-      offset += expr->type.size;
+      offset += expr->type.GetSize();
     }
     Value *offset_val = b_.CreateGEP(key, {b_.getInt64(0), b_.getInt64(offset)});
     b_.CreateStore(log2, offset_val);
@@ -2614,7 +2617,11 @@ void CodegenLLVM::createFormatStringCall(Call &call, int &id, CallArgs &call_arg
     auto scoped_del = accept(&arg);
     Value *offset = b_.CreateGEP(fmt_args, {b_.getInt32(0), b_.getInt32(i)});
     if (needMemcpy(arg.type))
-      b_.CREATE_MEMCPY(offset, expr_, arg.type.size, 1);
+      b_.CREATE_MEMCPY(offset, expr_, arg.type.GetSize(), 1);
+    else if (arg.type.IsIntegerTy() && arg.type.GetSize() < 8)
+      b_.CreateStore(
+          b_.CreateIntCast(expr_, b_.getInt64Ty(), arg.type.IsSigned()),
+          offset);
     else
       b_.CreateStore(expr_, offset);
   }
@@ -2674,9 +2681,9 @@ void CodegenLLVM::createPrintNonMapCall(Call &call, int &id)
   auto &arg = *call.vargs->at(0);
   auto scoped_del = accept(&arg);
 
-  auto elements = AsyncEvent::PrintNonMap().asLLVMType(b_, arg.type.size);
+  auto elements = AsyncEvent::PrintNonMap().asLLVMType(b_, arg.type.GetSize());
   std::ostringstream struct_name;
-  struct_name << call.func << "_" << arg.type.type << "_" << arg.type.size
+  struct_name << call.func << "_" << arg.type.type << "_" << arg.type.GetSize()
               << "_t";
   StructType *print_struct = b_.GetStructType(struct_name.str(),
                                               elements,
@@ -2694,9 +2701,9 @@ void CodegenLLVM::createPrintNonMapCall(Call &call, int &id)
 
   // Store content
   Value *content_offset = b_.CreateGEP(buf, { b_.getInt32(0), b_.getInt32(2) });
-  b_.CREATE_MEMSET(content_offset, b_.getInt8(0), arg.type.size, 1);
+  b_.CREATE_MEMSET(content_offset, b_.getInt8(0), arg.type.GetSize(), 1);
   if (needMemcpy(arg.type))
-    b_.CREATE_MEMCPY(content_offset, expr_, arg.type.size, 1);
+    b_.CREATE_MEMCPY(content_offset, expr_, arg.type.GetSize(), 1);
   else
   {
     auto ptr = b_.CreatePointerCast(content_offset,

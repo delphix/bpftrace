@@ -163,6 +163,12 @@ static int info()
 #else
             << "no" << std::endl;
 #endif
+  std::cerr << "  bcc bpf_attach_uprobe refcount: "
+#ifdef LIBBCC_ATTACH_UPROBE_SEVEN_ARGS_SIGNATURE
+            << "yes" << std::endl;
+#else
+            << "no" << std::endl;
+#endif
   std::cerr << "  libbpf: "
 #ifdef HAVE_LIBBPF
             << "yes" << std::endl;
@@ -544,10 +550,6 @@ int main(int argc, char *argv[])
   // FIXME (mmarchini): maybe we don't want to always enforce an infinite
   // rlimit?
   enforce_infinite_rlimit();
-
-  // defaults
-  bpftrace.join_argnum_ = 16;
-  bpftrace.join_argsize_ = 1024;
 
   if (!get_uint64_env_var("BPFTRACE_STRLEN", bpftrace.strlen_))
     return 1;
