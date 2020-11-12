@@ -5,12 +5,14 @@
 #include <fstream>
 #include <getopt.h>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <sys/resource.h>
 #include <sys/utsname.h>
 #include <time.h>
 #include <unistd.h>
 
+#include "ast/callback_visitor.h"
 #include "bpffeature.h"
 #include "bpforc.h"
 #include "bpftrace.h"
@@ -36,6 +38,12 @@ enum class OutputBufferConfig {
   LINE,
   FULL,
   NONE,
+};
+enum class TestMode
+{
+  UNSET = 0,
+  SEMANTIC,
+  CODEGEN,
 };
 } // namespace
 
@@ -269,6 +277,7 @@ int main(int argc, char *argv[])
   bool force_btf = false;
   bool usdt_file_activation = false;
   int helper_check_level = 0;
+  TestMode test_mode = TestMode::UNSET;
   std::string script, search, file_name, output_file, output_format, output_elf;
   OutputBufferConfig obc = OutputBufferConfig::UNSET;
   int c;
@@ -284,6 +293,7 @@ int main(int argc, char *argv[])
     option{ "info", no_argument, nullptr, 2000 },
     option{ "emit-elf", required_argument, nullptr, 2001 },
     option{ "no-warnings", no_argument, nullptr, 2002 },
+    option{ "test", required_argument, nullptr, 2003 },
     option{ nullptr, 0, nullptr, 0 }, // Must be last
   };
   std::vector<std::string> include_dirs;
@@ -303,6 +313,17 @@ int main(int argc, char *argv[])
         break;
       case 2002: // --no-warnings
         DISABLE_LOG(WARNING);
+        break;
+      case 2003: // --test
+        if (std::strcmp(optarg, "semantic") == 0)
+          test_mode = TestMode::SEMANTIC;
+        else if (std::strcmp(optarg, "codegen") == 0)
+          test_mode = TestMode::CODEGEN;
+        else
+        {
+          LOG(ERROR) << "USAGE: --test must be either 'semantic' or 'codegen'.";
+          return 1;
+        }
         break;
       case 'o':
         output_file = optarg;
@@ -645,6 +666,10 @@ int main(int argc, char *argv[])
                                    !bpftrace.is_aslr_enabled(-1);
   }
 
+  uint64_t node_max = std::numeric_limits<uint64_t>::max();
+  if (!get_uint64_env_var("BPFTRACE_NODE_MAX", node_max))
+    return 1;
+
   if (!cmd_str.empty())
     bpftrace.cmd_ = cmd_str;
 
@@ -724,6 +749,25 @@ int main(int argc, char *argv[])
     std::cout << std::endl;
   }
 
+  // Count AST nodes
+  uint64_t node_count = 0;
+  ast::CallbackVisitor counter(
+      [&](ast::Node* node __attribute__((unused))) { node_count += 1; });
+  driver.root_->accept(counter);
+  if (bt_verbose)
+  {
+    LOG(INFO) << "node count: " << node_count;
+  }
+  if (node_count >= node_max)
+  {
+    LOG(ERROR) << "node count (" << node_count << ") exceeds the limit ("
+               << node_max << ")";
+    return 1;
+  }
+
+  if (test_mode == TestMode::SEMANTIC)
+    return 0;
+
   err = semantics.create_maps(bt_debug != DebugLevel::kNone);
   if (err)
     return err;
@@ -782,6 +826,9 @@ int main(int argc, char *argv[])
   }
 
   if (bt_debug != DebugLevel::kNone)
+    return 0;
+
+  if (test_mode == TestMode::CODEGEN)
     return 0;
 
   // Signal handler that lets us know an exit signal was received.
