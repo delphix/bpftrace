@@ -46,6 +46,8 @@ and this project adheres to
   - [#1567](https://github.com/iovisor/bpftrace/pull/1567)
 - Add basic options and documentations for fuzzing
   - [#1601](https://github.com/iovisor/bpftrace/pull/1601)
+- Disable `str($# + 1)`
+  - [#1619](https://github.com/iovisor/bpftrace/issues/1619)
 
 #### Changed
 - Warn if using `print` on `stats` maps with top and div arguments
@@ -110,6 +112,19 @@ and this project adheres to
   - [#1498](https://github.com/iovisor/bpftrace/pull/1498)
 
 #### Documentation
+
+## [0.11.4] 2020-11-14
+
+Alpine build bug fix release
+
+## [0.11.3] 2020-11-13
+
+bcc 0.17 support release
+
+### Changed
+
+Detect 7 arg bpf_attach_uprobe() API
+- [#1589](https://github.com/iovisor/bpftrace/pull/1589)
 
 ## [0.11.2] 2020-10-30
 
