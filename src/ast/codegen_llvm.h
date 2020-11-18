@@ -3,10 +3,10 @@
 #include <iostream>
 #include <ostream>
 
-#include "ast.h"
 #include "bpftrace.h"
 #include "irbuilderbpf.h"
 #include "map.h"
+#include "visitors.h"
 
 #include <llvm/Support/raw_os_ostream.h>
 #include <llvm/ExecutionEngine/MCJIT.h>
@@ -20,7 +20,8 @@ using namespace llvm;
 
 using CallArgs = std::vector<std::tuple<std::string, std::vector<Field>>>;
 
-class CodegenLLVM : public Visitor {
+class CodegenLLVM : public ASTVisitor
+{
 public:
   explicit CodegenLLVM(Node *root, BPFtrace &bpftrace);
 
@@ -116,7 +117,7 @@ private:
   void binop_buf(Binop &binop);
   void binop_int(Binop &binop);
 
-  Node *root_;
+  Node *root_ = nullptr;
   LLVMContext context_;
   std::unique_ptr<Module> module_;
   std::unique_ptr<ExecutionEngine> ee_;
