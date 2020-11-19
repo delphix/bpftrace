@@ -68,6 +68,8 @@ and this project adheres to
   - [#1563](https://github.com/iovisor/bpftrace/pull/1563)
 - Remove "BTF: using data from ..." message when using -v flag
   - [#1554](https://github.com/iovisor/bpftrace/pull/1554)
+- Add -q option for quiet
+  - [#1616](https://github.com/iovisor/bpftrace/pull/1616)
 
 #### Deprecated
 
@@ -112,6 +114,8 @@ and this project adheres to
   - [#1498](https://github.com/iovisor/bpftrace/pull/1498)
 
 #### Documentation
+- Document uptr() and kptr() function
+  - [#1626](https://github.com/iovisor/bpftrace/pull/1626)
 
 ## [0.11.4] 2020-11-14
 

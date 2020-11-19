@@ -91,6 +91,8 @@ discussion to other files in /docs, the /tools/\*\_examples.txt files, or blog p
     - [23. `print()`: Print Value](#23-print-print-value)
     - [24. `strftime()`: Formatted timestamp](#24-strftime-formatted-timestamp)
     - [25. `path()`: Return full path](#25-path-return-full-path)
+    - [26. `uptr()`: Annotate userspace pointer](#26-uptr-annotate-userspace-pointer)
+    - [27. `kptr()`: Annotate kernelspace pointer](#27-kptr-annotate-kernelspace-pointer)
 - [Map Functions](#map-functions)
     - [1. Builtins](#1-builtins-2)
     - [2. `count()`: Count](#2-count-count)
@@ -147,6 +149,7 @@ OPTIONS:
     -l [search]    list probes
     -p PID         enable USDT probes on PID
     -c 'CMD'       run CMD and enable USDT probes on resulting process
+    -q             keep messages quiet
     -v             verbose messages
     -k             emit a warning when a bpf helper returns an error (except read functions)
     -kk            check all bpf helper functions
@@ -1242,8 +1245,8 @@ hi
 ^C
 ```
 
-The namespace of the probe is deduced automatically. If the binary `/root/tick` contained multiple probes 
-with the name `loop` (e.g. `tick:loop` and `tock:loop`), no probe would be attached. 
+The namespace of the probe is deduced automatically. If the binary `/root/tick` contained multiple probes
+with the name `loop` (e.g. `tick:loop` and `tock:loop`), no probe would be attached.
 This may be solved by manually specifying the namespace or by using a wildcard:
 
 ```
@@ -1902,7 +1905,7 @@ be used as a string in the `str()` call. If a parameter is used that was not pro
 zero for numeric context, and "" for string context. Positional parameters may also be used in probe
 argument and will be treated as a string parameter.
 
-If a positional parameter is used in `str()`, it is interpreted as a pointer to the actual given string 
+If a positional parameter is used in `str()`, it is interpreted as a pointer to the actual given string
 literal, which allows to do pointer arithmetic on it. Only addition of a single constant, less or equal to
 the length of the supplied string, is allowed.
 
@@ -1999,7 +2002,13 @@ Tracing block I/O sizes > 0 bytes
 - `signal(char[] signal | u32 signal)` - Send a signal to the current task
 - `strncmp(char *s1, char *s2, int length)` - Compare first n characters of two strings
 - `override(u64 rc)` - Override return value
+- `buf(void *d [, length])` - Hex-format a buffer
+- `sizeof(...)` - Return size of a type or expression
+- `print(...)` - Print a non-map value with default formatting
+- `strftime(char *format, int nsecs)` - Return a formatted timestamp
 - `path(struct path *path)` - Return full path
+- `uptr(void *p)` - Annotate as userspace pointer
+- `kptr(void *p)` - Annotate as kernelspace pointer
 
 Some of these are asynchronous: the kernel queues the event, but some time later (milliseconds) it is
 processed in user-space. The asynchronous actions are: `printf()`, `time()`, and `join()`. Both `ksym()`
@@ -2820,6 +2829,39 @@ socket:[38745]
 Attaching 1 probe...
 /dev/pts/1 -> /dev/pts/1
 ```
+
+## 26. `uptr()`: Annotate userspace pointer
+
+Syntax:
+- `uptr(void *p)`
+
+Annotate `p` as a pointer belonging to userspace address space.
+
+bpftrace can usually infer the address space of a pointer. However, there are
+corner cases where inference fails. For example, kernel functions that deal
+with userspace pointers (a parameter like `const char __user *p`). In these
+cases, you'll need to annotate the pointer.
+
+Examples:
+
+```
+# bpftrace -e 'kprobe:do_sys_open { printf("%s\n", str(uptr(arg1))) }'
+Attaching 1 probe...
+.
+state
+^C
+```
+
+## 27. `kptr()`: Annotate kernelspace pointer
+
+Syntax:
+- `kptr(void *p)`
+
+Annotate `p` as a pointer belonging to kernel address space.
+
+Just like `uptr`, you'll generally only need this if bpftrace has inferred the
+pointer address space incorrectly.
+
 
 # Map Functions
 
