@@ -579,6 +579,7 @@ TEST(semantic_analyser, call_str)
 TEST(semantic_analyser, call_str_2_lit)
 {
   test("kprobe:f { str(arg0, 3); }", 0);
+  test("kprobe:f { str(arg0, -3); }", 1);
   test("kprobe:f { @x = str(arg0, 3); }", 0);
   test("kprobe:f { str(arg0, \"hello\"); }", 10);
 }
@@ -601,6 +602,7 @@ TEST(semantic_analyser, call_str_state_leak_regression_test)
 TEST(semantic_analyser, call_buf)
 {
   test("kprobe:f { buf(arg0, 1); }", 0);
+  test("kprobe:f { buf(arg0, -1); }", 1);
   test("kprobe:f { @x = buf(arg0, 1); }", 0);
   test("kprobe:f { $x = buf(arg0, 1); }", 0);
   test("kprobe:f { buf(); }", 1);
@@ -1993,6 +1995,12 @@ TEST(semantic_analyser, call_path)
   test("uprobe:/bin/bash:f { $k = path( arg0 ) }", 1);
   test("BEGIN { $k = path( 1 ) }", 1);
   test("END { $k = path( 1 ) }", 1);
+}
+
+TEST(semantic_analyser, int_ident)
+{
+  test("BEGIN { sizeof(int32) }", 0);
+  test("BEGIN { print(int32) }", 1);
 }
 
 #ifdef HAVE_LIBBPF_BTF_DUMP
