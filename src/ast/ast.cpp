@@ -43,23 +43,173 @@ MAKE_ACCEPT(Program)
 
 #undef MAKE_ACCEPT
 
-Node::Node() : loc(location())
+Call::~Call()
 {
+  if (vargs)
+    for (Expression *expr : *vargs)
+      delete expr;
+
+  delete vargs;
+  vargs = nullptr;
+}
+Map::~Map()
+{
+  if (vargs)
+    for (Expression *expr : *vargs)
+      delete expr;
+
+  delete vargs;
+  vargs = nullptr;
+}
+Binop::~Binop()
+{
+  delete left;
+  delete right;
+  left = nullptr;
+  right = nullptr;
 }
 
-Node::Node(location loc) : loc(loc)
+Unop::~Unop()
 {
+  delete expr;
+  expr = nullptr;
 }
 
-Expression::Expression(location loc) : Node(loc)
+FieldAccess::~FieldAccess()
 {
+  delete expr;
+  expr = nullptr;
+}
+
+ArrayAccess::~ArrayAccess()
+{
+  delete expr;
+  delete indexpr;
+  expr = nullptr;
+  indexpr = nullptr;
+}
+
+Cast::~Cast()
+{
+  delete expr;
+  expr = nullptr;
+}
+
+Tuple::~Tuple()
+{
+  for (Expression *expr : *elems)
+    delete expr;
+  delete elems;
+}
+
+ExprStatement::~ExprStatement()
+{
+  delete expr;
+  expr = nullptr;
+}
+
+AssignMapStatement::~AssignMapStatement()
+{
+  // In a compound assignment, the expression owns the map so
+  // we shouldn't free
+  if (!compound)
+    delete map;
+  delete expr;
+  map = nullptr;
+  expr = nullptr;
+}
+
+AssignVarStatement::~AssignVarStatement()
+{
+  // In a compound assignment, the expression owns the map so
+  // we shouldn't free
+  if (!compound)
+    delete var;
+  delete expr;
+  var = nullptr;
+  expr = nullptr;
+}
+
+If::~If()
+{
+  delete cond;
+  cond = nullptr;
+
+  if (stmts)
+    for (Statement *s : *stmts)
+      delete s;
+  delete stmts;
+  stmts = nullptr;
+
+  if (else_stmts)
+    for (Statement *s : *else_stmts)
+      delete s;
+  delete else_stmts;
+  else_stmts = nullptr;
+}
+
+Unroll::~Unroll()
+{
+  if (stmts)
+    for (Statement *s : *stmts)
+      delete s;
+  delete stmts;
+  stmts = nullptr;
+}
+Predicate::~Predicate()
+{
+  delete expr;
+  expr = nullptr;
+}
+Ternary::~Ternary()
+{
+  delete cond;
+  delete left;
+  delete right;
+  cond = nullptr;
+  left = nullptr;
+  right = nullptr;
+}
+
+While::~While()
+{
+  delete cond;
+  for (auto *stmt : *stmts)
+    delete stmt;
+  delete stmts;
+}
+
+Probe::~Probe()
+{
+  if (attach_points)
+    for (AttachPoint *ap : *attach_points)
+      delete ap;
+  delete attach_points;
+  attach_points = nullptr;
+
+  delete pred;
+  pred = nullptr;
+
+  if (stmts)
+    for (Statement *s : *stmts)
+      delete s;
+  delete stmts;
+  stmts = nullptr;
+}
+
+Program::~Program()
+{
+  if (probes)
+    for (Probe *p : *probes)
+      delete p;
+  delete probes;
+  probes = nullptr;
 }
 
 Integer::Integer(long n, location loc) : Expression(loc), n(n)
 {
   is_literal = true;
 }
-
 
 String::String(const std::string &str, location loc) : Expression(loc), str(str)
 {
@@ -105,7 +255,6 @@ Call::Call(const std::string &func, ExpressionList *vargs, location loc)
 {
 }
 
-
 Map::Map(const std::string &ident, location loc)
     : Expression(loc), ident(ident), vargs(nullptr)
 {
@@ -122,13 +271,11 @@ Map::Map(const std::string &ident, ExpressionList *vargs, location loc)
   }
 }
 
-
 Variable::Variable(const std::string &ident, location loc)
     : Expression(loc), ident(ident)
 {
   is_variable = true;
 }
-
 
 Binop::Binop(Expression *left, int op, Expression *right, location loc)
     : Expression(loc), left(left), right(right), op(op)
@@ -195,31 +342,28 @@ Tuple::Tuple(ExpressionList *elems, location loc)
 }
 
 
-Statement::Statement(location loc) : Node(loc)
-{
-}
-
 ExprStatement::ExprStatement(Expression *expr, location loc)
     : Statement(loc), expr(expr)
 {
 }
 
-
-AssignMapStatement::AssignMapStatement(Map *map, Expression *expr, location loc)
-    : Statement(loc), map(map), expr(expr)
+AssignMapStatement::AssignMapStatement(Map *map,
+                                       Expression *expr,
+                                       bool compound,
+                                       location loc)
+    : Statement(loc), map(map), expr(expr), compound(compound)
 {
   expr->map = map;
 };
 
-
 AssignVarStatement::AssignVarStatement(Variable *var,
                                        Expression *expr,
+                                       bool compound,
                                        location loc)
-    : Statement(loc), var(var), expr(expr)
+    : Statement(loc), var(var), expr(expr), compound(compound)
 {
   expr->var = var;
 }
-
 
 Predicate::Predicate(Expression *expr, location loc) : Node(loc), expr(expr)
 {
@@ -387,6 +531,91 @@ int Probe::index() {
 void Probe::set_index(int index) {
   index_ = index;
 }
+
+Expression::Expression(const Expression &other) : Node(other)
+{
+  type = other.type;
+  is_literal = other.is_literal;
+  is_variable = other.is_variable;
+  is_map = other.is_map;
+}
+
+Call::Call(const Call &other) : Expression(other)
+{
+  func = other.func;
+}
+
+Binop::Binop(const Binop &other) : Expression(other)
+{
+  op = other.op;
+}
+
+Unop::Unop(const Unop &other) : Expression(other)
+{
+  op = other.op;
+  is_post_op = other.is_post_op;
+}
+
+Map::Map(const Map &other) : Expression(other)
+{
+  ident = other.ident;
+  skip_key_validation = other.skip_key_validation;
+}
+
+FieldAccess::FieldAccess(const FieldAccess &other)
+    : Expression(other), expr(nullptr)
+{
+  field = other.field;
+  index = other.index;
+}
+
+Unroll::Unroll(const Unroll &other) : Statement(other)
+{
+  var = other.var;
+}
+
+Program::Program(const Program &other) : Node(other)
+{
+  c_definitions = other.c_definitions;
+}
+
+Cast::Cast(const Cast &other) : Expression(other)
+{
+  cast_type = other.cast_type;
+  is_pointer = other.is_pointer;
+  is_double_pointer = other.is_double_pointer;
+}
+
+Probe::Probe(const Probe &other) : Node(other)
+{
+  need_expansion = other.need_expansion;
+  tp_args_structs_level = other.tp_args_structs_level;
+  index_ = other.index_;
+}
+
+While::While(const While &other) : Statement(other)
+{
+}
+
+Tuple::Tuple(const Tuple &other) : Expression(other)
+{
+}
+
+If::If(const If &other) : Statement(other)
+{
+}
+
+AssignVarStatement::AssignVarStatement(const AssignVarStatement &other)
+    : Statement(other)
+{
+  compound = other.compound;
+};
+
+AssignMapStatement::AssignMapStatement(const AssignMapStatement &other)
+    : Statement(other)
+{
+  compound = other.compound;
+};
 
 } // namespace ast
 } // namespace bpftrace

@@ -15,9 +15,15 @@ class TracepointArgsVisitor : public ASTVisitor
 public:
   void visit(Builtin &builtin) override
   {
-    if (builtin.ident == "args")
-      probe_->need_tp_args_structs = true;
+    if (builtin.ident == "args" && probe_->tp_args_structs_level == -1)
+      probe_->tp_args_structs_level = 0;
   };
+  void visit(FieldAccess &acc) override
+  {
+    acc.expr->accept(*this);
+    if (probe_->tp_args_structs_level >= 0)
+      probe_->tp_args_structs_level++;
+  }
   void visit(Probe &probe) override {
     probe_ = &probe;
     ASTVisitor::visit(probe);
@@ -35,6 +41,10 @@ public:
   static std::string get_struct_name(const std::string &category,
                                      const std::string &event_name);
   static std::string get_struct_name(const std::string &probe_id);
+  static void clear_struct_list()
+  {
+    struct_list.clear();
+  }
 
 private:
   static std::string parse_field(const std::string &line,
