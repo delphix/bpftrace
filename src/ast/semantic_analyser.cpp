@@ -456,6 +456,15 @@ void SemanticAnalyser::visit(Call &call)
     }
   }
 
+  for (auto &ap : *probe_->attach_points)
+  {
+    if (!check_available(call, *ap))
+    {
+      LOG(ERROR, call.loc, err_) << call.func << " can not be used with \""
+                                 << ap->provider << "\" probes";
+    }
+  }
+
   if (call.func == "hist") {
     check_assignment(call, true, false, false);
     check_nargs(call, 1);
@@ -766,15 +775,6 @@ void SemanticAnalyser::visit(Call &call)
   }
   else if (call.func == "reg") {
     if (check_nargs(call, 1)) {
-      for (auto &attach_point : *probe_->attach_points) {
-        ProbeType type = probetype(attach_point->provider);
-        if (type == ProbeType::tracepoint) {
-          LOG(ERROR, call.loc, err_)
-              << "The reg function cannot be used with 'tracepoint' probes";
-          continue;
-        }
-      }
-
       if (check_arg(call, Type::string, 0, true)) {
         auto reg_name = bpftrace_.get_string_literal(call.vargs->at(0));
         int offset = arch::offset(reg_name);;
@@ -809,15 +809,6 @@ void SemanticAnalyser::visit(Call &call)
     auto name = bpftrace_.get_string_literal(call.vargs->at(0));
     for (auto &ap : *probe_->attach_points)
     {
-      ProbeType type = probetype(ap->provider);
-      if (type != ProbeType::usdt && type != ProbeType::uretprobe &&
-          type != ProbeType::uprobe)
-      {
-        LOG(ERROR, call.loc, err_)
-            << "uaddr can only be used with u(ret)probes and usdt probes";
-        sizes.push_back(0);
-        continue;
-      }
       struct symbol sym = {};
       int err = bpftrace_.resolve_uname(name, &sym, ap->target);
       if (err < 0 || sym.address == 0)
@@ -1073,21 +1064,6 @@ void SemanticAnalyser::visit(Call &call)
     else if(arg.type.type != Type::integer) {
       LOG(ERROR, call.loc, err_)
           << "signal only accepts string literals or integers";
-    }
-
-    for (auto &ap : *probe_->attach_points) {
-      ProbeType type = probetype(ap->provider);
-      if (ap->provider == "BEGIN" || ap->provider == "END") {
-        LOG(ERROR, call.loc, err_) << call.func << " can not be used with \""
-                                   << ap->provider << "\" probes";
-      }
-      else if (type == ProbeType::interval
-          || type == ProbeType::software
-          || type == ProbeType::hardware
-          || type == ProbeType::watchpoint) {
-        LOG(ERROR, call.loc, err_) << call.func << " can not be used with \""
-                                   << ap->provider << "\" probes";
-      }
     }
   }
   else if (call.func == "sizeof")
@@ -2816,6 +2792,86 @@ bool SemanticAnalyser::check_symbol(const Call &call, int arg_num __attribute__(
         << ") as input (\"" << arg << "\" provided)";
     return false;
   }
+
+  return true;
+}
+
+bool SemanticAnalyser::check_available(const Call &call, const AttachPoint &ap)
+{
+  auto &func = call.func;
+  ProbeType type = probetype(ap.provider);
+
+  if (func == "reg")
+  {
+    switch (type)
+    {
+      case ProbeType::kprobe:
+      case ProbeType::kretprobe:
+      case ProbeType::uprobe:
+      case ProbeType::uretprobe:
+      case ProbeType::usdt:
+      case ProbeType::profile:
+      case ProbeType::interval:
+      case ProbeType::software:
+      case ProbeType::hardware:
+      case ProbeType::watchpoint:
+        return true;
+      case ProbeType::invalid:
+      case ProbeType::tracepoint:
+      case ProbeType::kfunc:
+      case ProbeType::kretfunc:
+        return false;
+    }
+  }
+  else if (func == "uaddr")
+  {
+    switch (type)
+    {
+      case ProbeType::usdt:
+      case ProbeType::uretprobe:
+      case ProbeType::uprobe:
+        return true;
+      case ProbeType::invalid:
+      case ProbeType::kprobe:
+      case ProbeType::kretprobe:
+      case ProbeType::tracepoint:
+      case ProbeType::profile:
+      case ProbeType::interval:
+      case ProbeType::software:
+      case ProbeType::hardware:
+      case ProbeType::watchpoint:
+      case ProbeType::kfunc:
+      case ProbeType::kretfunc:
+        return false;
+    }
+  }
+  else if (func == "signal")
+  {
+    if (ap.provider == "BEGIN" || ap.provider == "END")
+      return false;
+    switch (type)
+    {
+      case ProbeType::kprobe:
+      case ProbeType::kretprobe:
+      case ProbeType::uprobe:
+      case ProbeType::uretprobe:
+      case ProbeType::usdt:
+      case ProbeType::tracepoint:
+      case ProbeType::profile:
+      case ProbeType::kfunc:
+      case ProbeType::kretfunc:
+        return true;
+      case ProbeType::invalid:
+      case ProbeType::interval:
+      case ProbeType::software:
+      case ProbeType::hardware:
+      case ProbeType::watchpoint:
+        return false;
+    }
+  }
+
+  if (type == ProbeType::invalid)
+    return false;
 
   return true;
 }
