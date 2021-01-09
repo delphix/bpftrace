@@ -120,7 +120,7 @@ and this project adheres to
   - [#1623](https://github.com/iovisor/bpftrace/pull/1623)
 - Fix tracing of usdt probes across namespaces
   - [#1637](https://github.com/iovisor/bpftrace/pull/1637)
-- Disable reg() for kfunc 
+- Disable reg() for kfunc
   - [#1646](https://github.com/iovisor/bpftrace/pull/1646)
 - Fix several undefined behavior
   - [#1645](https://github.com/iovisor/bpftrace/pull/1645)
@@ -132,6 +132,8 @@ and this project adheres to
   - [#1490](https://github.com/iovisor/bpftrace/pull/1490)
 - Support new capabilities for capable.bt
   - [#1498](https://github.com/iovisor/bpftrace/pull/1498)
+- Add disk field to biosnoop
+  - [#1660](https://github.com/iovisor/bpftrace/pull/1660)
 
 #### Documentation
 - Document uptr() and kptr() function
