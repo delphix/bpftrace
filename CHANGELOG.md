@@ -126,6 +126,12 @@ and this project adheres to
   - [#1645](https://github.com/iovisor/bpftrace/pull/1645)
 - Fix invalid size crash when using strftime() inside a tuple
   - [#1658](https://github.com/iovisor/bpftrace/pull/1658)
+- Don't create a tuple if an element size if zero
+  - [#1653](https://github.com/iovisor/bpftrace/pull/1653)
+- Support clear() and delete() on a count()-based map without a key
+  - [#1639](https://github.com/iovisor/bpftrace/pull/1639)
+- Add workaround for too deep or long macros
+  - [#1650](https://github.com/iovisor/bpftrace/pull/1650)
 
 #### Tools
 - Hook up execsnoop.bt script onto `execveat` call
