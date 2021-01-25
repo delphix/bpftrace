@@ -183,7 +183,7 @@ AllocaInst *IRBuilderBPF::CreateAllocaBPFInit(const SizedType &stype, const std:
   }
   else
   {
-    CreateStore(getInt64(0), alloca);
+    CreateStore(ConstantInt::get(ty, 0), alloca);
   }
 
   restoreIP(ip);
@@ -220,9 +220,13 @@ llvm::ConstantInt *IRBuilderBPF::GetIntSameSize(uint64_t C, llvm::Value *expr)
 llvm::Type *IRBuilderBPF::GetType(const SizedType &stype)
 {
   llvm::Type *ty;
-  if (stype.IsArray())
+  if (stype.IsByteArray() || stype.IsRecordTy())
   {
     ty = ArrayType::get(getInt8Ty(), stype.GetSize());
+  }
+  else if (stype.IsArrayTy())
+  {
+    ty = ArrayType::get(GetType(*stype.GetElementTy()), stype.GetNumElements());
   }
   else if (stype.IsTupleTy())
   {
@@ -242,10 +246,6 @@ llvm::Type *IRBuilderBPF::GetType(const SizedType &stype)
   else if (stype.IsPtrTy())
   {
     ty = getInt64Ty();
-  }
-  else if (stype.IsRecordTy())
-  {
-    ty = ArrayType::get(getInt8Ty(), stype.GetSize());
   }
   else
   {
@@ -445,7 +445,7 @@ void IRBuilderBPF::CreateMapDeleteElem(Value *ctx,
 }
 
 void IRBuilderBPF::CreateProbeRead(Value *ctx,
-                                   AllocaInst *dst,
+                                   Value *dst,
                                    size_t size,
                                    Value *src,
                                    AddrSpace as,
@@ -455,7 +455,7 @@ void IRBuilderBPF::CreateProbeRead(Value *ctx,
 }
 
 void IRBuilderBPF::CreateProbeRead(Value *ctx,
-                                   AllocaInst *dst,
+                                   Value *dst,
                                    llvm::Value *size,
                                    Value *src,
                                    AddrSpace as,

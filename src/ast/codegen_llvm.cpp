@@ -770,7 +770,7 @@ void CodegenLLVM::visit(Call &call)
     b_.CREATE_MEMSET(inet_offset, b_.getInt8(0), 16, 1);
 
     auto scoped_del = accept(inet);
-    if (inet->type.IsArray())
+    if (inet->type.IsArrayTy() || inet->type.IsStringTy())
     {
       b_.CreateProbeRead(ctx_,
                          static_cast<AllocaInst *>(inet_offset),
@@ -1035,7 +1035,8 @@ void CodegenLLVM::visit(Map &map)
 
 void CodegenLLVM::visit(Variable &var)
 {
-  if (needMemcpy(var.type))
+  // Arrays are not memcopied for local variables
+  if (needMemcpy(var.type) && !var.type.IsArrayTy())
   {
     expr_ = variables_[var.ident];
   }
@@ -1528,7 +1529,7 @@ void CodegenLLVM::visit(FieldAccess &acc)
     // Just read from the correct offset of expr_
     Value *src = b_.CreateGEP(expr_, {b_.getInt64(0), b_.getInt64(field.offset)});
 
-    if (field.type.IsRecordTy())
+    if (field.type.IsRecordTy() || field.type.IsArrayTy())
     {
       // TODO This should be do-able without allocating more memory here
       AllocaInst *dst = b_.CreateAllocaBPF(field.type,
@@ -1546,7 +1547,12 @@ void CodegenLLVM::visit(FieldAccess &acc)
     }
     else
     {
-      expr_ = b_.CreateLoad(b_.GetType(field.type), src);
+      // We need to cast src to an appropriate pointer type to make the IR valid
+      // This is necessary since the struct may be stored in memory as a byte
+      // array but we're reading an entire integer (e.g. cast i8* to i32*).
+      auto dst_ty = b_.GetType(field.type);
+      expr_ = b_.CreateLoad(dst_ty,
+                            b_.CreatePointerCast(src, dst_ty->getPointerTo()));
     }
   }
   else
@@ -1683,7 +1689,10 @@ void CodegenLLVM::visit(ArrayAccess &arr)
   size_t element_size = type.GetElementTy()->GetSize();
 
   auto scoped_del_expr = accept(arr.expr);
-  array = expr_;
+  if (expr_->getType()->isPointerTy())
+    array = b_.CreatePtrToInt(expr_, b_.getInt64Ty());
+  else
+    array = expr_;
 
   auto scoped_del_index = accept(arr.indexpr);
 
@@ -1694,29 +1703,31 @@ void CodegenLLVM::visit(ArrayAccess &arr)
 
   auto stype = *type.GetElementTy();
 
-  if (stype.IsIntegerTy() || stype.IsPtrTy())
+  if (arr.expr->type.IsCtxAccess() || arr.expr->type.is_internal)
   {
-    if (arr.expr->type.IsCtxAccess())
-    {
-      auto ty = b_.GetType(stype);
-      expr_ = b_.CreateLoad(b_.CreateIntToPtr(src, ty->getPointerTo()), true);
-    }
+    auto ty = b_.GetType(stype);
+    auto elem = b_.CreateIntToPtr(src, ty->getPointerTo());
+    if (stype.IsIntegerTy() || stype.IsPtrTy())
+      expr_ = b_.CreateLoad(elem, true);
     else
-    {
-      AllocaInst *dst = b_.CreateAllocaBPF(stype, "array_access");
-      b_.CreateProbeRead(ctx_, dst, element_size, src, type.GetAS(), arr.loc);
-      expr_ = b_.CreateIntCast(b_.CreateLoad(dst),
-                               b_.getInt64Ty(),
-                               arr.expr->type.IsSigned());
-      b_.CreateLifetimeEnd(dst);
-    }
+      expr_ = elem;
   }
   else
   {
     AllocaInst *dst = b_.CreateAllocaBPF(stype, "array_access");
     b_.CreateProbeRead(ctx_, dst, element_size, src, type.GetAS(), arr.loc);
-    expr_ = dst;
-    expr_deleter_ = [this, dst]() { b_.CreateLifetimeEnd(dst); };
+    if (stype.IsIntegerTy() || stype.IsPtrTy())
+    {
+      expr_ = b_.CreateIntCast(b_.CreateLoad(dst),
+                               b_.getInt64Ty(),
+                               arr.expr->type.IsSigned());
+      b_.CreateLifetimeEnd(dst);
+    }
+    else
+    {
+      expr_ = dst;
+      expr_deleter_ = [this, dst]() { b_.CreateLifetimeEnd(dst); };
+    }
   }
 }
 
@@ -1819,7 +1830,7 @@ void CodegenLLVM::visit(AssignMapStatement &assignment)
   {
     val = expr;
   }
-  else if (map.type.IsRecordTy())
+  else if (map.type.IsRecordTy() || map.type.IsArrayTy())
   {
     if (assignment.expr->type.is_internal)
     {
@@ -1827,8 +1838,8 @@ void CodegenLLVM::visit(AssignMapStatement &assignment)
     }
     else
     {
-      // expr currently contains a pointer to the struct
-      // We now want to read the entire struct in so we can save it
+      // expr currently contains a pointer to the struct or array
+      // We now want to read the entire struct/array in so we can save it
       AllocaInst *dst = b_.CreateAllocaBPF(map.type, map.ident + "_val");
       b_.CreateProbeRead(ctx_,
                          dst,
@@ -1874,7 +1885,16 @@ void CodegenLLVM::visit(AssignVarStatement &assignment)
 
   if (variables_.find(var.ident) == variables_.end())
   {
-    AllocaInst *val = b_.CreateAllocaBPFInit(var.type, var.ident);
+    SizedType &type = var.type;
+
+    // Arrays need not to be copied when assigned to local variables - it is
+    // sufficient to assign the pointer
+    if (var.type.IsArrayTy())
+    {
+      type = CreatePointer(*var.type.GetElementTy(), var.type.GetAS());
+    }
+
+    AllocaInst *val = b_.CreateAllocaBPFInit(type, var.ident);
     variables_[var.ident] = val;
   }
 
@@ -1884,7 +1904,14 @@ void CodegenLLVM::visit(AssignVarStatement &assignment)
   }
   else
   {
-    b_.CreateStore(expr_, variables_[var.ident]);
+    Value *val = expr_;
+    if (assignment.expr->type.IsArrayTy())
+    {
+      val = b_.CreatePtrToInt(expr_, b_.getInt64Ty());
+      // Since only the pointer is copied, we need to extend lifetime of RHS
+      scoped_del.disarm();
+    }
+    b_.CreateStore(val, variables_[var.ident]);
   }
 }
 
@@ -2276,10 +2303,32 @@ AllocaInst *CodegenLLVM::getMapKey(Map &map)
       }
       else
       {
-        key = b_.CreateAllocaBPF(expr->type.GetSize(), map.ident + "_key");
-        b_.CreateStore(
-            b_.CreateIntCast(expr_, b_.getInt64Ty(), expr->type.IsSigned()),
-            b_.CreatePointerCast(key, expr_->getType()->getPointerTo()));
+        key = b_.CreateAllocaBPF(expr->type, map.ident + "_key");
+        if (expr->type.IsArrayTy())
+        {
+          // expr currently contains a pointer to the array
+          if (expr->type.is_internal)
+          {
+            // The array is already in the BPF memory - memcpy it
+            b_.CREATE_MEMCPY(key, expr_, expr->type.GetSize(), 1);
+          }
+          else
+          {
+            // We need to read the entire array and save it
+            b_.CreateProbeRead(ctx_,
+                               key,
+                               expr->type.GetSize(),
+                               expr_,
+                               expr->type.GetAS(),
+                               expr->loc);
+          }
+        }
+        else
+        {
+          b_.CreateStore(
+              b_.CreateIntCast(expr_, b_.getInt64Ty(), expr->type.IsSigned()),
+              b_.CreatePointerCast(key, expr_->getType()->getPointerTo()));
+        }
       }
     }
     else
@@ -2300,15 +2349,29 @@ AllocaInst *CodegenLLVM::getMapKey(Map &map)
         Value *offset_val = b_.CreateGEP(
             key, { b_.getInt64(0), b_.getInt64(offset) });
 
-        if (shouldBeOnStackAlready(expr->type))
+        if (shouldBeOnStackAlready(expr->type) ||
+            (expr->type.IsArrayTy() && expr->type.is_internal))
           b_.CREATE_MEMCPY(offset_val, expr_, expr->type.GetSize(), 1);
         else
         {
-          // promote map key to 64-bit:
-          b_.CreateStore(
-              b_.CreateIntCast(expr_, b_.getInt64Ty(), expr->type.IsSigned()),
-              b_.CreatePointerCast(offset_val,
-                                   expr_->getType()->getPointerTo()));
+          if (expr->type.IsArrayTy())
+          {
+            // Read the array into the key
+            b_.CreateProbeRead(ctx_,
+                               offset_val,
+                               expr->type.GetSize(),
+                               expr_,
+                               expr->type.GetAS(),
+                               expr->loc);
+          }
+          else
+          {
+            // promote map key to 64-bit:
+            b_.CreateStore(
+                b_.CreateIntCast(expr_, b_.getInt64Ty(), expr->type.IsSigned()),
+                b_.CreatePointerCast(offset_val,
+                                     expr_->getType()->getPointerTo()));
+          }
         }
         offset += expr->type.GetSize();
       }

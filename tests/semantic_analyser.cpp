@@ -864,6 +864,59 @@ TEST(semantic_analyser, array_access) {
   auto assignment = static_cast<ast::AssignMapStatement *>(
       driver.root_->probes->at(0)->stmts->at(1));
   EXPECT_EQ(CreateInt64(), assignment->map->type);
+
+  test(driver,
+       "struct MyStruct { int y[4]; } kprobe:f { $s = ((struct MyStruct *) "
+       "arg0)->y; @x = $s[0];}",
+       0);
+  auto array_var_assignment = static_cast<ast::AssignVarStatement *>(
+      driver.root_->probes->at(0)->stmts->at(0));
+  EXPECT_EQ(CreateArray(4, CreateInt32()), array_var_assignment->var->type);
+
+  test(driver,
+       "struct MyStruct { int y[4]; } kprobe:f { @a[0] = ((struct MyStruct *) "
+       "arg0)->y; @x = @a[0][0];}",
+       0);
+  auto array_map_assignment = static_cast<ast::AssignMapStatement *>(
+      driver.root_->probes->at(0)->stmts->at(0));
+  EXPECT_EQ(CreateArray(4, CreateInt32()), array_map_assignment->map->type);
+}
+
+TEST(semantic_analyser, array_in_map)
+{
+  test("struct MyStruct { int x[2]; int y[4]; } "
+       "kprobe:f { @ = ((struct MyStruct *)arg0)->x; }",
+       0);
+  test("struct MyStruct { int x[2]; int y[4]; } "
+       "kprobe:f { @a[0] = ((struct MyStruct *)arg0)->x; }",
+       0);
+  // Mismatched map value types
+  test("struct MyStruct { int x[2]; int y[4]; } "
+       "kprobe:f { "
+       "    @a[0] = ((struct MyStruct *)arg0)->x; "
+       "    @a[1] = ((struct MyStruct *)arg0)->y; "
+       "}",
+       1);
+}
+
+TEST(semantic_analyser, array_as_map_key)
+{
+  test("struct MyStruct { int x[2]; int y[4]; }"
+       "kprobe:f { @x[((struct MyStruct *)arg0)->x] = 0; }",
+       0);
+
+  test("struct MyStruct { int x[2]; int y[4]; }"
+       "kprobe:f { @x[((struct MyStruct *)arg0)->x, "
+       "              ((struct MyStruct *)arg0)->y] = 0; }",
+       0);
+
+  // Mismatched key types
+  test("struct MyStruct { int x[2]; int y[4]; }"
+       "kprobe:f { "
+       "    @x[((struct MyStruct *)arg0)->x] = 0; "
+       "    @x[((struct MyStruct *)arg0)->y] = 1; "
+       "}",
+       10);
 }
 
 TEST(semantic_analyser, variable_type)
