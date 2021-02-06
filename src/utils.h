@@ -2,7 +2,9 @@
 
 #include <csignal>
 #include <cstring>
+#include <exception>
 #include <iostream>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <sys/utsname.h>
@@ -50,6 +52,14 @@ public:
 
 private:
   std::string msg_;
+};
+
+class EnospcException : public std::runtime_error
+{
+public:
+  // C++11 feature: bring base class constructor into scope to automatically
+  // forward constructor calls to base class
+  using std::runtime_error::runtime_error;
 };
 
 class StdioSilencer
@@ -151,6 +161,36 @@ bool symbol_has_cpp_mangled_signature(const std::string &sym_name);
 pid_t parse_pid(const std::string &str);
 std::string hex_format_buffer(const char *buf, size_t size);
 std::string abs_path(const std::string &rel_path);
+
+// Generate object file section name for a given probe
+inline std::string get_section_name_for_probe(
+    const std::string &probe_name,
+    int index,
+    std::optional<int> usdt_location_index = std::nullopt)
+{
+  auto ret = "s_" + probe_name;
+
+  if (usdt_location_index)
+    ret += "_loc" + std::to_string(*usdt_location_index);
+
+  ret += "_" + std::to_string(index);
+
+  return ret;
+}
+
+inline std::string get_watchpoint_setup_probe_name(
+    const std::string &probe_name)
+{
+  return probe_name + "_wp_setup";
+}
+
+inline std::string get_section_name_for_watchpoint_setup(
+    const std::string &probe_name,
+    int index)
+{
+  return get_section_name_for_probe(get_watchpoint_setup_probe_name(probe_name),
+                                    index);
+}
 
 // trim from end of string (right)
 inline std::string &rtrim(std::string &s)

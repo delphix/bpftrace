@@ -43,8 +43,10 @@ private:
   int interval_parser();
   int software_parser();
   int hardware_parser();
-  int watchpoint_parser();
+  int watchpoint_parser(bool async = false);
   int kfunc_parser();
+
+  std::optional<uint64_t> stoull(const std::string &str);
 
   Program *root_{ nullptr }; // Non-owning pointer
   BPFtrace &bpftrace_;

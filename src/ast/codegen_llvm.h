@@ -1,6 +1,7 @@
 #pragma once
 
 #include <iostream>
+#include <optional>
 #include <ostream>
 
 #include "bpftrace.h"
@@ -55,7 +56,6 @@ public:
   AllocaInst *getMapKey(Map &map);
   AllocaInst *getHistMapKey(Map &map, Value *log2);
   int         getNextIndexForProbe(const std::string &probe_name);
-  std::string getSectionNameForProbe(const std::string &probe_name, int index);
   Value      *createLogicalAnd(Binop &binop);
   Value      *createLogicalOr(Binop &binop);
 
@@ -105,7 +105,9 @@ private:
                      const std::string &full_func_id,
                      const std::string &section_name,
                      FunctionType *func_type,
-                     bool expansion);
+                     bool expansion,
+                     std::optional<int> usdt_location_index = std::nullopt);
+
   [[nodiscard]] ScopedExprDeleter accept(Node *node);
 
   void compareStructure(SizedType &our_type, llvm::Type *llvm_type);
@@ -116,6 +118,21 @@ private:
   void binop_string(Binop &binop);
   void binop_buf(Binop &binop);
   void binop_int(Binop &binop);
+
+  // Every time we see a watchpoint that specifies a function + arg pair, we
+  // generate a special "setup" probe that:
+  //
+  // * sends SIGSTOP to the tracee
+  // * pulls out the function arg
+  // * sends an asyncaction to the bpftrace runtime and specifies the arg value
+  //   and which of the "real" probes to attach to the addr in the arg
+  //
+  // We need a separate "setup" probe per probe because we hard code the index
+  // of the "real" probe the setup probe is to be replaced by.
+  void generateWatchpointSetupProbe(FunctionType *func_type,
+                                    const std::string &expanded_probe_name,
+                                    int arg_num,
+                                    int index);
 
   Node *root_ = nullptr;
   LLVMContext context_;
@@ -143,6 +160,7 @@ private:
   uint64_t join_id_ = 0;
   int system_id_ = 0;
   int non_map_print_id_ = 0;
+  uint64_t watchpoint_id_ = 0;
 
   Function *linear_func_ = nullptr;
   Function *log2_func_ = nullptr;

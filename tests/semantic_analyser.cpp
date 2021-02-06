@@ -1228,18 +1228,66 @@ TEST(semantic_analyser, tracepoint)
   test("tracepoint:category:event { 1 }", 0);
 }
 
-TEST(semantic_analyser, watchpoint)
+#if defined(ARCH_X86_64) || defined(ARCH_AARCH64)
+TEST(semantic_analyser, watchpoint_invalid_modes)
 {
-  test("watchpoint::0x1234:8:rw { 1 }", 0);
-  test("watchpoint:/dev/null:0x1234:8:rw { 1 }", 0);
-  test("watchpoint::0x1234:9:rw { 1 }", 1);
-  test("watchpoint::0x1234:8:rwx { 1 }", 1);
-  test("watchpoint::0x1234:8:rx { 1 }", 1);
-  test("watchpoint::0x1234:8:b { 1 }", 1);
-  test("watchpoint::0x1234:8:rww { 1 }", 1);
-  test("watchpoint::0x0:8:rww { 1 }", 1);
+  auto bpftrace = get_mock_bpftrace();
+  bpftrace->procmon_ = std::make_unique<MockProcMon>(123);
+
+#ifdef ARCH_X86_64
+  test(*bpftrace, "watchpoint:0x1234:8:r { 1 }", 1);
+#elif ARCH_AARCH64
+  test(*bpftrace, "watchpoint:0x1234:8:r { 1 }", 0);
+#endif
+  test(*bpftrace, "watchpoint:0x1234:8:rx { 1 }", 1);
+  test(*bpftrace, "watchpoint:0x1234:8:wx { 1 }", 1);
+  test(*bpftrace, "watchpoint:0x1234:8:xw { 1 }", 1);
+  test(*bpftrace, "watchpoint:0x1234:8:rwx { 1 }", 1);
+  test(*bpftrace, "watchpoint:0x1234:8:xx { 1 }", 1);
+  test(*bpftrace, "watchpoint:0x1234:8:b { 1 }", 1);
 }
 
+TEST(semantic_analyser, watchpoint_absolute)
+{
+  auto bpftrace = get_mock_bpftrace();
+  bpftrace->procmon_ = std::make_unique<MockProcMon>(123);
+
+  test(*bpftrace, "watchpoint:0x1234:8:rw { 1 }", 0);
+  test(*bpftrace, "watchpoint:0x1234:9:rw { 1 }", 1);
+  test(*bpftrace, "watchpoint:0x0:8:rw { 1 }", 1);
+}
+
+TEST(semantic_analyser, watchpoint_function)
+{
+  auto bpftrace = get_mock_bpftrace();
+  bpftrace->procmon_ = std::make_unique<MockProcMon>(123);
+
+  test(*bpftrace, "watchpoint:func1+arg2:8:rw { 1 }", 0);
+  test(*bpftrace, "w:func1+arg2:8:rw { 1 }", 0);
+  test(*bpftrace, "w:func1.one_two+arg2:8:rw { 1 }", 0);
+  test(*bpftrace, "watchpoint:func1+arg99999:8:rw { 1 }", 1);
+
+  bpftrace->procmon_ = std::make_unique<MockProcMon>(0);
+  test(*bpftrace, "watchpoint:func1+arg2:8:rw { 1 }", 1);
+}
+
+TEST(semantic_analyser, asyncwatchpoint)
+{
+  auto bpftrace = get_mock_bpftrace();
+  bpftrace->procmon_ = std::make_unique<MockProcMon>(123);
+
+  test(*bpftrace, "asyncwatchpoint:func1+arg2:8:rw { 1 }", 0);
+  test(*bpftrace, "aw:func1+arg2:8:rw { 1 }", 0);
+  test(*bpftrace, "aw:func1.one_two+arg2:8:rw { 1 }", 0);
+  test(*bpftrace, "asyncwatchpoint:func1+arg99999:8:rw { 1 }", 1);
+
+  // asyncwatchpoint's may not use absolute addresses
+  test(*bpftrace, "asyncwatchpoint:0x1234:8:rw { 1 }", 1);
+
+  bpftrace->procmon_ = std::make_unique<MockProcMon>(0);
+  test(*bpftrace, "watchpoint:func1+arg2:8:rw { 1 }", 1);
+}
+#endif // if defined(ARCH_X86_64) || defined(ARCH_AARCH64)
 
 TEST(semantic_analyser, args_builtin_wrong_use)
 {
@@ -1748,6 +1796,21 @@ TEST(semantic_analyser, override)
   test("t:syscalls:sys_enter_openat { override(-1); }", 1, false);
   test("i:s:1 { override(-1); }", 1, false);
   test("p:hz:1 { override(-1); }", 1, false);
+}
+
+TEST(semantic_analyser, unwatch)
+{
+  test("i:s:1 { unwatch(12345) }", 0);
+  test("i:s:1 { unwatch(0x1234) }", 0);
+  test("i:s:1 { $x = 1; unwatch($x); }", 0);
+  test("i:s:1 { @x = 1; @x++; unwatch(@x); }", 0);
+  test("k:f { unwatch(arg0); }", 0);
+  test("k:f { unwatch((int64)arg0); }", 0);
+  test("k:f { unwatch(*(int64*)arg0); }", 0);
+
+  test("i:s:1 { unwatch(\"asdf\") }", 10);
+  test("i:s:1 { @x[\"hi\"] = \"world\"; unwatch(@x[\"hi\"]) }", 10);
+  test("i:s:1 { printf(\"%d\", unwatch(2)) }", 10);
 }
 
 TEST(semantic_analyser, struct_member_keywords)

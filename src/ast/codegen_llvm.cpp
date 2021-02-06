@@ -1033,6 +1033,25 @@ void CodegenLLVM::visit(Call &call)
     expr_ = buf;
     expr_deleter_ = [this, buf]() { b_.CreateLifetimeEnd(buf); };
   }
+  else if (call.func == "unwatch")
+  {
+    Expression *addr = call.vargs->at(0);
+    addr->accept(*this);
+
+    auto elements = AsyncEvent::WatchpointUnwatch().asLLVMType(b_);
+    StructType *unwatch_struct = b_.GetStructType("unwatch_t", elements, true);
+    AllocaInst *buf = b_.CreateAllocaBPF(unwatch_struct, "unwatch");
+    size_t struct_size = layout_.getTypeAllocSize(unwatch_struct);
+
+    b_.CreateStore(b_.getInt64(asyncactionint(AsyncAction::watchpoint_detach)),
+                   b_.CreateGEP(buf, { b_.getInt64(0), b_.getInt32(0) }));
+    b_.CreateStore(
+        b_.CreateIntCast(expr_, b_.getInt64Ty(), false /* unsigned */),
+        b_.CreateGEP(buf, { b_.getInt64(0), b_.getInt32(1) }));
+    b_.CreatePerfEventOutput(ctx_, buf, struct_size);
+    b_.CreateLifetimeEnd(buf);
+    expr_ = nullptr;
+  }
   else
   {
     LOG(FATAL) << "missing codegen for function \"" << call.func << "\"";
@@ -2108,7 +2127,8 @@ void CodegenLLVM::generateProbe(Probe &probe,
                                 const std::string &full_func_id,
                                 const std::string &section_name,
                                 FunctionType *func_type,
-                                bool expansion)
+                                bool expansion,
+                                std::optional<int> usdt_location_index)
 {
   // tracepoint wildcard expansion, part 3 of 3. Set tracepoint_struct_ for use
   // by args builtin.
@@ -2121,7 +2141,8 @@ void CodegenLLVM::generateProbe(Probe &probe,
     probe.set_index(index);
   Function *func = Function::Create(
       func_type, Function::ExternalLinkage, section_name, module_.get());
-  func->setSection(getSectionNameForProbe(section_name, index));
+  func->setSection(
+      get_section_name_for_probe(section_name, index, usdt_location_index));
   BasicBlock *entry = BasicBlock::Create(module_->getContext(), "entry", func);
   b_.SetInsertPoint(entry);
 
@@ -2137,6 +2158,12 @@ void CodegenLLVM::generateProbe(Probe &probe,
     auto scoped_del = accept(stmt);
   }
   b_.CreateRet(ConstantInt::get(module_->getContext(), APInt(64, 0)));
+
+  auto pt = probetype(current_attach_point_->provider);
+  if ((pt == ProbeType::watchpoint || pt == ProbeType::asyncwatchpoint) &&
+      current_attach_point_->func.size())
+    generateWatchpointSetupProbe(
+        func_type, section_name, current_attach_point_->address, index);
 }
 
 void CodegenLLVM::visit(Probe &probe)
@@ -2203,9 +2230,10 @@ void CodegenLLVM::visit(Probe &probe)
       }
 
       tracepoint_struct_ = "";
-      for (const auto &match : matches)
+      for (const auto &m : matches)
       {
         reset_ids();
+        std::string match = m;
 
         // USDT probes must specify a target binary path, a provider,
         // and a function name.
@@ -2244,10 +2272,8 @@ void CodegenLLVM::visit(Probe &probe)
           {
             reset_ids();
 
-            std::string loc_suffix = "_loc" + std::to_string(i);
-            std::string full_func_id = match + loc_suffix;
-            std::string section_name = probefull_ + loc_suffix;
-            generateProbe(probe, full_func_id, section_name, func_type, true);
+            std::string full_func_id = match + "_loc" + std::to_string(i);
+            generateProbe(probe, full_func_id, probefull_, func_type, true, i);
             current_usdt_location_index_++;
           }
 
@@ -2273,6 +2299,15 @@ void CodegenLLVM::visit(Probe &probe)
 
             probefull_ = attach_point->name(category, func);
           }
+          else if (probetype(attach_point->provider) == ProbeType::watchpoint ||
+                   probetype(attach_point->provider) ==
+                       ProbeType::asyncwatchpoint)
+          {
+            // Watchpoint probes comes with target prefix. Strip the target to
+            // get the function
+            erase_prefix(match);
+            probefull_ = attach_point->name(match);
+          }
           else
             probefull_ = attach_point->name(match);
 
@@ -2297,10 +2332,6 @@ int CodegenLLVM::getNextIndexForProbe(const std::string &probe_name) {
   int index = next_probe_index_[probe_name];
   next_probe_index_[probe_name] += 1;
   return index;
-}
-
-std::string CodegenLLVM::getSectionNameForProbe(const std::string &probe_name, int index) {
-  return "s_" + probe_name + "_" + std::to_string(index);
 }
 
 AllocaInst *CodegenLLVM::getMapKey(Map &map)
@@ -2729,6 +2760,55 @@ void CodegenLLVM::createFormatStringCall(Call &call, int &id, CallArgs &call_arg
   b_.CreatePerfEventOutput(ctx_, fmt_args, struct_size);
   b_.CreateLifetimeEnd(fmt_args);
   expr_ = nullptr;
+}
+
+void CodegenLLVM::generateWatchpointSetupProbe(
+    FunctionType *func_type,
+    const std::string &expanded_probe_name,
+    int arg_num,
+    int index)
+{
+  Function *func = Function::Create(func_type,
+                                    Function::ExternalLinkage,
+                                    get_watchpoint_setup_probe_name(
+                                        expanded_probe_name),
+                                    module_.get());
+  func->setSection(
+      get_section_name_for_watchpoint_setup(expanded_probe_name, index));
+  BasicBlock *entry = BasicBlock::Create(module_->getContext(), "entry", func);
+  b_.SetInsertPoint(entry);
+
+  // Send SIGSTOP to curtask
+  if (!current_attach_point_->async)
+    b_.CreateSignal(ctx_, b_.getInt32(SIGSTOP), current_attach_point_->loc);
+
+  // Pull out function argument
+  Value *ctx = func->arg_begin();
+  int offset = arch::arg_offset(arg_num);
+  Value *addr = b_.CreateLoad(
+      b_.getInt64Ty(),
+      b_.CreateGEP(ctx, b_.getInt64(offset * sizeof(uintptr_t))),
+      "arg" + std::to_string(arg_num));
+
+  // Tell userspace to setup the real watchpoint
+  auto elements = AsyncEvent::Watchpoint().asLLVMType(b_);
+  StructType *watchpoint_struct = b_.GetStructType("watchpoint_t",
+                                                   elements,
+                                                   true);
+  AllocaInst *buf = b_.CreateAllocaBPF(watchpoint_struct, "watchpoint");
+  size_t struct_size = layout_.getTypeAllocSize(watchpoint_struct);
+
+  // Fill in perf event struct
+  b_.CreateStore(b_.getInt64(asyncactionint(AsyncAction::watchpoint_attach)),
+                 b_.CreateGEP(buf, { b_.getInt64(0), b_.getInt32(0) }));
+  b_.CreateStore(b_.getInt64(watchpoint_id_),
+                 b_.CreateGEP(buf, { b_.getInt64(0), b_.getInt32(1) }));
+  watchpoint_id_++;
+  b_.CreateStore(addr, b_.CreateGEP(buf, { b_.getInt64(0), b_.getInt32(2) }));
+  b_.CreatePerfEventOutput(ctx, buf, struct_size);
+  b_.CreateLifetimeEnd(buf);
+
+  b_.CreateRet(ConstantInt::get(module_->getContext(), APInt(64, 0)));
 }
 
 void CodegenLLVM::createPrintMapCall(Call &call)

@@ -202,6 +202,7 @@ AddrSpace SemanticAnalyser::find_addrspace(ProbeType pt)
     case ProbeType::software:
     case ProbeType::hardware:
     case ProbeType::watchpoint:
+    case ProbeType::asyncwatchpoint:
       // Will trigger a warning in selectProbeReadHelper.
       return AddrSpace::none;
   }
@@ -1206,6 +1207,14 @@ void SemanticAnalyser::visit(Call &call)
           << call.func << "() argument must be 6 bytes in size";
 
     call.type = CreateMacAddress();
+  }
+  else if (call.func == "unwatch")
+  {
+    if (check_nargs(call, 1))
+      check_arg(call, Type::integer, 0);
+
+    // Return type cannot be used
+    call.type = SizedType(Type::none, 0);
   }
   else
   {
@@ -2393,8 +2402,20 @@ void SemanticAnalyser::visit(AttachPoint &ap)
     else if (ap.freq < 0)
       LOG(ERROR, ap.loc, err_) << "software count should be a positive integer";
   }
-  else if (ap.provider == "watchpoint") {
-    if (!ap.address)
+  else if (ap.provider == "watchpoint" || ap.provider == "asyncwatchpoint")
+  {
+    if (ap.func.size())
+    {
+      if (bpftrace_.pid() <= 0 && !has_child_)
+        LOG(ERROR, ap.loc, err_) << "-p PID or -c CMD required for watchpoint";
+
+      if (ap.address > static_cast<uint64_t>(arch::max_arg()))
+        LOG(ERROR, ap.loc, err_)
+            << arch::name() << " doesn't support arg" << ap.address;
+    }
+    else if (ap.provider == "asyncwatchpoint")
+      LOG(ERROR, ap.loc, err_) << ap.provider << " requires a function name";
+    else if (!ap.address)
       LOG(ERROR, ap.loc, err_)
           << "watchpoint must be attached to a non-zero address";
     if (ap.len != 1 && ap.len != 2 && ap.len != 4 && ap.len != 8)
@@ -2413,8 +2434,11 @@ void SemanticAnalyser::visit(AttachPoint &ap)
       if (ap.mode[i - 1] == ap.mode[i])
         LOG(ERROR, ap.loc, err_) << "watchpoint modes may not be duplicated";
     }
-    if (ap.mode == "rx" || ap.mode == "wx" || ap.mode == "rwx")
-      LOG(ERROR, ap.loc, err_) << "watchpoint modes (rx, wx, rwx) not allowed";
+    const auto invalid_modes = arch::invalid_watchpoint_modes();
+    if (std::any_of(invalid_modes.cbegin(),
+                    invalid_modes.cend(),
+                    [&](const auto &mode) { return mode == ap.mode; }))
+      LOG(ERROR, ap.loc, err_) << "invalid watchpoint mode: " << ap.mode;
   }
   else if (ap.provider == "hardware") {
     if (ap.target == "")
@@ -2862,6 +2886,7 @@ bool SemanticAnalyser::check_available(const Call &call, const AttachPoint &ap)
       case ProbeType::software:
       case ProbeType::hardware:
       case ProbeType::watchpoint:
+      case ProbeType::asyncwatchpoint:
         return true;
       case ProbeType::invalid:
       case ProbeType::tracepoint:
@@ -2887,6 +2912,7 @@ bool SemanticAnalyser::check_available(const Call &call, const AttachPoint &ap)
       case ProbeType::software:
       case ProbeType::hardware:
       case ProbeType::watchpoint:
+      case ProbeType::asyncwatchpoint:
       case ProbeType::kfunc:
       case ProbeType::kretfunc:
         return false;
@@ -2913,6 +2939,7 @@ bool SemanticAnalyser::check_available(const Call &call, const AttachPoint &ap)
       case ProbeType::software:
       case ProbeType::hardware:
       case ProbeType::watchpoint:
+      case ProbeType::asyncwatchpoint:
         return false;
     }
   }

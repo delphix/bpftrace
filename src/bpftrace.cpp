@@ -11,6 +11,7 @@
 #include <sys/epoll.h>
 
 #include <fcntl.h>
+#include <signal.h>
 #include <sys/personality.h>
 #include <sys/prctl.h>
 #include <sys/stat.h>
@@ -30,8 +31,6 @@
 #include <llvm/Demangle/Demangle.h>
 
 #include "ast/async_event_types.h"
-#include "attached_probe.h"
-#include "bpforc.h"
 #include "bpftrace.h"
 #include "log.h"
 #include "printf.h"
@@ -195,6 +194,21 @@ BPFtrace::~BPFtrace()
     bcc_free_symcache(ksyms_, -1);
 }
 
+Probe BPFtrace::generateWatchpointSetupProbe(const std::string &func,
+                                             const ast::AttachPoint &ap,
+                                             const ast::Probe &probe)
+{
+  Probe setup_probe;
+  setup_probe.name = get_watchpoint_setup_probe_name(ap.name(func));
+  setup_probe.type = ProbeType::uprobe;
+  setup_probe.path = ap.target;
+  setup_probe.attach_point = func;
+  setup_probe.orig_name = get_watchpoint_setup_probe_name(probe.name());
+  setup_probe.index = ap.index(func) > 0 ? ap.index(func) : probe.index();
+
+  return setup_probe;
+}
+
 int BPFtrace::add_probe(ast::Probe &p)
 {
   for (auto attach_point : *p.attach_points)
@@ -254,7 +268,10 @@ int BPFtrace::add_probe(ast::Probe &p)
       attach_funcs.insert(attach_funcs.end(), matches.begin(), matches.end());
     }
     else if ((probetype(attach_point->provider) == ProbeType::uprobe ||
-              probetype(attach_point->provider) == ProbeType::uretprobe) &&
+              probetype(attach_point->provider) == ProbeType::uretprobe ||
+              probetype(attach_point->provider) == ProbeType::watchpoint ||
+              probetype(attach_point->provider) ==
+                  ProbeType::asyncwatchpoint) &&
              !attach_point->func.empty())
     {
       std::set<std::string> matches;
@@ -288,8 +305,9 @@ int BPFtrace::add_probe(ast::Probe &p)
         attach_funcs.push_back(attach_point->func);
     }
 
-    for (const auto &func : attach_funcs)
+    for (const auto &f : attach_funcs)
     {
+      std::string func = f;
       std::string func_id = func;
       std::string target = attach_point->target;
 
@@ -317,6 +335,12 @@ int BPFtrace::add_probe(ast::Probe &p)
         // resolved function name are used in the probe.
         target = erase_prefix(func_id);
       }
+      else if (probetype(attach_point->provider) == ProbeType::watchpoint ||
+               probetype(attach_point->provider) == ProbeType::asyncwatchpoint)
+      {
+        target = erase_prefix(func_id);
+        erase_prefix(func);
+      }
 
       Probe probe;
       probe.path = target;
@@ -334,6 +358,7 @@ int BPFtrace::add_probe(ast::Probe &p)
                                                   : p.index();
       probe.len = attach_point->len;
       probe.mode = attach_point->mode;
+      probe.async = attach_point->async;
 
       if (probetype(attach_point->provider) == ProbeType::usdt)
       {
@@ -349,6 +374,16 @@ int BPFtrace::add_probe(ast::Probe &p)
 
           probes_.emplace_back(std::move(probe_copy));
         }
+      }
+      else if ((probetype(attach_point->provider) == ProbeType::watchpoint ||
+                probetype(attach_point->provider) ==
+                    ProbeType::asyncwatchpoint) &&
+               attach_point->func.size())
+      {
+        probes_.emplace_back(
+            generateWatchpointSetupProbe(func_id, *attach_point, p));
+
+        watchpoint_probes_.emplace_back(std::move(probe));
       }
       else
       {
@@ -380,6 +415,14 @@ std::set<std::string> BPFtrace::find_wildcard_matches(
     }
     case ProbeType::uprobe:
     case ProbeType::uretprobe:
+    {
+      symbol_stream = std::make_unique<std::istringstream>(
+          extract_func_symbols_from_path(attach_point.target));
+      func = attach_point.target + ":" + attach_point.func;
+      break;
+    }
+    case ProbeType::asyncwatchpoint:
+    case ProbeType::watchpoint:
     {
       symbol_stream = std::make_unique<std::istringstream>(
           extract_func_symbols_from_path(attach_point.target));
@@ -667,6 +710,97 @@ void perf_event_printer(void *cb_cookie, void *data, int size)
     else
       msg << return_value;
     LOG(WARNING, info.loc, std::cerr) << msg.str();
+  }
+  else if (printf_id == asyncactionint(AsyncAction::watchpoint_attach))
+  {
+    bool abort = false;
+    auto watchpoint = static_cast<AsyncEvent::Watchpoint *>(data);
+    uint64_t probe_idx = watchpoint->watchpoint_idx;
+    uint64_t addr = watchpoint->addr;
+
+    if (probe_idx >= bpftrace->watchpoint_probes_.size())
+    {
+      std::cerr << "Invalid watchpoint probe idx=" << probe_idx << std::endl;
+      abort = true;
+      goto out;
+    }
+
+    // Ignore duplicate watchpoints (idx && addr same), but allow the same
+    // address to be watched by different probes.
+    //
+    // NB: this check works b/c we set Probe::addr below
+    //
+    // TODO: Should we be printing a warning or info message out here?
+    if (bpftrace->watchpoint_probes_[probe_idx].address == addr)
+      goto out;
+
+    // Attach the real watchpoint probe
+    {
+      bool registers_available = true;
+      Probe &wp_probe = bpftrace->watchpoint_probes_[probe_idx];
+      wp_probe.address = addr;
+      std::vector<std::unique_ptr<AttachedProbe>> aps;
+      try
+      {
+        aps = bpftrace->attach_probe(wp_probe, *bpftrace->bpforc_);
+      }
+      catch (const EnospcException &ex)
+      {
+        registers_available = false;
+        bpftrace->out_->message(MessageType::lost_events,
+                                "Failed to attach watchpoint probe. You are "
+                                "out of watchpoint registers.");
+        goto out;
+      }
+
+      if (aps.empty() && registers_available)
+      {
+        std::cerr << "Unable to attach real watchpoint probe" << std::endl;
+        abort = true;
+        goto out;
+      }
+
+      for (auto &ap : aps)
+        bpftrace->attached_probes_.emplace_back(std::move(ap));
+    }
+
+  out:
+    // Async watchpoints are not SIGSTOP'd
+    if (bpftrace->watchpoint_probes_[probe_idx].async)
+      return;
+
+    // Let the tracee continue
+    pid_t pid = bpftrace->child_
+                    ? bpftrace->child_->pid()
+                    : (bpftrace->procmon_ ? bpftrace->procmon_->pid() : -1);
+    if (pid == -1 || ::kill(pid, SIGCONT) != 0)
+    {
+      std::cerr << "Failed to SIGCONT tracee: " << strerror(errno) << std::endl;
+      abort = true;
+    }
+
+    if (abort)
+      std::abort();
+
+    return;
+  }
+  else if (printf_id == asyncactionint(AsyncAction::watchpoint_detach))
+  {
+    auto unwatch = static_cast<AsyncEvent::WatchpointUnwatch *>(data);
+    uint64_t addr = unwatch->addr;
+
+    // Remove all probes watching `addr`. Note how we fail silently here
+    // (ie invalid addr). This lets script writers be a bit more aggressive
+    // when unwatch'ing addresses, especially if they're sampling a portion
+    // of addresses they're interested in watching.
+    bpftrace->attached_probes_.erase(
+        std::remove_if(bpftrace->attached_probes_.begin(),
+                       bpftrace->attached_probes_.end(),
+                       [&](const auto &ap) {
+                         return ap->probe().address == addr;
+                       }),
+        bpftrace->attached_probes_.end());
+
     return;
   }
   else if ( printf_id >= asyncactionint(AsyncAction::syscall) &&
@@ -972,17 +1106,21 @@ std::vector<std::unique_ptr<AttachedProbe>> BPFtrace::attach_probe(
 {
   std::vector<std::unique_ptr<AttachedProbe>> ret;
 
-  std::string index_str = "_" + std::to_string(probe.index);
-  if (probe.type == ProbeType::usdt)
-    index_str = "_loc" + std::to_string(probe.usdt_location_idx) + index_str;
 
   // use the single-probe program if it exists (as is the case with wildcards
   // and the name builtin, which must be expanded into separate programs per
   // probe), else try to find a the program based on the original probe name
   // that includes wildcards.
-  auto func = bpforc.sections_.find("s_" + probe.name + index_str);
+  auto usdt_location_idx = (probe.type == ProbeType::usdt)
+                               ? std::make_optional<int>(
+                                     probe.usdt_location_idx)
+                               : std::nullopt;
+  auto func = bpforc.sections_.find(
+      get_section_name_for_probe(probe.name, probe.index, usdt_location_idx));
   if (func == bpforc.sections_.end())
-    func = bpforc.sections_.find("s_" + probe.orig_name + index_str);
+    func = bpforc.sections_.find(get_section_name_for_probe(probe.orig_name,
+                                                            probe.index,
+                                                            usdt_location_idx));
   if (func == bpforc.sections_.end())
   {
     if (probe.name != probe.orig_name)
@@ -1005,7 +1143,8 @@ std::vector<std::unique_ptr<AttachedProbe>> BPFtrace::attach_probe(
 
       return ret;
     }
-    else if (probe.type == ProbeType::watchpoint)
+    else if (probe.type == ProbeType::watchpoint ||
+             probe.type == ProbeType::asyncwatchpoint)
     {
       ret.emplace_back(
           std::make_unique<AttachedProbe>(probe, func->second, pid, *feature_));
@@ -1018,7 +1157,12 @@ std::vector<std::unique_ptr<AttachedProbe>> BPFtrace::attach_probe(
       return ret;
     }
   }
-  catch (std::runtime_error &e)
+  catch (const EnospcException &e)
+  {
+    // Caller will handle
+    throw e;
+  }
+  catch (const std::runtime_error &e)
   {
     LOG(ERROR) << e.what();
     ret.clear();
@@ -1043,6 +1187,7 @@ bool attach_reverse(const Probe &p)
     case ProbeType::profile:
     case ProbeType::interval:
     case ProbeType::watchpoint:
+    case ProbeType::asyncwatchpoint:
     case ProbeType::hardware:
       return false;
     case ProbeType::invalid:
@@ -1073,6 +1218,8 @@ int BPFtrace::run_special_probe(std::string name,
 
 int BPFtrace::run(std::unique_ptr<BpfOrc> bpforc)
 {
+  bpforc_ = std::move(bpforc);
+
   int epollfd = setup_perf_events();
   if (epollfd < 0)
     return epollfd;
@@ -1094,7 +1241,7 @@ int BPFtrace::run(std::unique_ptr<BpfOrc> bpforc)
     }
   }
 
-  if (run_special_probe("BEGIN_trigger", *bpforc.get(), BEGIN_trigger))
+  if (run_special_probe("BEGIN_trigger", *bpforc_, BEGIN_trigger))
     return -1;
 
   if (child_ && has_usdt_)
@@ -1119,7 +1266,7 @@ int BPFtrace::run(std::unique_ptr<BpfOrc> bpforc)
   for (auto probes = probes_.begin(); probes != probes_.end(); ++probes)
   {
     if (!attach_reverse(*probes)) {
-      auto aps = attach_probe(*probes, *bpforc.get());
+      auto aps = attach_probe(*probes, *bpforc_);
 
       if (aps.empty())
         return -1;
@@ -1132,7 +1279,7 @@ int BPFtrace::run(std::unique_ptr<BpfOrc> bpforc)
   for (auto r_probes = probes_.rbegin(); r_probes != probes_.rend(); ++r_probes)
   {
     if (attach_reverse(*r_probes)) {
-      auto aps = attach_probe(*r_probes, *bpforc.get());
+      auto aps = attach_probe(*r_probes, *bpforc_);
 
       if (aps.empty())
         return -1;
@@ -1169,7 +1316,7 @@ int BPFtrace::run(std::unique_ptr<BpfOrc> bpforc)
   finalize_ = false;
   exitsig_recv = false;
 
-  if (run_special_probe("END_trigger", *bpforc.get(), END_trigger))
+  if (run_special_probe("END_trigger", *bpforc_, END_trigger))
     return -1;
 
   poll_perf_events(epollfd, true);
@@ -1725,6 +1872,24 @@ uint64_t BPFtrace::max_value(const std::vector<uint8_t> &value, int nvalues)
       max = val;
   }
   return max;
+}
+
+std::optional<std::string> BPFtrace::get_watchpoint_binary_path() const
+{
+  if (child_)
+  {
+    // We can ignore all error checking here b/c child.cpp:validate_cmd() has
+    // already done it
+    auto args = split_string(cmd_, ' ', /* remove_empty= */ true);
+    assert(!args.empty());
+    return resolve_binary_path(args[0]).front();
+  }
+  else if (pid())
+    return "/proc/" + std::to_string(pid()) + "/exe";
+  else
+  {
+    return std::nullopt;
+  }
 }
 
 int64_t BPFtrace::min_value(const std::vector<uint8_t> &value, int nvalues)
