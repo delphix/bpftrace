@@ -141,6 +141,9 @@ static int info()
             << "  version: " << BPFTRACE_VERSION << std::endl
             << "  LLVM: " << LLVM_VERSION_MAJOR << "." << LLVM_VERSION_MINOR
             << "." << LLVM_VERSION_PATCH << std::endl
+#ifdef LLVM_ORC_V2
+            << "  ORC: v2" << std::endl
+#endif
             << "  foreach_sym: "
 #ifdef HAVE_BCC_ELF_FOREACH_SYM
             << "yes" << std::endl
@@ -839,6 +842,13 @@ int main(int argc, char *argv[])
       return 0;
     }
     bpforc = llvm.emit();
+    if (bt_debug == DebugLevel::kFullDebug)
+    {
+      std::cout << "\nLLVM JITDLib state\n";
+      std::cout << "------------------\n\n";
+      raw_os_ostream os(std::cout);
+      bpforc->dump(os);
+    }
   }
   catch (const std::system_error& ex)
   {
