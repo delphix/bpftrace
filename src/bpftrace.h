@@ -108,6 +108,7 @@ public:
   int run(std::unique_ptr<BpfOrc> bpforc);
   std::vector<std::unique_ptr<AttachedProbe>> attach_probe(Probe &probe,
                                                            BpfOrc &bpforc);
+  int run_iter(std::unique_ptr<BpfOrc> bpforc);
   int print_maps();
   int clear_map(IMap &map);
   int zero_map(IMap &map);
@@ -155,6 +156,7 @@ public:
   std::map<std::string, uint64_t> enums_;
   std::vector<std::tuple<std::string, std::vector<Field>>> printf_args_;
   std::vector<std::tuple<std::string, std::vector<Field>>> system_args_;
+  std::vector<std::tuple<std::string, std::vector<Field>>> seq_printf_args_;
   std::vector<std::string> join_args_;
   std::vector<std::string> time_args_;
   std::vector<std::string> strftime_args_;
@@ -201,6 +203,8 @@ public:
     return procmon_ ? procmon_->pid() : 0;
   }
 
+  std::vector<std::tuple<int, int>> seq_printf_ids_;
+
   std::vector<Probe> probes_;
   std::vector<Probe> special_probes_;
 private:
@@ -230,6 +234,7 @@ private:
   static uint64_t max_value(const std::vector<uint8_t> &value, int nvalues);
   static uint64_t read_address_from_output(std::string output);
   std::vector<uint8_t> find_empty_key(IMap &map, size_t size) const;
+  bool has_iter_ = false;
 };
 
 } // namespace bpftrace

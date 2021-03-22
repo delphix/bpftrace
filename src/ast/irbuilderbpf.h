@@ -54,8 +54,10 @@ public:
   llvm::Type *GetType(const SizedType &stype);
   llvm::ConstantInt *GetIntSameSize(uint64_t C, llvm::Value *expr);
   llvm::ConstantInt *GetIntSameSize(uint64_t C, llvm::Type *ty);
-  CallInst   *CreateBpfPseudoCall(int mapfd);
-  CallInst   *CreateBpfPseudoCall(Map &map);
+  CallInst *CreateBpfPseudoCallFd(int mapfd);
+  CallInst *CreateBpfPseudoCallFd(Map &map);
+  CallInst *CreateBpfPseudoCallValue(int mapfd);
+  CallInst *CreateBpfPseudoCallValue(Map &map);
   Value *CreateMapLookupElem(Value *ctx,
                              Map &map,
                              AllocaInst *key,
@@ -163,6 +165,12 @@ public:
                   AllocaInst *buf,
                   Value *path,
                   const location &loc);
+  void CreateSeqPrintf(Value *ctx,
+                       Value *fmt,
+                       Value *fmt_size,
+                       AllocaInst *data,
+                       Value *data_len,
+                       const location &loc);
   int helper_error_id_ = 0;
 
 private:

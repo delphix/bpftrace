@@ -287,7 +287,7 @@ CallInst *IRBuilderBPF::createCall(Value *callee,
 #endif
 }
 
-CallInst *IRBuilderBPF::CreateBpfPseudoCall(int mapfd)
+CallInst *IRBuilderBPF::CreateBpfPseudoCallFd(int mapfd)
 {
   Function *pseudo_func = module_.getFunction("llvm.bpf.pseudo");
   return createCall(pseudo_func,
@@ -295,15 +295,29 @@ CallInst *IRBuilderBPF::CreateBpfPseudoCall(int mapfd)
                     "pseudo");
 }
 
-CallInst *IRBuilderBPF::CreateBpfPseudoCall(Map &map)
+CallInst *IRBuilderBPF::CreateBpfPseudoCallFd(Map &map)
 {
   int mapfd = bpftrace_.maps[map.ident].value()->mapfd_;
-  return CreateBpfPseudoCall(mapfd);
+  return CreateBpfPseudoCallFd(mapfd);
+}
+
+CallInst *IRBuilderBPF::CreateBpfPseudoCallValue(int mapfd)
+{
+  Function *pseudo_func = module_.getFunction("llvm.bpf.pseudo");
+  return CreateCall(pseudo_func,
+                    { getInt64(BPF_PSEUDO_MAP_VALUE), getInt64(mapfd) },
+                    "pseudo");
+}
+
+CallInst *IRBuilderBPF::CreateBpfPseudoCallValue(Map &map)
+{
+  int mapfd = bpftrace_.maps[map.ident].value()->mapfd_;
+  return CreateBpfPseudoCallValue(mapfd);
 }
 
 CallInst *IRBuilderBPF::createMapLookup(int mapfd, AllocaInst *key)
 {
-  Value *map_ptr = CreateBpfPseudoCall(mapfd);
+  Value *map_ptr = CreateBpfPseudoCallFd(mapfd);
   // void *map_lookup_elem(struct bpf_map * map, void * key)
   // Return: Map value or NULL
 
@@ -397,7 +411,7 @@ void IRBuilderBPF::CreateMapUpdateElem(Value *ctx,
                                        Value *val,
                                        const location &loc)
 {
-  Value *map_ptr = CreateBpfPseudoCall(map);
+  Value *map_ptr = CreateBpfPseudoCallFd(map);
 
   assert(ctx && ctx->getType() == getInt8PtrTy());
   assert(key->getType()->isPointerTy());
@@ -429,7 +443,7 @@ void IRBuilderBPF::CreateMapDeleteElem(Value *ctx,
 {
   assert(ctx && ctx->getType() == getInt8PtrTy());
   assert(key->getType()->isPointerTy());
-  Value *map_ptr = CreateBpfPseudoCall(map);
+  Value *map_ptr = CreateBpfPseudoCallFd(map);
 
   // int map_delete_elem(&map, &key)
   // Return: 0 on success or negative error
@@ -974,7 +988,7 @@ CallInst *IRBuilderBPF::CreateGetStackId(Value *ctx,
 {
   assert(ctx && ctx->getType() == getInt8PtrTy());
 
-  Value *map_ptr = CreateBpfPseudoCall(
+  Value *map_ptr = CreateBpfPseudoCallFd(
       bpftrace_.maps[stack_type].value()->mapfd_);
 
   int flags = 0;
@@ -1030,7 +1044,7 @@ void IRBuilderBPF::CreatePerfEventOutput(Value *ctx, Value *data, size_t size)
   assert(ctx && ctx->getType() == getInt8PtrTy());
   assert(data && data->getType()->isPointerTy());
 
-  Value *map_ptr = CreateBpfPseudoCall(
+  Value *map_ptr = CreateBpfPseudoCallFd(
       bpftrace_.maps[MapManager::Type::PerfEvent].value()->mapfd_);
 
   Value *flags_val = CreateGetCpuId();
@@ -1212,6 +1226,44 @@ void IRBuilderBPF::CreatePath(Value *ctx,
                               { path, buf, getInt32(bpftrace_.strlen_) },
                               "d_path");
   CreateHelperErrorCond(ctx, call, libbpf::BPF_FUNC_d_path, loc);
+}
+
+void IRBuilderBPF::CreateSeqPrintf(Value *ctx,
+                                   Value *fmt,
+                                   Value *fmt_size,
+                                   AllocaInst *data,
+                                   Value *data_len,
+                                   const location &loc)
+{
+  // long bpf_seq_printf(struct seq_file *m, const char *fmt, __u32 fmt_size,
+  //                     const void *data, __u32 data_len)
+  // Return: 0 or error
+  FunctionType *seq_printf_func_type = FunctionType::get(getInt64Ty(),
+                                                         { getInt64Ty(),
+                                                           getInt8PtrTy(),
+                                                           getInt32Ty(),
+                                                           getInt8PtrTy(),
+                                                           getInt32Ty() },
+                                                         false);
+  PointerType *seq_printf_func_ptr_type = PointerType::get(seq_printf_func_type,
+                                                           0);
+  Constant *seq_printf_func = ConstantExpr::getCast(
+      Instruction::IntToPtr,
+      getInt64(libbpf::BPF_FUNC_seq_printf),
+      seq_printf_func_ptr_type);
+
+  ctx = CreatePointerCast(ctx, getInt8Ty()->getPointerTo());
+  Value *meta = CreateLoad(getInt64Ty()->getPointerTo(),
+                           CreateGEP(ctx, getInt64(0)),
+                           "meta");
+  dyn_cast<LoadInst>(meta)->setVolatile(true);
+
+  Value *seq = CreateLoad(getInt64Ty(), CreateGEP(meta, getInt64(0)), "seq");
+
+  CallInst *call = createCall(seq_printf_func,
+                              { seq, fmt, fmt_size, data, data_len },
+                              "seq_printf");
+  CreateHelperErrorCond(ctx, call, libbpf::BPF_FUNC_seq_printf, loc);
 }
 
 } // namespace ast

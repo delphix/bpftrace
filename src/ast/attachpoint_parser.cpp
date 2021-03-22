@@ -15,8 +15,9 @@ namespace ast {
 
 AttachPointParser::AttachPointParser(Program *root,
                                      BPFtrace &bpftrace,
-                                     std::ostream &sink)
-    : root_(root), bpftrace_(bpftrace), sink_(sink)
+                                     std::ostream &sink,
+                                     bool listing)
+    : root_(root), bpftrace_(bpftrace), sink_(sink), listing_(listing)
 {
 }
 
@@ -151,6 +152,8 @@ AttachPointParser::State AttachPointParser::parse_attachpoint(AttachPoint &ap)
     case ProbeType::kfunc:
     case ProbeType::kretfunc:
       return kfunc_parser();
+    case ProbeType::iter:
+      return iter_parser();
     default:
       errs_ << "Unrecognized probe type: " << ap_->provider << std::endl;
       return INVALID;
@@ -726,6 +729,42 @@ AttachPointParser::State AttachPointParser::kfunc_parser()
     ap_->need_expansion = true;
 
   ap_->func = parts_[1];
+  return OK;
+}
+
+AttachPointParser::State AttachPointParser::iter_parser()
+{
+  if (parts_.size() != 2 && parts_.size() != 3)
+  {
+    if (ap_->ignore_invalid)
+      return SKIP;
+
+    errs_ << ap_->provider << " probe type takes 2 arguments (1 optional)"
+          << std::endl;
+    return INVALID;
+  }
+
+  if (parts_[1].find('*') != std::string::npos)
+  {
+    if (listing_)
+    {
+      ap_->need_expansion = true;
+    }
+    else
+    {
+      if (ap_->ignore_invalid)
+        return SKIP;
+
+      errs_ << ap_->provider << " probe type does not support wildcards"
+            << std::endl;
+      return INVALID;
+    }
+  }
+
+  ap_->func = parts_[1];
+
+  if (parts_.size() == 3)
+    ap_->pin = parts_[2];
   return OK;
 }
 

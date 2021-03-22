@@ -189,6 +189,7 @@ AddrSpace SemanticAnalyser::find_addrspace(ProbeType pt)
     case ProbeType::kfunc:
     case ProbeType::kretfunc:
     case ProbeType::tracepoint:
+    case ProbeType::iter:
       return AddrSpace::kernel;
     case ProbeType::uprobe:
     case ProbeType::uretprobe:
@@ -216,6 +217,8 @@ void SemanticAnalyser::visit(Builtin &builtin)
   {
     ProbeType pt = probetype((*probe_->attach_points)[0]->provider);
     bpf_prog_type bt = progtype(pt);
+    std::string func = (*probe_->attach_points)[0]->func;
+
     for (auto &attach_point : *probe_->attach_points)
     {
       ProbeType pt = probetype(attach_point->provider);
@@ -225,24 +228,52 @@ void SemanticAnalyser::visit(Builtin &builtin)
             << "ctx cannot be used in different BPF program types: "
             << progtypeName(bt) << " and " << progtypeName(bt2);
     }
-    switch (bt)
+    switch (static_cast<libbpf::bpf_prog_type>(bt))
     {
-      case BPF_PROG_TYPE_KPROBE:
+      case libbpf::BPF_PROG_TYPE_KPROBE:
         builtin.type = CreatePointer(
             CreateRecord(bpftrace_.structs_["pt_regs"].size, "struct pt_regs"),
             AddrSpace::kernel);
         builtin.type.MarkCtxAccess();
         break;
-      case BPF_PROG_TYPE_TRACEPOINT:
+      case libbpf::BPF_PROG_TYPE_TRACEPOINT:
         LOG(ERROR, builtin.loc, err_)
             << "Use args instead of ctx in tracepoint";
         break;
-      case BPF_PROG_TYPE_PERF_EVENT:
+      case libbpf::BPF_PROG_TYPE_PERF_EVENT:
         builtin.type = CreatePointer(
             CreateRecord(bpftrace_.structs_["bpf_perf_event_data"].size,
                          "struct bpf_perf_event_data"),
             AddrSpace::kernel);
         builtin.type.MarkCtxAccess();
+        break;
+      case libbpf::BPF_PROG_TYPE_TRACING:
+        if (pt == ProbeType::iter)
+        {
+          std::string type;
+
+          if (func == "task")
+          {
+            type = "bpf_iter__task";
+          }
+          else if (func == "task_file")
+          {
+            type = "bpf_iter__task_file";
+          }
+          else
+          {
+            LOG(ERROR, builtin.loc, err_) << "unsupported iter type: " << func;
+          }
+
+          builtin.type = CreatePointer(
+              CreateRecord(bpftrace_.structs_[type].size, "struct " + type),
+              AddrSpace::kernel);
+          builtin.type.MarkCtxAccess();
+        }
+        else
+        {
+          LOG(ERROR, builtin.loc, err_) << "invalid program type";
+        }
         break;
       default:
         LOG(ERROR, builtin.loc, err_) << "invalid program type";
@@ -911,7 +942,17 @@ void SemanticAnalyser::visit(Call &call)
         }
 
         if (call.func == "printf")
-          bpftrace_.printf_args_.emplace_back(fmt.str, args);
+        {
+          if (single_provider_type() == ProbeType::iter)
+          {
+            bpftrace_.seq_printf_args_.emplace_back(fmt.str, args);
+            needs_data_map_ = true;
+          }
+          else
+          {
+            bpftrace_.printf_args_.emplace_back(fmt.str, args);
+          }
+        }
         else if (call.func == "system")
           bpftrace_.system_args_.emplace_back(fmt.str, args);
         else
@@ -1129,9 +1170,10 @@ void SemanticAnalyser::visit(Call &call)
     for (auto &attach_point : *probe_->attach_points)
     {
       ProbeType type = probetype(attach_point->provider);
-      if (type != ProbeType::kfunc && type != ProbeType::kretfunc)
+      if (type != ProbeType::kfunc && type != ProbeType::kretfunc &&
+          type != ProbeType::iter)
         LOG(ERROR, call.loc, err_) << "The path function can only be used with "
-                                   << "'kfunc', 'kretfunc' probes";
+                                   << "'kfunc', 'kretfunc', 'iter' probes";
     }
   }
   else if (call.func == "strncmp") {
@@ -2536,6 +2578,31 @@ void SemanticAnalyser::visit(AttachPoint &ap)
       }
     }
   }
+  else if (ap.provider == "iter")
+  {
+    bool supported = false;
+
+    if (ap.func == "task")
+    {
+      supported = bpftrace_.feature_->has_prog_iter_task() &&
+                  bpftrace_.btf_.has_data();
+    }
+    else if (ap.func == "task_file")
+    {
+      supported = bpftrace_.feature_->has_prog_iter_task_file() &&
+                  bpftrace_.btf_.has_data();
+    }
+    else if (listing_)
+    {
+      supported = true;
+    }
+
+    if (!supported)
+    {
+      LOG(ERROR, ap.loc, err_)
+          << "iter " << ap.func << " not available for your kernel version.";
+    }
+  }
   else {
     LOG(ERROR, ap.loc, err_) << "Invalid provider: '" << ap.provider << "'";
   }
@@ -2543,11 +2610,18 @@ void SemanticAnalyser::visit(AttachPoint &ap)
 
 void SemanticAnalyser::visit(Probe &probe)
 {
+  auto aps = probe.attach_points->size();
+
   // Clear out map of variable names - variables should be probe-local
   variable_val_.clear();
   probe_ = &probe;
 
   for (AttachPoint *ap : *probe.attach_points) {
+    if (!listing_ && aps > 1 && ap->provider == "iter")
+    {
+      LOG(ERROR, ap->loc, err_) << "Only single iter attach point is allowed.";
+      return;
+    }
     ap->accept(*this);
   }
   if (probe.pred) {
@@ -2675,6 +2749,48 @@ int SemanticAnalyser::create_maps_impl(void)
     auto map = std::make_unique<T>(map_ident, type, key, 1);
     failed_maps += is_invalid_map(map->mapfd_);
     bpftrace_.maps.Set(MapManager::Type::Elapsed, std::move(map));
+  }
+  if (needs_data_map_)
+  {
+    size_t size = 0;
+
+    // get size of all the formats
+    for (auto it : bpftrace_.seq_printf_args_)
+    {
+      size += std::get<0>(it).size() + 1;
+    }
+
+    // compute buffer size to hold all the formats
+    // and create map with that
+    int ptr_size = sizeof(unsigned long);
+    size = (size / ptr_size + 1) * ptr_size;
+    auto map = std::make_unique<T>("data", BPF_MAP_TYPE_ARRAY, 4, size, 1, 0);
+    failed_maps += is_invalid_map(map->mapfd_);
+    bpftrace_.maps.Set(MapManager::Type::SeqPrintfData, std::move(map));
+
+    // copy all the formats to array and store indexes
+    // and lengths so we can later access it
+    uint32_t idx = 0;
+    std::vector<uint8_t> formats(size, 0);
+
+    for (auto it : bpftrace_.seq_printf_args_)
+    {
+      auto str = std::get<0>(it).c_str();
+      auto len = ::strlen(str);
+
+      memcpy(&formats.data()[idx], str, len);
+
+      bpftrace_.seq_printf_ids_.push_back({ idx, len + 1 });
+      idx += len + 1;
+    }
+
+    // store the data in map
+    uint64_t id = 0;
+
+    bpf_update_elem(bpftrace_.maps[MapManager::Type::SeqPrintfData].value()->mapfd_,
+                    &id,
+                    formats.data(),
+                    0);
   }
 
   {
@@ -2924,6 +3040,7 @@ bool SemanticAnalyser::check_available(const Call &call, const AttachPoint &ap)
       case ProbeType::tracepoint:
       case ProbeType::kfunc:
       case ProbeType::kretfunc:
+      case ProbeType::iter:
         return false;
     }
   }
@@ -2947,6 +3064,7 @@ bool SemanticAnalyser::check_available(const Call &call, const AttachPoint &ap)
       case ProbeType::asyncwatchpoint:
       case ProbeType::kfunc:
       case ProbeType::kretfunc:
+      case ProbeType::iter:
         return false;
     }
   }
@@ -2972,6 +3090,7 @@ bool SemanticAnalyser::check_available(const Call &call, const AttachPoint &ap)
       case ProbeType::hardware:
       case ProbeType::watchpoint:
       case ProbeType::asyncwatchpoint:
+      case ProbeType::iter:
         return false;
     }
   }

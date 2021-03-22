@@ -84,7 +84,7 @@ if(HAVE_BCC_USDT_ADDSEM)
 endif(HAVE_BCC_USDT_ADDSEM)
 if (LIBBPF_BTF_DUMP_FOUND)
   target_compile_definitions(libbpftrace PRIVATE HAVE_LIBBPF_BTF_DUMP)
-  target_include_directories(${BPFTRACE} PUBLIC ${LIBBPF_INCLUDE_DIRS})
+  target_include_directories(libbpftrace PUBLIC ${LIBBPF_INCLUDE_DIRS})
   target_link_libraries(libbpftrace ${LIBBPF_LIBRARIES})
   if (HAVE_LIBBPF_BTF_DUMP_EMIT_TYPE_DECL)
     target_compile_definitions(libbpftrace PRIVATE HAVE_LIBBPF_BTF_DUMP_EMIT_TYPE_DECL)
@@ -96,6 +96,18 @@ endif(LIBBPF_FOUND)
 
 if (HAVE_LIBBPF_MAP_BATCH)
   target_compile_definitions(libbpftrace PRIVATE HAVE_LIBBPF_MAP_BATCH)
+endif()
+
+if (HAVE_LIBBPF_LINK_CREATE)
+  target_compile_definitions(libbpftrace PRIVATE HAVE_LIBBPF_LINK_CREATE)
+endif()
+
+if (HAVE_BCC_PROG_LOAD_XATTR)
+  target_compile_definitions(libbpftrace PRIVATE HAVE_BCC_PROG_LOAD_XATTR)
+endif()
+
+if (HAVE_LIBBPF_LINK_CREATE OR HAVE_BCC_PROG_LOAD_XATTR)
+  target_compile_definitions(libbpftrace PRIVATE HAVE_LIBBPF_BPF_H)
 endif()
 
 if (HAVE_BCC_KFUNC)
