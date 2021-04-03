@@ -8,6 +8,8 @@ and this project adheres to
 
 ## Unreleased
 
+## [0.12.0] 2021-04-01
+
 #### Added
 - Add path builtin
   - [#1492](https://github.com/iovisor/bpftrace/pull/1492)
@@ -58,6 +60,8 @@ and this project adheres to
   - [#1599](https://github.com/iovisor/bpftrace/pull/1599)
 - Printing structures
   - [#1705](https://github.com/iovisor/bpftrace/pull/1705)
+- Array indexing on pointers
+  - [#1739](https://github.com/iovisor/bpftrace/pull/1739)
 
 #### Changed
 - Warn if using `print` on `stats` maps with top and div arguments
