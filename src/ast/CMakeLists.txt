@@ -1,11 +1,11 @@
 add_library(ast
   ast.cpp
   attachpoint_parser.cpp
-  callback_visitor.cpp
   codegen_llvm.cpp
   fake_map.cpp
   field_analyser.cpp
   irbuilderbpf.cpp
+  pass_manager.cpp
   printer.cpp
   semantic_analyser.cpp
   signal.cpp

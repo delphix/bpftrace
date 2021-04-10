@@ -10,23 +10,26 @@ namespace bpftrace {
 
 namespace ast {
 
-class TracepointArgsVisitor : public ASTVisitor
+class TracepointArgsVisitor : public Visitor
 {
 public:
   void visit(Builtin &builtin) override
   {
+    Visitor::visit(builtin);
+
     if (builtin.ident == "args" && probe_->tp_args_structs_level == -1)
       probe_->tp_args_structs_level = 0;
   };
   void visit(FieldAccess &acc) override
   {
-    acc.expr->accept(*this);
+    Visitor::visit(acc);
+
     if (probe_->tp_args_structs_level >= 0)
       probe_->tp_args_structs_level++;
-  }
+  };
   void visit(Probe &probe) override {
     probe_ = &probe;
-    ASTVisitor::visit(probe);
+    Visitor::visit(probe);
   };
 
 private:

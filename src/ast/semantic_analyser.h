@@ -7,13 +7,14 @@
 #include "bpffeature.h"
 #include "bpftrace.h"
 #include "map.h"
+#include "pass_manager.h"
 #include "types.h"
 #include "visitors.h"
 
 namespace bpftrace {
 namespace ast {
 
-class SemanticAnalyser : public ASTVisitor
+class SemanticAnalyser : public Visitor
 {
 public:
   explicit SemanticAnalyser(Node *root,
@@ -139,5 +140,7 @@ private:
   bool has_pos_param_ = false;
 };
 
+Pass CreateSemanticPass();
+Pass CreateMapCreatePass();
 } // namespace ast
 } // namespace bpftrace

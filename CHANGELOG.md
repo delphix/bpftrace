@@ -8,6 +8,22 @@ and this project adheres to
 
 ## Unreleased
 
+#### Added
+
+#### Changed
+
+#### Deprecated
+
+#### Removed
+
+#### Fixed
+- Fix single arg wildcard probe listing
+  - [#1775](https://github.com/iovisor/bpftrace/pull/1775)
+
+#### Tools
+
+#### Documentation
+
 ## [0.12.0] 2021-04-01
 
 #### Added
