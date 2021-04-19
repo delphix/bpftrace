@@ -1,26 +1,39 @@
 #pragma once
 
+#include "gmock/gmock.h"
+
 #include "bpffeature.h"
 #include "bpftrace.h"
 #include "child.h"
-#include "gmock/gmock.h"
+#include "probe_matcher.h"
+#include "procmon.h"
 
 namespace bpftrace {
 namespace test {
 
-class MockBPFtrace : public BPFtrace {
+class MockProbeMatcher : public ProbeMatcher
+{
 public:
+  MockProbeMatcher(BPFtrace *bpftrace) : ProbeMatcher(bpftrace)
+  {
+  }
 #pragma GCC diagnostic push
 #ifdef __clang__
 #pragma GCC diagnostic ignored "-Winconsistent-missing-override"
 #endif
   MOCK_CONST_METHOD1(get_symbols_from_file,
-      std::unique_ptr<std::istream>(const std::string &path));
+                     std::unique_ptr<std::istream>(const std::string &path));
   MOCK_CONST_METHOD2(get_symbols_from_usdt,
-      std::unique_ptr<std::istream>(int pid, const std::string &target));
-  MOCK_CONST_METHOD1(extract_func_symbols_from_path,
-      std::string(const std::string &path));
+                     std::unique_ptr<std::istream>(int pid,
+                                                   const std::string &target));
+  MOCK_CONST_METHOD1(get_func_symbols_from_file,
+                     std::unique_ptr<std::istream>(const std::string &path));
 #pragma GCC diagnostic pop
+};
+
+class MockBPFtrace : public BPFtrace
+{
+public:
   std::vector<Probe> get_probes()
   {
     return probes_;
@@ -40,7 +53,7 @@ public:
     {
       return -1;
     }
-    else if (name[0] > 'A' && name[0] < 'z')
+    else if (name[0] >= 'A' && name[0] <= 'z')
     {
       sym->address = 12345;
       sym->size = 4;
@@ -53,6 +66,14 @@ public:
     }
     return 0;
   }
+
+  void set_mock_probe_matcher(std::unique_ptr<MockProbeMatcher> probe_matcher)
+  {
+    probe_matcher_ = std::move(probe_matcher);
+    mock_probe_matcher = dynamic_cast<MockProbeMatcher *>(probe_matcher_.get());
+  }
+
+  MockProbeMatcher *mock_probe_matcher;
 };
 
 std::unique_ptr<MockBPFtrace> get_mock_bpftrace();
@@ -67,8 +88,14 @@ public:
     has_get_current_cgroup_id_ = std::make_optional<bool>(has_features);
     has_override_return_ = std::make_optional<bool>(has_features);
     prog_kfunc_ = std::make_optional<bool>(has_features);
+    prog_iter_task_ = std::make_optional<bool>(has_features);
+    prog_iter_task_file_ = std::make_optional<bool>(has_features);
     has_loop_ = std::make_optional<bool>(has_features);
+    has_probe_read_kernel_ = std::make_optional<bool>(has_features);
+    has_features_ = has_features;
+    has_d_path_ = std::make_optional<bool>(has_features);
   };
+  bool has_features_;
 };
 
 class MockChildProc : public ChildProcBase
@@ -91,6 +118,25 @@ public:
   {
     (void)pause;
   };
+};
+
+class MockProcMon : public ProcMonBase
+{
+public:
+  MockProcMon(pid_t pid)
+  {
+    pid_ = pid;
+  }
+
+  ~MockProcMon() override = default;
+
+  bool is_alive(void) override
+  {
+    if (pid_ > 0)
+      return true;
+    else
+      return false;
+  }
 };
 
 } // namespace test

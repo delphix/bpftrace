@@ -20,8 +20,8 @@ BEGIN
 	printf("%-10s %-5s %s\n", "TIME(ms)", "PID", "ARGS");
 }
 
-tracepoint:syscalls:sys_enter_execve
+tracepoint:syscalls:sys_enter_exec*
 {
-	printf("%-10u %-5d ", elapsed / 1000000, pid);
+	printf("%-10u %-5d ", elapsed / 1e6, pid);
 	join(args->argv);
 }

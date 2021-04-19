@@ -97,6 +97,10 @@ For more eBPF observability tools, see [bcc tools](https://github.com/iovisor/bc
 
 See the [Reference Guide](docs/reference_guide.md) for more detail.
 
+## Support
+
+For additional help / discussion, please use our [discussions](https://github.com/iovisor/bpftrace/discussions) page.
+
 ## Contributing
 
 * Have ideas for new bpftrace tools? [CONTRIBUTING-TOOLS.md](CONTRIBUTING-TOOLS.md)

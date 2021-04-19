@@ -7,6 +7,7 @@ import time
 from os import environ, uname, devnull
 from distutils.version import LooseVersion
 import re
+from functools import lru_cache
 
 BPF_PATH = environ["BPFTRACE_RUNTIME_TEST_EXECUTABLE"]
 ENV_PATH = environ["PATH"]
@@ -42,6 +43,7 @@ class Utils(object):
     TIMEOUT = 3
     SKIP_REQUIREMENT_UNSATISFIED = 4
     SKIP_ENVIRONMENT_DISABLED = 5
+    SKIP_FEATURE_REQUIREMENT_UNSATISFIED = 6
 
     @staticmethod
     def failed(status):
@@ -53,6 +55,7 @@ class Utils(object):
             Utils.SKIP_KERNEL_VERSION,
             Utils.SKIP_REQUIREMENT_UNSATISFIED,
             Utils.SKIP_ENVIRONMENT_DISABLED,
+            Utils.SKIP_FEATURE_REQUIREMENT_UNSATISFIED,
         ]
 
     @staticmethod
@@ -61,6 +64,10 @@ class Utils(object):
             return "min Kernel: %s" % test.kernel
         elif status == Utils.SKIP_REQUIREMENT_UNSATISFIED:
             return "unmet condition: '%s'" % test.requirement
+        elif status == Utils.SKIP_FEATURE_REQUIREMENT_UNSATISFIED:
+            neg_reqs = { "!{}".format(f) for f in test.neg_feature_requirement }
+            return "missed feature: '%s'" % ','.join(
+                (neg_reqs | test.feature_requirement))
         elif status == Utils.SKIP_ENVIRONMENT_DISABLED:
             return "disabled by environment variable"
         else:
@@ -73,6 +80,33 @@ class Utils(object):
     @staticmethod
     def __handler(signum, frame):
         raise TimeoutError('TIMEOUT')
+
+    @staticmethod
+    @lru_cache(maxsize=1)
+    def __get_bpffeature():
+        cmd = "bpftrace --info"
+        p = subprocess.Popen(
+            cmd,
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            env={'PATH': "{}:{}".format(BPF_PATH, ENV_PATH)},
+            preexec_fn=os.setsid,
+            universal_newlines=True,
+            bufsize=1
+        )
+        output = p.communicate()[0]
+        bpffeature = {}
+        bpffeature["loop"] = output.find("Loop support: yes") != -1
+        bpffeature["probe_read_kernel"] = output.find("probe_read_kernel: yes") != -1
+        bpffeature["btf"] = output.find("btf (depends on Build:libbpf): yes") != -1
+        bpffeature["dpath"] = output.find("dpath: yes") != -1
+        bpffeature["uprobe_refcount"] = \
+            output.find("uprobe refcount (depends on Build:bcc bpf_attach_uprobe refcount): yes") != -1
+        bpffeature["signal"] = output.find("send_signal: yes") != -1
+        bpffeature["iter:task"] = output.find("iter:task: yes") != -1
+        bpffeature["iter:task_file"] = output.find("iter:task_file: yes") != -1
+        return bpffeature
 
     @staticmethod
     def run_test(test):
@@ -105,6 +139,23 @@ class Utils(object):
                         print(warn("[   SKIP   ] ") + "%s.%s" % (test.suite, test.name))
                         return Utils.SKIP_REQUIREMENT_UNSATISFIED
 
+            if test.feature_requirement or test.neg_feature_requirement:
+                bpffeature = Utils.__get_bpffeature()
+
+                for feature in test.feature_requirement:
+                    if feature not in bpffeature:
+                        raise ValueError("Invalid feature requirement: %s" % feature)
+                    elif not bpffeature[feature]:
+                        print(warn("[   SKIP   ] ") + "%s.%s" % (test.suite, test.name))
+                        return Utils.SKIP_FEATURE_REQUIREMENT_UNSATISFIED
+
+                for feature in test.neg_feature_requirement:
+                    if feature not in bpffeature:
+                        raise ValueError("Invalid feature requirement: %s" % feature)
+                    elif bpffeature[feature]:
+                        print(warn("[   SKIP   ] ") + "%s.%s" % (test.suite, test.name))
+                        return Utils.SKIP_FEATURE_REQUIREMENT_UNSATISFIED
+
             if test.before:
                 before = subprocess.Popen(test.before, shell=True, preexec_fn=os.setsid)
                 waited=0
@@ -113,13 +164,16 @@ class Utils(object):
                     # a test program needs to accept arguments. It covers the
                     # current simple calls with no arguments
                     child_name = os.path.basename(test.before.split()[-1])
-                    while subprocess.call(["pidof", child_name], stdout=dn, stderr=dn) != 0:
+                    while subprocess.call(["pidof", "-s", child_name], stdout=dn, stderr=dn) != 0:
                         time.sleep(0.1)
                         waited+=0.1
                         if waited > test.timeout:
                             raise TimeoutError('Timed out waiting for BEFORE %s ', test.before)
 
             bpf_call = Utils.prepare_bpf_call(test)
+            if test.before:
+                childpid = subprocess.Popen(["pidof", "-s", child_name], stdout=subprocess.PIPE, universal_newlines=True).communicate()[0].strip()
+                bpf_call = re.sub("{{BEFORE_PID}}", str(childpid), bpf_call)
             env = {'test': test.name}
             env.update(test.env)
             p = subprocess.Popen(
@@ -178,5 +232,5 @@ class Utils(object):
             print(fail("[  FAILED  ] ") + "%s.%s" % (test.suite, test.name))
             print('\tCommand: ' + bpf_call)
             print('\tExpected: ' + test.expect)
-            print('\tFound: ' + output)
+            print('\tFound: ' + output.encode("unicode_escape").decode("utf-8"))
             return Utils.FAIL

@@ -19,16 +19,21 @@ public:
       int max,
       int step,
       int max_entries);
+  Map(const std::string &name,
+      enum bpf_map_type type,
+      int key_size,
+      int value_size,
+      int max_entries,
+      int flags);
   Map(const SizedType &type);
   Map(enum bpf_map_type map_type);
   virtual ~Map() override;
 
   int create_map(enum bpf_map_type map_type,
-                 const char *name,
+                 const std::string &name,
                  int key_size,
                  int value_size,
                  int max_entries,
                  int flags);
 };
-
 } // namespace bpftrace

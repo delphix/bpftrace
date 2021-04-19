@@ -32,10 +32,11 @@ BEGIN
 }
 
 // comment out this block to avoid showing hits:
-kprobe:lookup_fast
+kprobe:lookup_fast,
+kprobe:lookup_fast.constprop.*
 {
 	$nd = (struct nameidata *)arg0;
-	printf("%-8d %-6d %-16s R %s\n", elapsed / 1000000, pid, comm,
+	printf("%-8d %-6d %-16s R %s\n", elapsed / 1e6, pid, comm,
 	    str($nd->last.name));
 }
 
@@ -48,7 +49,7 @@ kprobe:d_lookup
 kretprobe:d_lookup
 /@fname[tid]/
 {
-	printf("%-8d %-6d %-16s M %s\n", elapsed / 1000000, pid, comm,
+	printf("%-8d %-6d %-16s M %s\n", elapsed / 1e6, pid, comm,
 	    str(@fname[tid]));
 	delete(@fname[tid]);
 }

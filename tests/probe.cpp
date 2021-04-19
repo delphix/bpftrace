@@ -32,13 +32,15 @@ void gen_bytecode(const std::string &input, std::stringstream &out)
   ClangParser clang;
   clang.parse(driver.root_, *bpftrace);
 
-  MockBPFfeature feature;
-  ast::SemanticAnalyser semantics(driver.root_, *bpftrace, feature);
+  // Override to mockbpffeature.
+  bpftrace->feature_ = std::make_unique<MockBPFfeature>(true);
+  ast::SemanticAnalyser semantics(driver.root_, *bpftrace);
   ASSERT_EQ(semantics.analyse(), 0);
   ASSERT_EQ(semantics.create_maps(true), 0);
 
   ast::CodegenLLVM codegen(driver.root_, *bpftrace);
-  codegen.compile(DebugLevel::kDebug, out);
+  codegen.generate_ir();
+  codegen.DumpIR(out);
 }
 
 void compare_bytecode(const std::string &input1, const std::string &input2)
@@ -76,6 +78,8 @@ TEST_F(probe_btf, short_name)
 {
   compare_bytecode("kfunc:func_1 { 1 }", "f:func_1 { 1 }");
   compare_bytecode("kretfunc:func_1 { 1 }", "fr:func_1 { 1 }");
+  compare_bytecode("iter:task { 1 }", "it:task { 1 }");
+  compare_bytecode("iter:task_file { 1 }", "it:task_file { 1 }");
 }
 
 #endif // HAVE_LIBBPF_BTF_DUMP
