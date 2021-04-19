@@ -167,22 +167,7 @@ probes : probes probe { $$ = $1; $1->push_back($2); }
        | probe        { $$ = new ast::ProbeList; $$->push_back($1); }
        ;
 
-probe : attach_points pred block { if (!driver.listing_)
-                                     $$ = new ast::Probe($1, $2, $3);
-                                   else
-                                   {
-                                     error(@$, "unexpected listing query format");
-                                     YYERROR;
-                                   }
-                                 }
-      | attach_points END { if (driver.listing_)
-                              $$ = new ast::Probe($1, nullptr, nullptr);
-                            else
-                            {
-                              error(@$, "unexpected end of file, expected {");
-                              YYERROR;
-                            }
-                          }
+probe : attach_points pred block { $$ = new ast::Probe($1, $2, $3); }
       ;
 
 attach_points : attach_points "," attach_point { $$ = $1; $1->push_back($3); }
@@ -230,9 +215,7 @@ ternary : expr QUES expr COLON expr { $$ = new ast::Ternary($1, $3, $5, @$); }
 
 param : PARAM      {
                      try {
-                       long n = std::stol($1.substr(1, $1.size()-1));
-                       if (n == 0) throw std::exception();
-                       $$ = new ast::PositionalParameter(PositionalParameterType::positional, n, @$);
+                       $$ = new ast::PositionalParameter(PositionalParameterType::positional, std::stol($1.substr(1, $1.size()-1)), @$);
                      } catch (std::exception const& e) {
                        error(@1, "param " + $1 + " is out of integer range [1, " +
                              std::to_string(std::numeric_limits<long>::max()) + "]");
@@ -277,39 +260,36 @@ block_or_if : block        { $$ = $1; }
             | if_stmt      { $$ = new ast::StatementList; $$->emplace_back($1); }
             ;
 
-stmt : expr                { $$ = new ast::ExprStatement($1, @1); }
+stmt : expr                { $$ = new ast::ExprStatement($1); }
      | compound_assignment { $$ = $1; }
      | jump_stmt           { $$ = $1; }
-     | map "=" expr        { $$ = new ast::AssignMapStatement($1, $3, false, @2); }
-     | var "=" expr        { $$ = new ast::AssignVarStatement($1, $3, false, @2); }
-     | tuple_assignment
+     | map "=" expr        { $$ = new ast::AssignMapStatement($1, $3, @2); }
+     | var "=" expr        { $$ = new ast::AssignVarStatement($1, $3, @2); }
      ;
 
-compound_assignment : map LEFTASSIGN expr  { $$ = new ast::AssignMapStatement($1, new ast::Binop($1, token::LEFT,  $3, @2), true, @$); }
-                    | var LEFTASSIGN expr  { $$ = new ast::AssignVarStatement($1, new ast::Binop($1, token::LEFT,  $3, @2), true, @$); }
-                    | map RIGHTASSIGN expr { $$ = new ast::AssignMapStatement($1, new ast::Binop($1, token::RIGHT, $3, @2), true, @$); }
-                    | var RIGHTASSIGN expr { $$ = new ast::AssignVarStatement($1, new ast::Binop($1, token::RIGHT, $3, @2), true, @$); }
-                    | map PLUSASSIGN expr  { $$ = new ast::AssignMapStatement($1, new ast::Binop($1, token::PLUS,  $3, @2), true, @$); }
-                    | var PLUSASSIGN expr  { $$ = new ast::AssignVarStatement($1, new ast::Binop($1, token::PLUS,  $3, @2), true, @$); }
-                    | map MINUSASSIGN expr { $$ = new ast::AssignMapStatement($1, new ast::Binop($1, token::MINUS, $3, @2), true, @$); }
-                    | var MINUSASSIGN expr { $$ = new ast::AssignVarStatement($1, new ast::Binop($1, token::MINUS, $3, @2), true, @$); }
-                    | map MULASSIGN expr   { $$ = new ast::AssignMapStatement($1, new ast::Binop($1, token::MUL,   $3, @2), true, @$); }
-                    | var MULASSIGN expr   { $$ = new ast::AssignVarStatement($1, new ast::Binop($1, token::MUL,   $3, @2), true, @$); }
-                    | map DIVASSIGN expr   { $$ = new ast::AssignMapStatement($1, new ast::Binop($1, token::DIV,   $3, @2), true, @$); }
-                    | var DIVASSIGN expr   { $$ = new ast::AssignVarStatement($1, new ast::Binop($1, token::DIV,   $3, @2), true, @$); }
-                    | map MODASSIGN expr   { $$ = new ast::AssignMapStatement($1, new ast::Binop($1, token::MOD,   $3, @2), true, @$); }
-                    | var MODASSIGN expr   { $$ = new ast::AssignVarStatement($1, new ast::Binop($1, token::MOD,   $3, @2), true, @$); }
-                    | map BANDASSIGN expr  { $$ = new ast::AssignMapStatement($1, new ast::Binop($1, token::BAND,  $3, @2), true, @$); }
-                    | var BANDASSIGN expr  { $$ = new ast::AssignVarStatement($1, new ast::Binop($1, token::BAND,  $3, @2), true, @$); }
-                    | map BORASSIGN expr   { $$ = new ast::AssignMapStatement($1, new ast::Binop($1, token::BOR,   $3, @2), true, @$); }
-                    | var BORASSIGN expr   { $$ = new ast::AssignVarStatement($1, new ast::Binop($1, token::BOR,   $3, @2), true, @$); }
-                    | map BXORASSIGN expr  { $$ = new ast::AssignMapStatement($1, new ast::Binop($1, token::BXOR,  $3, @2), true, @$); }
-                    | var BXORASSIGN expr  { $$ = new ast::AssignVarStatement($1, new ast::Binop($1, token::BXOR,  $3, @2), true, @$); }
+compound_assignment : map LEFTASSIGN expr  { $$ = new ast::AssignMapStatement($1, new ast::Binop($1, token::LEFT,  $3, @2)); }
+                    | var LEFTASSIGN expr  { $$ = new ast::AssignVarStatement($1, new ast::Binop($1, token::LEFT,  $3, @2)); }
+                    | map RIGHTASSIGN expr { $$ = new ast::AssignMapStatement($1, new ast::Binop($1, token::RIGHT, $3, @2)); }
+                    | var RIGHTASSIGN expr { $$ = new ast::AssignVarStatement($1, new ast::Binop($1, token::RIGHT, $3, @2)); }
+                    | map PLUSASSIGN expr  { $$ = new ast::AssignMapStatement($1, new ast::Binop($1, token::PLUS,  $3, @2)); }
+                    | var PLUSASSIGN expr  { $$ = new ast::AssignVarStatement($1, new ast::Binop($1, token::PLUS,  $3, @2)); }
+                    | map MINUSASSIGN expr { $$ = new ast::AssignMapStatement($1, new ast::Binop($1, token::MINUS, $3, @2)); }
+                    | var MINUSASSIGN expr { $$ = new ast::AssignVarStatement($1, new ast::Binop($1, token::MINUS, $3, @2)); }
+                    | map MULASSIGN expr   { $$ = new ast::AssignMapStatement($1, new ast::Binop($1, token::MUL,   $3, @2)); }
+                    | var MULASSIGN expr   { $$ = new ast::AssignVarStatement($1, new ast::Binop($1, token::MUL,   $3, @2)); }
+                    | map DIVASSIGN expr   { $$ = new ast::AssignMapStatement($1, new ast::Binop($1, token::DIV,   $3, @2)); }
+                    | var DIVASSIGN expr   { $$ = new ast::AssignVarStatement($1, new ast::Binop($1, token::DIV,   $3, @2)); }
+                    | map MODASSIGN expr   { $$ = new ast::AssignMapStatement($1, new ast::Binop($1, token::MOD,   $3, @2)); }
+                    | var MODASSIGN expr   { $$ = new ast::AssignVarStatement($1, new ast::Binop($1, token::MOD,   $3, @2)); }
+                    | map BANDASSIGN expr  { $$ = new ast::AssignMapStatement($1, new ast::Binop($1, token::BAND,  $3, @2)); }
+                    | var BANDASSIGN expr  { $$ = new ast::AssignVarStatement($1, new ast::Binop($1, token::BAND,  $3, @2)); }
+                    | map BORASSIGN expr   { $$ = new ast::AssignMapStatement($1, new ast::Binop($1, token::BOR,   $3, @2)); }
+                    | var BORASSIGN expr   { $$ = new ast::AssignVarStatement($1, new ast::Binop($1, token::BOR,   $3, @2)); }
+                    | map BXORASSIGN expr  { $$ = new ast::AssignMapStatement($1, new ast::Binop($1, token::BXOR,  $3, @2)); }
+                    | var BXORASSIGN expr  { $$ = new ast::AssignVarStatement($1, new ast::Binop($1, token::BXOR,  $3, @2)); }
                     ;
 
-tuple_assignment : expr DOT INT "=" expr { error(@1 + @5, "Tuples are immutable once created. Consider creating a new tuple and assigning it instead."); YYERROR; }
-
-int : MINUS INT    { $$ = new ast::Integer((long)(~(unsigned long)($2) + 1), @$); }
+int : MINUS INT    { $$ = new ast::Integer(-1 * $2, @$); }
     | INT          { $$ = new ast::Integer($1, @$); }
     ;
 
@@ -350,9 +330,8 @@ expr : int                                      { $$ = $1; }
      | expr DOT INT                             { $$ = new ast::FieldAccess($1, $3, @3); }
      | expr PTR ident                           { $$ = new ast::FieldAccess(new ast::Unop(token::MUL, $1, @2), $3, @$); }
      | expr "[" expr "]"                        { $$ = new ast::ArrayAccess($1, $3, @2 + @4); }
-     | "(" IDENT ")" expr %prec CAST            { $$ = new ast::Cast($2, false, false, $4, @1 + @3); }
-     | "(" IDENT MUL ")" expr %prec CAST        { $$ = new ast::Cast($2, true, false, $5, @1 + @4); }
-     | "(" IDENT MUL MUL ")" expr %prec CAST    { $$ = new ast::Cast($2, true, true, $6, @1 + @5); }
+     | "(" IDENT ")" expr %prec CAST            { $$ = new ast::Cast($2, false, $4, @1 + @3); }
+     | "(" IDENT MUL ")" expr %prec CAST        { $$ = new ast::Cast($2, true, $5, @1 + @4); }
      | "(" expr "," vargs ")"                   {
                                                   auto args = new ast::ExpressionList;
                                                   args->emplace_back($2);

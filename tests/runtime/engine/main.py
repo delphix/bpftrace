@@ -5,19 +5,14 @@ from datetime import timedelta
 import argparse
 
 from utils import Utils, ok, fail, warn
-from parser import TestParser, UnknownFieldError, RequiredFieldError
+from parser import TestParser
 
 
 def main(test_filter = None):
     if not test_filter:
         test_filter = "*"
 
-    try:
-        test_suite = sorted(TestParser.read_all(test_filter))
-        test_suite = [ (n, sorted(t)) for n, t in test_suite ]
-    except (UnknownFieldError, RequiredFieldError) as error:
-        print(fail(str(error)))
-        exit(1)
+    test_suite = list(TestParser.read_all(test_filter))
 
     total_tests = 0
     for fname, suite_tests in test_suite:

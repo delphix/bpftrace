@@ -52,10 +52,9 @@ discussion to other files in /docs, the /tools/\*\_examples.txt files, or blog p
     - [11. `software`: Pre-defined Software Events](#11-software-pre-defined-software-events)
     - [12. `hardware`: Pre-defined Hardware Events](#12-hardware-pre-defined-hardware-events)
     - [13. `BEGIN`/`END`: Built-in events](#13-beginend-built-in-events)
-    - [14. `watchpoint`/`asyncwatchpoint`: Memory watchpoints](#14-watchpointasyncwatchpoint-memory-watchpoints)
+    - [14. `watchpoint`: Memory watchpoints](#14-watchpoint-memory-watchpoints)
     - [15. `kfunc`/`kretfunc`: Kernel Functions Tracing](#15-kfunckretfunc-kernel-functions-tracing)
     - [16. `kfunc`/`kretfunc`: Kernel Functions Tracing Arguments](#16-kfunckretfunc-kernel-functions-tracing-arguments)
-    - [17. `iter`: Iterators Tracing ](#17-iter-iterators-tracing)
 - [Variables](#variables)
     - [1. Builtins](#1-builtins)
     - [2. `@`, `$`: Basic Variables](#2---basic-variables)
@@ -90,11 +89,6 @@ discussion to other files in /docs, the /tools/\*\_examples.txt files, or blog p
     - [21. `buf()`: Buffers](#21-buf-buffers)
     - [22. `sizeof()`: Size of type or expression](#22-sizeof-size-of-type-or-expression)
     - [23. `print()`: Print Value](#23-print-print-value)
-    - [24. `strftime()`: Formatted timestamp](#24-strftime-formatted-timestamp)
-    - [25. `path()`: Return full path](#25-path-return-full-path)
-    - [26. `uptr()`: Annotate userspace pointer](#26-uptr-annotate-userspace-pointer)
-    - [27. `kptr()`: Annotate kernelspace pointer](#27-kptr-annotate-kernelspace-pointer)
-    - [28. `macaddr()`: Convert MAC address data to text](#28-macaddr-convert-mac-address-data-to-text)
 - [Map Functions](#map-functions)
     - [1. Builtins](#1-builtins-2)
     - [2. `count()`: Count](#2-count-count)
@@ -110,7 +104,6 @@ discussion to other files in /docs, the /tools/\*\_examples.txt files, or blog p
     - [1. `printf()`: Per-Event Output](#1-printf-per-event-output)
     - [2. `interval`: Interval Output](#2-interval-interval-output)
     - [3. `hist()`, `printf()`: Histogram Printing](#3-hist-print-histogram-printing)
-- [BTF Support](#btf-support)
 - [Advanced Tools](#advanced-tools)
 - [Errors](#errors)
 
@@ -144,6 +137,7 @@ OPTIONS:
     -B MODE        output buffering mode ('line', 'full', or 'none')
     -d             debug info dry run
     -dd            verbose debug info dry run
+    -b             force BTF (BPF type format) processing
     -e 'program'   execute this program
     -h             show this help message
     -I DIR         add the specified DIR to the search path for include files.
@@ -151,7 +145,6 @@ OPTIONS:
     -l [search]    list probes
     -p PID         enable USDT probes on PID
     -c 'CMD'       run CMD and enable USDT probes on resulting process
-    -q             keep messages quiet
     -v             verbose messages
     -k             emit a warning when a bpf helper returns an error (except read functions)
     -kk            check all bpf helper functions
@@ -305,6 +298,7 @@ If BTF is available, it is also possible to list struct/union/emum definitions. 
 
 ```
 # bpftrace -lv "struct path"
+BTF: using data from /sys/kernel/btf/vmlinux
 struct path {
         struct vfsmount *mnt;
         struct dentry *dentry;
@@ -371,7 +365,7 @@ The `-v` option prints more information about the program as it is run:
 # bpftrace -v -e 'tracepoint:syscalls:sys_enter_nanosleep { printf("%s is sleeping.\n", comm); }'
 Attaching 1 probe...
 
-The verifier log:
+Bytecode:
 0: (bf) r6 = r1
 1: (b7) r1 = 0
 2: (7b) *(u64 *)(r10 -24) = r1
@@ -407,7 +401,7 @@ iscsid is sleeping.
 [...]
 ```
 
-This includes `The verifier log:` and then the log message from the in-kernel vertifier.
+This includes `Bytecode:` and then the eBPF bytecode after it was compiled from the llvm assembly.
 
 ## 7. Preprocessor Options
 
@@ -437,7 +431,7 @@ being executed.
 
 ```
 # bpftrace --include linux/path.h --include linux/dcache.h \
-    -e 'kprobe:vfs_open { printf("open path: %s\n", str(((struct path *)arg0)->dentry->d_name.name)); }'
+    -e 'kprobe:vfs_open { printf("open path: %s\n", str(((path *)arg0)->dentry->d_name.name)); }'
 Attaching 1 probe...
 open path: .com.google.Chrome.ASsbu2
 open path: .com.google.Chrome.gimc10
@@ -447,14 +441,12 @@ open path: .com.google.Chrome.R1234s
 
 ## 8. Other Options
 
-- The `--version` option prints the bpftrace version:
+The `--version` option prints the bpftrace version:
 
 ```
 # bpftrace --version
 bpftrace v0.8-90-g585e-dirty
 ```
-
-- The `--no-warnings` option disables warnings.
 
 ## 9. Environment Variables
 
@@ -812,7 +804,7 @@ The `return` keyword is used to exit the current probe. This differs from
 
 N-tuples are supported, where N is any integer greater than 1.
 
-Indexing is supported using the `.` operator. Tuples are immutable once created.
+Indexing is supported using the `.` operator.
 
 Example:
 
@@ -838,9 +830,6 @@ Attaching 1 probe...
 
 Some probe types allow wildcards to match multiple probes, eg, `kprobe:vfs_*`. You may also specify
 multiple attach points for an action block using a comma separated list.
-
-Quoted strings (eg. `uprobe:"/usr/lib/c++lib.so":foo`) may be used to escape
-characters in attach point definitions.
 
 ## 1. `kprobe`/`kretprobe`: Dynamic Tracing, Kernel-Level
 
@@ -983,7 +972,13 @@ open path: interrupts
 [...]
 ```
 
-See [BTF Support](#btf-support) for more details.
+Requirements for using BTF:
+
+- Linux 4.18+ with `CONFIG_DEBUG_INFO_BTF=y`
+    - Building requires dwarves with pahole v1.13+
+- bpftrace v0.9.3+ with BTF support (built with libbpf v0.0.4+)
+
+See [kernel documentation](https://www.kernel.org/doc/html/latest/bpf/btf.html) for more information on BTF.
 
 Examples in situ:
 [(kprobe) search /tools](https://github.com/iovisor/bpftrace/search?q=kprobe%3A+path%3Atools&type=Code)
@@ -1226,7 +1221,7 @@ usdt:library_path:probe_name
 usdt:library_path:[probe_namespace]:probe_name
 ```
 
-Where `probe_namespace` is optional if `probe_name` is unique within the binary.
+Where the `probe_namespace` is optional, and will default to the basename of the binary or library path.
 
 Examples:
 
@@ -1241,43 +1236,25 @@ hi
 ^C
 ```
 
-The namespace of the probe is deduced automatically. If the binary `/root/tick` contained multiple probes
-with the name `loop` (e.g. `tick:loop` and `tock:loop`), no probe would be attached.
-This may be solved by manually specifying the namespace or by using a wildcard:
+The basename of a path will be used for the namespace of a probe. If it doesn't match, the probe won't be
+found. In this example, the function name `loop` is in the namespace `tick`. If we rename the binary to
+`tock`, it won't be found:
 
 ```
-# bpftrace -e 'usdt:/root/tick:loop { printf("hi\n"); }'
-ERROR: namespace for usdt:/root/tick:loop not specified, matched 2 probes
-INFO: please specify a unique namespace or use '*' to attach to all matched probes
-No probes to attach
-
-# bpftrace -e 'usdt:/root/tick:tock:loop { printf("hi\n"); }'
+mv /root/tick /root/tock
+bpftrace -e 'usdt:/root/tock:loop { printf("hi\n"); }'
 Attaching 1 probe...
-hi
-hi
-^C
-
-# bpftrace -e 'usdt:/root/tick:*:loop { printf("hi\n"); }'
-Attaching 2 probes...
-hi
-hi
-hi
-hi
-^C
+Error finding location for probe: usdt:/root/tock:loop
 ```
 
-bpftrace also supports USDT semaphores. If both your environment and bpftrace
-support uprobe refcounts, then USDT semaphores are automatically activated for
-all processes upon probe attachment (and `--usdt-file-activation` becomes a
-noop). You can check if your system supports uprobe refcounts by running:
+The probe namespace can be manually specified, between the path and probe function name. This allows for
+the probe to be found, regardless of the name of the binary:
 
 ```
-# bpftrace --info 2>&1 | grep "uprobe refcount"
-  bcc bpf_attach_uprobe refcount: yes
-  uprobe refcount (depends on Build:bcc bpf_attach_uprobe refcount): yes
+bpftrace -e 'usdt:/root/tock:tick:loop { printf("hi\n"); }'
 ```
 
-If your system does not support uprobe refcounts, you may activate semaphores by passing in `-p $PID` or
+bpftrace also supports USDT semaphores. You may activate semaphores by passing in `-p $PID` or
 `--usdt-file-activation`. `--usdt-file-activation` looks through `/proc` to find processes that
 have your probe's binary mapped with executable permissions into their address space and then tries
 to attach your probe. Note that file activation occurs only once (during attach time). In other
@@ -1473,97 +1450,30 @@ Examples in situ:
 [(BEGIN) search /tools](https://github.com/iovisor/bpftrace/search?q=BEGIN+extension%3Abt+path%3Atools&type=Code)
 [(END) search /tools](https://github.com/iovisor/bpftrace/search?q=END+extension%3Abt+path%3Atools&type=Code)
 
-## 14. `watchpoint`/`asyncwatchpoint`: Memory watchpoints
+## 14. `watchpoint`: Memory watchpoints
 
-**WARNING**: this feature is experimental and may be subject to interface changes. Memory watchpoints are
-also architecture dependant
+**WARNING**: this feature is experimental and may be subject to interface changes.
 
 Syntax:
 
 ```
-watchpoint:absolute_address:length:mode
-watchpoint:function+argN:length:mode
+watchpoint::hex_address:length:mode
 ```
 
 These are memory watchpoints provided by the kernel. Whenever a memory address is written to (`w`), read
-from (`r`), or executed (`x`), the kernel can generate an event.
-
-In the first form, an absolute address is monitored. If a pid (`-p`) or a command (`-c`) is provided,
-bpftrace takes the address as a userspace address and monitors the appropriate process. If not,
-bpftrace takes the address as a kernel space address.
-
-In the second form, the address present in `argN` (see [uprobe
-arguments](#4-uprobeuretprobe-dynamic-tracing-user-level-arguments)) when `function` is entered is
-monitored. A pid or command must be provided for this form. If synchronous (`watchpoint`), a
-`SIGSTOP` is sent to the tracee upon function entry. The tracee will be `SIGCONT`d after the
-watchpoint is attached. This is to ensure events are not missed. If you want to avoid the
-`SIGSTOP` + `SIGCONT` use `asyncwatchpoint`.
-
-Note that on most architectures you may not monitor for execution while monitoring read or write.
+from (`r`), or executed (`x`), the kernel can generate an event. Note that a pid (`-p`) or a command
+(`-c`) must be provided to bpftrace. Also note you may not monitor for execution while monitoring read or
+write.
 
 Examples:
 
 ```
-bpftrace -e 'watchpoint:0x10000000:8:rw { printf("hit!\n"); exit(); }' -c ./testprogs/watchpoint
+bpftrace -e 'watchpoint::0x10000000:8:rw { printf("hit!\n"); }' -c ~/binary
 ```
-
-It will output "hit" and exit when the watchpoint process is trying to read or write 0x10000000.
-
-```
-# bpftrace -e "watchpoint:0x$(awk '$3 == "jiffies" {print $1}' /proc/kallsyms):8:w {@[kstack] = count();}"
-Attaching 1 probe...
-^C
-......
-@[
-    do_timer+12
-    tick_do_update_jiffies64.part.22+89
-    tick_sched_do_timer+103
-    tick_sched_timer+39
-    __hrtimer_run_queues+256
-    hrtimer_interrupt+256
-    smp_apic_timer_interrupt+106
-    apic_timer_interrupt+15
-    cpuidle_enter_state+188
-    cpuidle_enter+41
-    do_idle+536
-    cpu_startup_entry+25
-    start_secondary+355
-    secondary_startup_64+164
-]: 319
-```
-
-It shows the kernel stacks in which jiffies is updated.
-
-```
-# cat wpfunc.c
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-
-__attribute__((noinline))
-void increment(__attribute__((unused)) int _, int *i)
-{
-  (*i)++;
-}
-
-int main()
-{
-  int *i = malloc(sizeof(int));
-  while (1)
-  {
-    increment(0, i);
-    (*i)++;
-    usleep(1000);
-  }
-}
-
-# bpftrace -e 'watchpoint:increment+arg1:4:w { printf("hit!\n"); exit() }' -c ./wpfunc
-```
-
-bpftrace will output "hit" and exit when the memory pointed to by `arg1` of `increment` is
-written.
 
 ## 15. `kfunc`/`kretfunc`: Kernel Functions Tracing
+
+**WARNING**: this feature is experimental and may be subject to interface changes.
 
 Syntax:
 
@@ -1643,120 +1553,6 @@ fd 3 name libselinux.so.1
 ```
 And as you can see in above example it's also possible to access function arguments on `kretfunc` probes.
 
-## 17. `iter`: Iterators Tracing
-
-**WARNING**: this feature is experimental and may be subject to interface changes.
-
-Syntax:
-
-```
-iter:task[:pin]
-iter:task_file[:pin]
-```
-
-Kernel: 5.4
-
-These are eBPF iterator probes, that allows iteration over kernel objects.
-
-Iterator probe can't be mixed with any other probe, not even other iterator.
-
-Each iterator probe provides set of fields that could be accessed with
-ctx pointer. User can display set of available fields for iterator via
--lv options as described below.
-
-Examples:
-
-```
-# bpftrace -e 'iter:task { printf("%s:%d\n", ctx->task->comm, ctx->task->pid); }'
-Attaching 1 probe...
-systemd:1
-kthreadd:2
-rcu_gp:3
-rcu_par_gp:4
-kworker/0:0H:6
-mm_percpu_wq:8
-...
-
-# bpftrace -e 'iter:task_file { printf("%s:%d %d:%s\n", ctx->task->comm, ctx->task->pid, ctx->fd, path(ctx->file->f_path)); }'
-Attaching 1 probe...
-systemd:1 1:/dev/null
-systemd:1 2:/dev/null
-systemd:1 3:/dev/kmsg
-...
-su:1622 1:/dev/pts/1
-su:1622 2:/dev/pts/1
-su:1622 3:/var/lib/sss/mc/passwd
-...
-bpftrace:1892 1:pipe:[35124]
-bpftrace:1892 2:/dev/pts/1
-bpftrace:1892 3:anon_inode:bpf-map
-bpftrace:1892 4:anon_inode:bpf-map
-bpftrace:1892 5:anon_inode:bpf_link
-bpftrace:1892 6:anon_inode:bpf-prog
-bpftrace:1892 7:anon_inode:bpf_iter
-```
-
-You can get list of available functions via list option:
-
-```
-# bpftrace -l iter:*
-iter:task
-iter:task_file
-
-# bpftrace -l iter:* -v
-iter:task
-    struct task_struct *task;
-iter:task_file
-    struct task_struct *task;
-    int fd;
-    struct file *file;
-```
-
-It's possible to pin iterator with specifying optional probe ':pin' part,
-that defines the pin file. It can be specified as absolute path or relative
-to /sys/fs/bpf.
-
-Examples with relative pin file:
-
-```
-# bpftrace -e 'iter:task:list { printf("%s:%d\n", ctx->task->comm, ctx->task->pid); }'
-Attaching 1 probe...
-Program pinned to /sys/fs/bpf/list
-
-
-# cat /sys/fs/bpf/list
-systemd:1
-kthreadd:2
-rcu_gp:3
-rcu_par_gp:4
-kworker/0:0H:6
-mm_percpu_wq:8
-rcu_tasks_kthre:9
-...
-```
-
-Examples with absolute pin file:
-
-```
-# bpftrace -e 'iter:task_file:/sys/fs/bpf/files { printf("%s:%d %s\n", ctx->task->comm, ctx->task->pid, path(ctx->file->f_path)); }'
-Attaching 1 probe...
-Program pinned to /sys/fs/bpf/files
-
-# cat /sys/fs/bpf/files
-systemd:1 anon_inode:inotify
-systemd:1 anon_inode:[timerfd]
-...
-systemd-journal:849 /dev/kmsg
-systemd-journal:849 anon_inode:[eventpoll]
-...
-sssd:1146 /var/log/sssd/sssd.log
-sssd:1146 anon_inode:[eventpoll]
-...
-NetworkManager:1155 anon_inode:[eventfd]
-NetworkManager:1155 /var/lib/sss/mc/passwd (deleted)
-
-```
-
 # Variables
 
 ## 1. Builtins
@@ -1766,7 +1562,7 @@ NetworkManager:1155 /var/lib/sss/mc/passwd (deleted)
 - `uid` - User ID
 - `gid` - Group ID
 - `nsecs` - Nanosecond timestamp
-- `elapsed` - Nanoseconds since bpftrace initialization
+- `elapsed` - Nanosecond timestamp since bpftrace initialization
 - `cpu` - Processor ID
 - `comm` - Process name
 - `kstack` - Kernel stack trace
@@ -2053,26 +1849,18 @@ be used as a string in the `str()` call. If a parameter is used that was not pro
 zero for numeric context, and "" for string context. Positional parameters may also be used in probe
 argument and will be treated as a string parameter.
 
-If a positional parameter is used in `str()`, it is interpreted as a pointer to the actual given string
-literal, which allows to do pointer arithmetic on it. Only addition of a single constant, less or equal to
-the length of the supplied string, is allowed.
-
 `$#` returns the number of positional arguments supplied.
 
 This allows scripts to be written that use basic arguments to change their behavior. If you develop a
 script that requires more complex argument processing, it may be better suited for bcc instead, which
 supports Python's argparse and completely custom argument processing.
 
-One-liner examples:
+One-liner example:
 
 ```
 # bpftrace -e 'BEGIN { printf("I got %d, %s (%d args)\n", $1, str($2), $#); }' 42 "hello"
 Attaching 1 probe...
 I got 42, hello (2 args)
-
-# bpftrace -e 'BEGIN { printf("%s\n", str($1 + 1)) }' "hello"
-Attaching 1 probe...
-ello
 ```
 
 Script example, bsize.d:
@@ -2150,14 +1938,6 @@ Tracing block I/O sizes > 0 bytes
 - `signal(char[] signal | u32 signal)` - Send a signal to the current task
 - `strncmp(char *s1, char *s2, int length)` - Compare first n characters of two strings
 - `override(u64 rc)` - Override return value
-- `buf(void *d [, length])` - Hex-format a buffer
-- `sizeof(...)` - Return size of a type or expression
-- `print(...)` - Print a non-map value with default formatting
-- `strftime(char *format, int nsecs)` - Return a formatted timestamp
-- `path(struct path *path)` - Return full path
-- `uptr(void *p)` - Annotate as userspace pointer
-- `kptr(void *p)` - Annotate as kernelspace pointer
-- `macaddr(char[6] addr)` - Convert MAC address data
 
 Some of these are asynchronous: the kernel queues the event, but some time later (milliseconds) it is
 processed in user-space. The asynchronous actions are: `printf()`, `time()`, and `join()`. Both `ksym()`
@@ -2201,11 +1981,6 @@ This prints the current time using the format string supported by libc `strftime
 
 If a format string is not provided, it defaults to "%H:%M:%S\n".
 
-Note that this builtin is asynchronous. The printed timestamp is the time at
-which userspace has processed the queued up event, _not_ the time at which the
-bpf prog calls `time()`. For a more precise timestamp, see
-[strftime()](#24-strftime-formatted-timestamp).
-
 ## 4. `join()`: Join
 
 Syntax: `join(char *arr[] [, char *delim])`
@@ -2247,7 +2022,7 @@ Syntax: `str(char *s [, int length])`
 
 Returns the string pointed to by s. `length` can be used to limit the size of the read, and/or introduce
 a null-terminator. By default, the string will have size 64 bytes (tuneable using [env var
-`BPFTRACE_STRLEN`](#91-bpftrace_strlen)).
+`BPFTRACE_STRLEN`](#7-env-bpftrace_strlen)).
 
 Examples:
 
@@ -2848,7 +2623,7 @@ Syntax: `buf(void *d [, int length])`
 Returns a hex-formatted string of the data pointed to by `d` that is safe to print. Because the
 length of the buffer cannot always be inferred, the `length` parameter may be provided to
 limit the number of bytes that are read. By default, the maximum number of bytes is 64, but this can
-be tuned using the [`BPFTRACE_STRLEN`](#91-bpftrace_strlen) environment variable.
+be tuned using the [`BPFTRACE_STRLEN`](#7-env-bpftrace_strlen) environment variable.
 
 For example, we can take the `buff` parameter (`void *`) of `sys_enter_sendto`, read the
 number of bytes specified by `len` (`size_t`), and format the bytes in hexadecimal so that
@@ -2893,7 +2668,7 @@ Attaching 1 probe...
 Attaching 1 probe...
 8
 
-# bpftrace -e 'BEGIN { printf("%d\n", sizeof(struct task_struct)); }'
+# bpftrace --btf -e 'BEGIN { printf("%d\n", sizeof(struct task_struct)); }'
 Attaching 1 probe...
 13120
 
@@ -2926,104 +2701,6 @@ contains the memcopy'd value so the value at `print()` invocation time will be
 printed.  However for maps, only the handle to the map is queued up, so the
 printed map may be different than the map at `print()` invocation.
 
-## 24. `strftime()`: Formatted timestamp
-
-Syntax:
-- `strftime(const char *format, int nsecs)`
-
-This returns a formatted timestamp that is printable with `printf`. The format
-string must be supported by `strftime(3)`. `nsecs` is nanoseconds since boot,
-typically derived from [nsecs](#6-nsecs-timestamps-and-time-deltas).
-
-Use format specifier "%s" when printing the return value. Note that `strftime`
-does not actually return a string in bpf (kernel), the formatting happens in
-userspace.
-
-Examples:
-
-```
-# bpftrace -e 'i:s:1 { printf("%s\n", strftime("%H:%M:%S", nsecs)); }'
-Attaching 1 probe...
-13:11:22
-13:11:23
-13:11:24
-13:11:25
-13:11:26
-^C
-```
-
-## 25. `path()`: Return full path
-
-Syntax:
-- `path(struct path *path)`
-
-Return full path referenced by struct path pointer in argument.
-There's list of allowed kernel functions, that can use this
-helper in probe.
-
-Examples:
-```
-# bpftrace  -e 'kfunc:filp_close { printf("%s\n", path(args->filp->f_path)); }'
-Attaching 1 probe...
-/proc/sys/net/ipv6/conf/eno2/disable_ipv6
-/proc/sys/net/ipv6/conf/eno2/use_tempaddr
-socket:[23276]
-/proc/sys/net/ipv6/conf/eno2/disable_ipv6
-socket:[17655]
-/sys/devices/pci0000:00/0000:00:1c.5/0000:04:00.1/net/eno2/type
-socket:[38745]
-/proc/sys/net/ipv6/conf/eno2/disable_ipv6
-
-# bpftrace  -e 'kretfunc:dentry_open { printf("%s\n", path(retval->f_path)); }'
-Attaching 1 probe...
-/dev/pts/1 -> /dev/pts/1
-```
-
-## 26. `uptr()`: Annotate userspace pointer
-
-Syntax:
-- `uptr(void *p)`
-
-Annotate `p` as a pointer belonging to userspace address space.
-
-bpftrace can usually infer the address space of a pointer. However, there are
-corner cases where inference fails. For example, kernel functions that deal
-with userspace pointers (a parameter like `const char __user *p`). In these
-cases, you'll need to annotate the pointer.
-
-Examples:
-
-```
-# bpftrace -e 'kprobe:do_sys_open { printf("%s\n", str(uptr(arg1))) }'
-Attaching 1 probe...
-.
-state
-^C
-```
-
-## 27. `kptr()`: Annotate kernelspace pointer
-
-Syntax:
-- `kptr(void *p)`
-
-Annotate `p` as a pointer belonging to kernel address space.
-
-Just like `uptr`, you'll generally only need this if bpftrace has inferred the
-pointer address space incorrectly.
-
-## 28. `macaddr()`: Convert MAC address data to text
-
-Syntax: `macaddr(char[6] addr)`
-
-This returns the canonical string representation of a MAC address.
-
-Example:
-
-```
-# bpftrace -e 'kprobe:arp_create { printf("SRC %s, DST %s\n", macaddr(sarg0), macaddr(sarg1)); }'
-SRC 18:C0:4D:08:2E:BB, DST 74:83:C2:7F:8C:FF
-^C
-```
 
 # Map Functions
 
@@ -3451,25 +3128,6 @@ Histograms can also be printed on-demand, using the `print()` function. Eg:
 
 [...]
 ```
-
-# BTF Support
-
-If kernel has BTF, kernel types are automatically available and there is no need to include additional headers
-to use them.
-
-Requirements for using BTF:
-
-- Linux 4.18+ with `CONFIG_DEBUG_INFO_BTF=y`
-    - Building requires dwarves with pahole v1.13+
-- bpftrace v0.9.3+ with BTF support (built with libbpf v0.0.4+)
-
-See [kernel documentation](https://www.kernel.org/doc/html/latest/bpf/btf.html) for more information on BTF.
-
-Beware that BTF types are not available to a bpftrace program if it contains a user-defined type that
-redefines some BTF type. Here, "user-defined types" are also types introduced via included headers.
-Therefore, if you include a kernel header in your bpftrace program, it is very likely that it will define some
-kernel type and that BTF won't be available to your program (and you'll have to define/include all necessary
-types manually).
 
 # Advanced Tools
 

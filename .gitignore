@@ -2,4 +2,3 @@ build/
 build-*/
 tests/runtime/*.pyc
 .vagrant
-tests/**/*.bc

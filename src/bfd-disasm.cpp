@@ -1,5 +1,7 @@
+#include <cstdlib>
+#include <cstring>
 #include <fcntl.h>
-#include <memory>
+#include <iostream>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -7,7 +9,6 @@
 // PACKAGE is defined. Some distros patch this check out.
 #define PACKAGE "bpftrace"
 #include "bfd-disasm.h"
-#include "utils.h"
 #include <bcc/bcc_elf.h>
 #include <bcc/bcc_syms.h>
 #include <bfd.h>
@@ -33,6 +34,18 @@ BfdDisasm::~BfdDisasm()
     close(fd_);
 }
 
+static void get_exec_path(char *tpath, size_t size)
+{
+  const char *path = "/proc/self/exe";
+  ssize_t len;
+
+  len = readlink(path, tpath, size - 1);
+  if (len < 0)
+    len = 0;
+
+  tpath[len] = 0;
+}
+
 static int fprintf_nop(void *out __attribute__((unused)), const char *fmt __attribute__((unused)), ...)
 {
   return 0;
@@ -42,11 +55,13 @@ static AlignState is_aligned_buf(void *buf, uint64_t size, uint64_t offset)
 {
   disassembler_ftype disassemble;
   struct disassemble_info info;
-  std::string tpath = get_pid_exe("self");
+  char tpath[4096];
   bfd *bfdf;
 
-  bfdf = bfd_openr(tpath.c_str(), nullptr);
-  if (bfdf == nullptr)
+  get_exec_path(tpath, sizeof(tpath));
+
+  bfdf = bfd_openr(tpath, NULL);
+  if (bfdf == NULL)
     return AlignState::Fail;
 
   if (!bfd_check_format(bfdf, bfd_object))
@@ -97,17 +112,26 @@ AlignState BfdDisasm::is_aligned(uint64_t offset, uint64_t pc)
   AlignState aligned = AlignState::Fail;
   // 100 bytes should be enough to cover next instruction behind pc
   uint64_t size = std::min(pc + 100, size_);
-  auto buf = std::make_unique<char[]>(size);
+  void *buf;
 
   if (fd_ < 0)
     return aligned;
 
-  uint64_t sz = pread(fd_, buf.get(), size, offset);
+  buf = malloc(size);
+  if (!buf) {
+    perror("malloc failed");
+    return aligned;
+  }
+
+  uint64_t sz;
+
+  sz = pread(fd_, buf, size, offset);
   if (sz == size)
-    aligned = is_aligned_buf(buf.get(), size, pc);
+    aligned = is_aligned_buf(buf, size, pc);
   else
     perror("pread failed");
 
+  free(buf);
   return aligned;
 }
 

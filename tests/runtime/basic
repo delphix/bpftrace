@@ -15,7 +15,7 @@ TIMEOUT 1
 
 NAME errors on non existent file
 RUN bpftrace non_existent_file.bt
-EXPECT ERROR: failed to open file 'non_existent_file.bt': No such file or directory
+EXPECT Error opening file 'non_existent_file.bt': No such file or directory
 TIMEOUT 1
 
 NAME piped script
@@ -43,36 +43,9 @@ RUN bpftrace -l | grep hardware
 EXPECT hardware
 TIMEOUT 1
 
-NAME it lists kfuncs
-RUN bpftrace -l | grep kfunc
-EXPECT kfunc
-REQUIRES_FEATURE btf
-TIMEOUT 1
-
-NAME it lists kfunc params
-RUN bpftrace -lv "kfunc:*" | grep kfunc
-EXPECT \s+[a-zA-Z_\*\s]+
-REQUIRES_FEATURE btf
-TIMEOUT 1
-
 NAME it lists kprobes with regex filter
 RUN bpftrace -l "kprobe:*"
 EXPECT kprobe:
-TIMEOUT 1
-
-NAME it lists kretprobes with regex filter
-RUN bpftrace -l "kretprobe:*"
-EXPECT kretprobe:
-TIMEOUT 1
-
-NAME it lists uprobes with regex filter
-RUN bpftrace -l "uprobe:./testprogs/syscall:*"
-EXPECT uprobe:
-TIMEOUT 1
-
-NAME it lists uretprobes with regex filter
-RUN bpftrace -l "uretprobe:./testprogs/syscall:*"
-EXPECT uretprobe:
 TIMEOUT 1
 
 NAME it lists tracepoints with regex filter
@@ -90,27 +63,9 @@ RUN bpftrace -l "hardware:*"
 EXPECT hardware
 TIMEOUT 1
 
-NAME it lists kfuncs events with regex filter
-RUN bpftrace -l "kfunc:*"
-EXPECT kfunc
-REQUIRES_FEATURE btf
-TIMEOUT 1
-
-NAME it lists kretfuncs events with regex filter
-RUN bpftrace -l "kretfunc:*"
-EXPECT kretfunc
-REQUIRES_FEATURE btf
-TIMEOUT 1
-
-NAME listing with wildcarded probe type
-RUN bpftrace -l "*ware:*"
-EXPECT hardware:
-EXPECT software:
-TIMEOUT 1
-
 NAME errors on invalid character in search expression
 RUN bpftrace -l '\n'
-EXPECT ERROR: invalid character
+EXPECT ERROR: invalid character in search expression
 TIMEOUT 1
 
 NAME pid fails validation with leading non-number
@@ -148,26 +103,6 @@ RUN bpftrace -e "$(echo '#define _UNDERSCORE 314'; echo 'BEGIN { printf("%d\\n",
 EXPECT 314
 TIMEOUT 1
 
-NAME clear map
-RUN bpftrace -e 'BEGIN { @ = 1; @a[1] = 1; clear(@); clear(@a); printf("ok\n"); exit(); }'
-EXPECT ok
-TIMEOUT 1
-
-NAME clear count-map
-RUN bpftrace -e 'BEGIN { @ = count(); @a[1] = count(); clear(@); clear(@a); exit(); }'
-EXPECT @: 0
-TIMEOUT 1
-
-NAME delete map
-RUN bpftrace -e 'BEGIN { @ = 1; @a[1] = 1; delete(@); delete(@a[1]); printf("ok\n"); exit(); }'
-EXPECT ok
-TIMEOUT 1
-
-NAME delete count-map
-RUN bpftrace -e 'BEGIN { @ = count(); @a[1] = count(); delete(@); delete(@a[1]); exit(); }'
-EXPECT @: 0
-TIMEOUT 1
-
 NAME increment/decrement map
 RUN bpftrace -e 'BEGIN { @x = 10; printf("%d", @x++); printf(" %d", ++@x); printf(" %d", @x--); printf(" %d\n", --@x); delete(@x); exit(); }'
 EXPECT 10 12 12 10
@@ -192,9 +127,21 @@ NAME basic while loop
 RUN bpftrace -e 'BEGIN { $a = 0; while ($a <= 100) { @=avg($a++) } exit(); }'
 EXPECT @: 50
 TIMEOUT 5
-REQUIRES_FEATURE loop
+REQUIRES bpftrace --info 2>&1 | grep "Loop support: yes"
 
-NAME disable warnings
-RUN bpftrace --no-warnings -e 'BEGIN { @x = stats(10); print(@x, 2); clear(@x); exit();}' 2>&1| grep -c -E "WARNING|invalid option"
-EXPECT ^0$
-TIMEOUT 1
+NAME basic tuple
+RUN bpftrace -e 'BEGIN { $v = 99; $t = (0, 1, "str", (5, 6), $v); printf("%d %d %s %d %d %d\n", $t.0, $t.1, $t.2, $t.3.0, $t.3.1, $t.4); exit(); }'
+EXPECT 0 1 str 5 6 99
+TIMEOUT 5
+
+NAME basic tuple map
+RUN bpftrace -e 'BEGIN { $v = 99; @t = (0, 1, "str"); printf("%d %d %s\n", @t.0, @t.1, @t.2); exit(); }'
+EXPECT 0 1 str
+TIMEOUT 5
+
+# Careful with '(' and ')', they are read by the test engine as a regex group,
+# so make sure to escape them.
+NAME tuple print
+RUN bpftrace -e 'BEGIN { @ = (1, 2, "string", (4, 5)); exit(); }'
+EXPECT ^@: \(1, 2, string, \(4, 5\)\)$
+TIMEOUT 5

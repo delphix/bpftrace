@@ -9,21 +9,12 @@
 namespace bpftrace {
 namespace ast {
 
-void Printer::print(Node *root)
-{
-  depth_ = 0;
-  Visit(root);
-}
-
 std::string Printer::type(const SizedType &ty)
 {
   std::stringstream buf;
   if (print_types)
   {
-    buf << " :: type[" << ty << ", ctx: " << ty.IsCtxAccess();
-    if (ty.GetAS() != AddrSpace::none)
-      buf << ", AS(" << ty.GetAS() << ")";
-    buf << "]";
+    buf << " :: type[" << ty << "]";
   }
   return buf.str();
 }

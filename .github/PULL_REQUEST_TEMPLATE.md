@@ -8,4 +8,3 @@ Then please complete the checklist.
 
 - [ ] Language changes are updated in `docs/reference_guide.md`
 - [ ] User-visible and non-trivial changes updated in `CHANGELOG.md`
-- [ ] The new behaviour is covered by tests

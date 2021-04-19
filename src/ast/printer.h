@@ -1,20 +1,17 @@
 #pragma once
 
-#include "visitors.h"
 #include <ostream>
+#include "ast.h"
 
 namespace bpftrace {
 namespace ast {
 
-class Printer : public ASTVisitor
-{
+class Printer : public Visitor {
 public:
   explicit Printer(std::ostream &out, bool print_types = false)
       : out_(out), print_types(print_types)
   {
   }
-
-  void print(Node *root);
 
   void visit(Integer &integer) override;
   void visit(PositionalParameter &param) override;
@@ -49,7 +46,6 @@ public:
 private:
   std::ostream &out_;
   bool print_types = false;
-
   std::string type(const SizedType &ty);
 };
 

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 ## Don't add to this
-IGNORE="LLVM-"
+IGNORE="(_LLVM|printf|(builtin_func_1|builtin_func_uprobe_2|call_buf_implicit_size|call_buf_size_literal|call_buf_size_nonliteral|call_print_non_map).ll)"
 EXIT=0
 
 LLVM=$(command -v llvm-as-7)

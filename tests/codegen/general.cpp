@@ -44,16 +44,17 @@ TEST(codegen, populate_sections)
   Driver driver(bpftrace);
 
   ASSERT_EQ(driver.parse_str("kprobe:foo { 1 } kprobe:bar { 1 }"), 0);
-  // Override to mockbpffeature.
-  bpftrace.feature_ = std::make_unique<MockBPFfeature>(true);
-  ast::SemanticAnalyser semantics(driver.root_, bpftrace);
+  MockBPFfeature feature;
+  ast::SemanticAnalyser semantics(driver.root_, bpftrace, feature);
   ASSERT_EQ(semantics.analyse(), 0);
   std::stringstream out;
   ast::CodegenLLVM codegen(driver.root_, bpftrace);
   auto bpforc = codegen.compile();
 
-  EXPECT_TRUE(bpforc->getSection("s_kprobe:foo_1").has_value());
-  EXPECT_TRUE(bpforc->getSection("s_kprobe:bar_1").has_value());
+  // Check sections are populated
+  EXPECT_EQ(bpforc->sections_.size(), 2U);
+  EXPECT_EQ(bpforc->sections_.count("s_kprobe:foo_1"), 1U);
+  EXPECT_EQ(bpforc->sections_.count("s_kprobe:bar_1"), 1U);
 }
 
 TEST(codegen, printf_offsets)
@@ -65,21 +66,19 @@ TEST(codegen, printf_offsets)
                 "struct Foo { char c; int i; char str[10]; }\n"
                 "kprobe:f\n"
                 "{\n"
-                "  $foo = (struct Foo*)arg0;\n"
+                "  $foo = (struct Foo*)0;\n"
                 "  printf(\"%c %u %s %p\\n\", $foo->c, $foo->i, $foo->str, 0)\n"
                 "}"),
             0);
   ClangParser clang;
   clang.parse(driver.root_, bpftrace);
-
-  // Override to mockbpffeature.
-  bpftrace.feature_ = std::make_unique<MockBPFfeature>(true);
-  ast::SemanticAnalyser semantics(driver.root_, bpftrace);
+  MockBPFfeature feature;
+  ast::SemanticAnalyser semantics(driver.root_, bpftrace, feature);
   ASSERT_EQ(semantics.analyse(), 0);
   ASSERT_EQ(semantics.create_maps(true), 0);
   std::stringstream out;
   ast::CodegenLLVM codegen(driver.root_, bpftrace);
-  codegen.generate_ir();
+  auto bpforc = codegen.compile();
 
   EXPECT_EQ(bpftrace.printf_args_.size(), 1U);
   auto &fmt = std::get<0>(bpftrace.printf_args_[0]);
@@ -92,19 +91,19 @@ TEST(codegen, printf_offsets)
   // Note that scalar types are promoted to 64-bits when put into
   // a perf event buffer
   EXPECT_EQ(args[0].type.type, Type::integer);
-  EXPECT_EQ(args[0].type.GetSize(), 8U);
+  EXPECT_EQ(args[0].type.size, 8U);
   EXPECT_EQ(args[0].offset, 8);
 
   EXPECT_EQ(args[1].type.type, Type::integer);
-  EXPECT_EQ(args[1].type.GetSize(), 8U);
+  EXPECT_EQ(args[1].type.size, 8U);
   EXPECT_EQ(args[1].offset, 16);
 
   EXPECT_EQ(args[2].type.type, Type::string);
-  EXPECT_EQ(args[2].type.GetSize(), 10U);
+  EXPECT_EQ(args[2].type.size, 10U);
   EXPECT_EQ(args[2].offset, 24);
 
   EXPECT_EQ(args[3].type.type, Type::integer);
-  EXPECT_EQ(args[3].type.GetSize(), 8U);
+  EXPECT_EQ(args[3].type.size, 8U);
   EXPECT_EQ(args[3].offset, 40);
 }
 
@@ -116,12 +115,11 @@ TEST(codegen, probe_count)
   Driver driver(bpftrace);
 
   ASSERT_EQ(driver.parse_str("kprobe:f { 1; } kprobe:d { 1; }"), 0);
-  // Override to mockbpffeature.
-  bpftrace.feature_ = std::make_unique<MockBPFfeature>(true);
-  ast::SemanticAnalyser semantics(driver.root_, bpftrace);
+  MockBPFfeature feature;
+  ast::SemanticAnalyser semantics(driver.root_, bpftrace, feature);
   ASSERT_EQ(semantics.analyse(), 0);
   ast::CodegenLLVM codegen(driver.root_, bpftrace);
-  codegen.generate_ir();
+  codegen.compile();
 }
 } // namespace codegen
 } // namespace test

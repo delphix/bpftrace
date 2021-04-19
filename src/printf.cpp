@@ -34,13 +34,11 @@ std::string verify_format_string(const std::string &fmt, std::vector<Field> args
   for (int i=0; i<num_args; i++, token_iter++)
   {
     Type arg_type = args.at(i).type.type;
-    if (arg_type == Type::ksym || arg_type == Type::usym ||
-        arg_type == Type::probe || arg_type == Type::username ||
-        arg_type == Type::kstack || arg_type == Type::ustack ||
-        arg_type == Type::inet || arg_type == Type::timestamp ||
-        arg_type == Type::mac_address)
+    if (arg_type == Type::ksym || arg_type == Type::usym || arg_type == Type::probe ||
+        arg_type == Type::username || arg_type == Type::kstack || arg_type == Type::ustack ||
+        arg_type == Type::inet)
       arg_type = Type::string; // Symbols should be printed as strings
-    if (arg_type == Type::pointer)
+    if (arg_type == Type::cast && args.at(i).type.is_pointer)
       arg_type = Type::integer; // Casts (pointers) can be printed as integers
     int offset = 1;
 
@@ -70,23 +68,19 @@ std::string verify_format_string(const std::string &fmt, std::vector<Field> args
   return "";
 }
 
-int PrintableString::print(char *buf, size_t size, const char *fmt)
+uint64_t PrintableString::value()
 {
-  return snprintf(buf, size, fmt, value_.c_str());
+  return (uint64_t)value_.c_str();
 }
 
-int PrintableCString::print(char *buf, size_t size, const char *fmt)
+uint64_t PrintableCString::value()
 {
-  return snprintf(buf, size, fmt, value_);
+  return (uint64_t)value_;
 }
 
-int PrintableInt::print(char *buf, size_t size, const char *fmt)
+uint64_t PrintableInt::value()
 {
-  return snprintf(buf, size, fmt, value_);
+  return value_;
 }
 
-int PrintableSInt::print(char *buf, size_t size, const char *fmt)
-{
-  return snprintf(buf, size, fmt, value_);
-}
 } // namespace bpftrace

@@ -1,8 +1,6 @@
 #include <cstring>
 
-#include "async_event_types.h"
 #include "bpftrace.h"
-#include "log.h"
 #include "mapkey.h"
 #include "utils.h"
 
@@ -17,7 +15,7 @@ size_t MapKey::size() const
 {
   size_t size = 0;
   for (auto &arg : args_)
-    size += arg.GetSize();
+    size += arg.size;
   return size;
 }
 
@@ -43,7 +41,7 @@ std::vector<std::string> MapKey::argument_value_list(BPFtrace &bpftrace,
   for (const SizedType &arg : args_)
   {
     list.push_back(argument_value(bpftrace, arg, &data[offset]));
-    offset += arg.GetSize();
+    offset += arg.size;
   }
   return list;
 }
@@ -65,7 +63,7 @@ std::string MapKey::argument_value(BPFtrace &bpftrace,
   switch (arg.type)
   {
     case Type::integer:
-      switch (arg.GetSize())
+      switch (arg.size)
       {
         case 1:
           return std::to_string(read_data<int8_t>(data));
@@ -85,11 +83,6 @@ std::string MapKey::argument_value(BPFtrace &bpftrace,
     case Type::ustack:
       return bpftrace.get_stack(
           read_data<uint64_t>(data), true, arg.stack_type, 4);
-    case Type::timestamp:
-    {
-      auto p = static_cast<const AsyncEvent::Strftime *>(data);
-      return bpftrace.resolve_timestamp(p->strftime_id, p->nsecs_since_boot);
-    }
     case Type::ksym:
       return bpftrace.resolve_ksym(read_data<uint64_t>(data));
     case Type::usym:
@@ -105,49 +98,22 @@ std::string MapKey::argument_value(BPFtrace &bpftrace,
     case Type::string:
     {
       auto p = static_cast<const char *>(data);
-      return std::string(p, strnlen(p, arg.GetSize()));
+      return std::string(p, strnlen(p, arg.size));
     }
     case Type::buffer:
     {
       auto p = static_cast<const char *>(data) + 1;
-      return hex_format_buffer(p, arg.GetSize() - 1);
+      return hex_format_buffer(p, arg.size - 1);
     }
-    case Type::pointer:
-    {
-      // use case: show me these pointer values
-      ptr << "0x" << std::hex << read_data<int64_t>(data);
-      return ptr.str();
-    }
-    case Type::array:
-    {
-      std::vector<std::string> elems;
-      for (size_t i = 0; i < arg.GetNumElements(); i++)
-        elems.push_back(argument_value(bpftrace,
-                                       *arg.GetElementTy(),
-                                       (const uint8_t *)data +
-                                           i * arg.GetElementTy()->GetSize()));
-      return "[" + str_join(elems, ",") + "]";
-    }
-    case Type::record:
-    {
-      std::vector<std::string> elems;
-      for (auto &field : bpftrace.structs_[arg.GetName()].fields)
-      {
-        elems.push_back(
-            "." + field.first + "=" +
-            argument_value(bpftrace,
-                           field.second.type,
-                           (const uint8_t *)data + field.second.offset));
+    case Type::cast:
+      if (arg.is_pointer) {
+        // use case: show me these pointer values
+        ptr << "0x" << std::hex << read_data<int64_t>(data);
+        return ptr.str();
       }
-      return "{" + str_join(elems, ",") + "}";
-    }
-    case Type::mac_address:
-    {
-      auto p = static_cast<const uint8_t *>(data);
-      return bpftrace.resolve_mac_address(p);
-    }
+      // fall through
     default:
-      LOG(ERROR) << "invalid mapkey argument type";
+      std::cerr << "invalid mapkey argument type" << std::endl;
   }
   abort();
 }

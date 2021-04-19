@@ -49,8 +49,6 @@ function fix_timestamp() {
     cat $@ | awk '/(add|sub) i64 %get_ns/ { $NF = ""} {print}'
 }
 
-echo "Using version $($BPF_A -V) and $($BPF_B -V)"
-
 for script in ${TOOLDIR}/*.bt; do
     s=$(basename ${script/.bt/})
     echo "Checking $s"
@@ -63,7 +61,6 @@ for script in ${TOOLDIR}/*.bt; do
         continue
     fi
     if [[ $(hash "a_${s}") != $(hash "b_${s}")  ]]; then
-        echo "###############################"
         echo "Change detected for script: ${s}"
         diff -b -u "a_${s}" "b_${s}"
     fi

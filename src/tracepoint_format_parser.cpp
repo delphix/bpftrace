@@ -4,10 +4,9 @@
 #include <iostream>
 
 #include "ast.h"
-#include "bpftrace.h"
-#include "log.h"
 #include "struct.h"
 #include "tracepoint_format_parser.h"
+#include "bpftrace.h"
 
 namespace bpftrace {
 
@@ -27,11 +26,11 @@ bool TracepointFormatParser::parse(ast::Program *program, BPFtrace &bpftrace)
     return true;
 
   ast::TracepointArgsVisitor n{};
-  if (!bpftrace.btf_.has_data())
+  if (!bpftrace.force_btf_)
     program->c_definitions += "#include <linux/types.h>\n";
   for (ast::Probe *probe : probes_with_tracepoint)
   {
-    n.visit(*probe);
+    n.analyse(probe);
 
     for (ast::AttachPoint *ap : *probe->attach_points)
     {
@@ -42,7 +41,16 @@ bool TracepointFormatParser::parse(ast::Program *program, BPFtrace &bpftrace)
         std::string format_file_path = "/sys/kernel/debug/tracing/events/" + category + "/" + event_name + "/format";
         glob_t glob_result;
 
-        if (has_wildcard(category) || has_wildcard(event_name))
+        if (has_wildcard(category))
+        {
+          bpftrace.error(std::cerr,
+                         ap->loc,
+                         "wildcards in tracepoint category is not supported: " +
+                             category);
+          return false;
+        }
+
+        if (has_wildcard(event_name))
         {
           // tracepoint wildcard expansion, part 1 of 3. struct definitions.
           memset(&glob_result, 0, sizeof(glob_result));
@@ -51,49 +59,45 @@ bool TracepointFormatParser::parse(ast::Program *program, BPFtrace &bpftrace)
           {
             if (ret == GLOB_NOMATCH)
             {
-              LOG(ERROR, ap->loc, std::cerr)
-                  << "tracepoints not found: " << category << ":" << event_name;
+              bpftrace.error(std::cerr,
+                             ap->loc,
+                             "tracepoints not found: " + category + ":" +
+                                 event_name);
+
               // helper message:
               if (category == "syscall")
-                LOG(ERROR, ap->loc, std::cerr)
-                    << "Did you mean syscalls:" << event_name << "?";
+                bpftrace.error(std::cerr,
+                               ap->loc,
+                               "Did you mean syscalls:" + event_name + "?");
               if (bt_verbose) {
-                LOG(ERROR) << strerror(errno) << ": " << format_file_path;
+                  std::cerr << strerror(errno) << ": " << format_file_path << std::endl;
               }
               return false;
             }
             else
             {
               // unexpected error
-              LOG(ERROR, ap->loc, std::cerr) << std::string(strerror(errno));
+              bpftrace.error(std::cerr, ap->loc, std::string(strerror(errno)));
               return false;
             }
           }
 
-          if (probe->tp_args_structs_level <= 0)
-          {
-            globfree(&glob_result);
+          if (!probe->need_tp_args_structs)
             continue;
-          }
 
           for (size_t i = 0; i < glob_result.gl_pathc; ++i) {
             std::string filename(glob_result.gl_pathv[i]);
             std::ifstream format_file(filename);
-            std::string prefix("/sys/kernel/debug/tracing/events/");
-            size_t pos = prefix.length();
-            std::string real_category = filename.substr(
-                pos, filename.find('/', pos) - pos);
-            pos = prefix.length() + real_category.length() + 1;
-            std::string real_event = filename.substr(
-                pos, filename.length() - std::string("/format").length() - pos);
+            std::string prefix("/sys/kernel/debug/tracing/events/" + category + "/");
+            std::string real_event = filename.substr(prefix.length(),
+                    filename.length() - std::string("/format").length() - prefix.length());
 
             // Check to avoid adding the same struct more than once to definitions
-            std::string struct_name = get_struct_name(real_category,
-                                                      real_event);
+            std::string struct_name = get_struct_name(category, real_event);
             if (!TracepointFormatParser::struct_list.count(struct_name))
             {
               program->c_definitions += get_tracepoint_struct(
-                  format_file, real_category, real_event, bpftrace);
+                  format_file, category, real_event, bpftrace);
               TracepointFormatParser::struct_list.insert(struct_name);
             }
           }
@@ -105,24 +109,28 @@ bool TracepointFormatParser::parse(ast::Program *program, BPFtrace &bpftrace)
           std::ifstream format_file(format_file_path.c_str());
           if (format_file.fail())
           {
-            // Errno might get clobbered by LOG().
+            // Errno might get clobbered by bpftrace.error and bpftrace.warning.
             int saved_errno = errno;
 
-            LOG(ERROR, ap->loc, std::cerr)
-                << "tracepoint not found: " << category << ":" << event_name;
+            bpftrace.error(std::cerr,
+                           ap->loc,
+                           "tracepoint not found: " + category + ":" +
+                               event_name);
             // helper message:
             if (category == "syscall")
-              LOG(WARNING, ap->loc, std::cerr)
-                  << "Did you mean syscalls:" << event_name << "?";
+              bpftrace.warning(std::cerr,
+                               ap->loc,
+                               "Did you mean syscalls:" + event_name + "?");
             if (bt_verbose) {
               // Having the location info isn't really useful here, so no
               // bpftrace.error
-              LOG(ERROR) << strerror(saved_errno) << ": " << format_file_path;
+              std::cerr << strerror(saved_errno) << ": " << format_file_path
+                        << std::endl;
             }
             return false;
           }
 
-          if (probe->tp_args_structs_level <= 0)
+          if (!probe->need_tp_args_structs)
             continue;
 
           // Check to avoid adding the same struct more than once to definitions
@@ -140,14 +148,6 @@ bool TracepointFormatParser::parse(ast::Program *program, BPFtrace &bpftrace)
 std::string TracepointFormatParser::get_struct_name(const std::string &category, const std::string &event_name)
 {
   return "struct _tracepoint_" + category + "_" + event_name;
-}
-
-std::string TracepointFormatParser::get_struct_name(const std::string &probe_id)
-{
-  // probe_id has format category:event
-  std::string event_name = probe_id;
-  std::string category = erase_prefix(event_name);
-  return get_struct_name(category, event_name);
 }
 
 std::string TracepointFormatParser::parse_field(const std::string &line,
@@ -207,18 +207,19 @@ std::string TracepointFormatParser::parse_field(const std::string &line,
 
   if (field_type.find("__data_loc") != std::string::npos)
   {
-    // Note that the type here (ie `int`) does not matter. Later during parse
-    // time the parser will rewrite this field type to a u64 so that it can
-    // hold the pointer to the actual location of the data.
-    field_type = R"_(__attribute__((annotate("tp_data_loc"))) int)_";
+    field_type = "int";
+    field_name = "data_loc_" + field_name;
   }
 
   // Only adjust field types for non-arrays
   if (field_name.find("[") == std::string::npos)
     field_type = adjust_integer_types(field_type, size);
 
-  // If BTF is available, we try not to use any header files, including
-  // <linux/types.h> and request all the types we need from BTF.
+  // With --btf on, we try not to use any header files, including
+  // <linux/types.h>. That means we must request all the types we need
+  // from BTF. Note we don't need to gate this on --btf because the
+  // expensive type reslution is already gated on --btf (adding to a set
+  // is cheap).
   bpftrace.btf_set_.emplace(field_type);
 
   return extra + "  " + field_type + " " + field_name + ";\n";

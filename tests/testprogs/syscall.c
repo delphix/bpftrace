@@ -15,9 +15,7 @@ void usage()
   printf("\t./syscall <syscall name> [<arguments>]\n");
   printf("Supported Syscalls:\n");
   printf("\t nanosleep [$N] (default args: 100ns)\n");
-#if defined(SYS_open)
   printf("\t open\n");
-#endif
   printf("\t openat\n");
   printf("\t read\n");
   printf("\t execve <path> [<arguments>] (at most 128 arguments)\n");
@@ -84,19 +82,8 @@ int gen_open_openat(bool is_sys_open)
 {
   char *file_path = get_tmp_file_path(
       "/bpftrace_runtime_test_syscall_gen_open_temp");
-  int fd = -1;
-
-  if (is_sys_open)
-  {
-#if defined(SYS_open)
-    fd = syscall(SYS_open, file_path, O_CREAT);
-#endif
-  }
-  else
-  {
-    fd = syscall(SYS_openat, AT_FDCWD, file_path, O_CREAT);
-  }
-
+  int fd = is_sys_open ? syscall(SYS_open, file_path, O_CREAT)
+                       : syscall(SYS_openat, AT_FDCWD, file_path, O_CREAT);
   if (fd < 0)
   {
     perror("Error in syscall open/openat");
@@ -167,6 +154,7 @@ int main(int argc, char *argv[])
     return 1;
   }
   const char *syscall_name = argv[1];
+  bool is_sys_open = false;
   int r = 0;
 
   if (strcmp("--help", syscall_name) == 0 || strcmp("-h", syscall_name) == 0)
@@ -177,16 +165,11 @@ int main(int argc, char *argv[])
   {
     r = gen_nanosleep(argc, argv);
   }
-  else if (strcmp("openat", syscall_name) == 0)
+  else if ((is_sys_open = (strcmp("open", syscall_name) == 0)) ||
+           strcmp("openat", syscall_name) == 0)
   {
-    r = gen_open_openat(false);
+    r = gen_open_openat(is_sys_open);
   }
-#if defined(SYS_open)
-  else if (strcmp("open", syscall_name) == 0)
-  {
-    r = gen_open_openat(true);
-  }
-#endif
   else if (strcmp("read", syscall_name) == 0)
   {
     r = gen_read();

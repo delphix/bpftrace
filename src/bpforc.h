@@ -1,133 +1,155 @@
 #pragma once
 
-#include <llvm/ADT/StringRef.h>
-#include <llvm/Config/llvm-config.h>
-#include <llvm/ExecutionEngine/ExecutionEngine.h>
-#include <llvm/ExecutionEngine/JITSymbol.h>
-#include <llvm/ExecutionEngine/Orc/CompileOnDemandLayer.h>
-#include <llvm/ExecutionEngine/Orc/CompileUtils.h>
-#include <llvm/ExecutionEngine/Orc/ExecutionUtils.h>
-#include <llvm/ExecutionEngine/Orc/IRCompileLayer.h>
-#if LLVM_VERSION_MAJOR == 6
-#include <llvm/ExecutionEngine/Orc/LambdaResolver.h>
-#endif
-#include <llvm/ExecutionEngine/Orc/RTDyldObjectLinkingLayer.h>
-#include <llvm/ExecutionEngine/SectionMemoryManager.h>
-#include <llvm/Support/Error.h>
-#include <llvm/Support/TargetRegistry.h>
-#include <llvm/Target/TargetMachine.h>
-
-#ifdef LLVM_ORC_V2
-#include <llvm/ExecutionEngine/Orc/Core.h>
-#include <llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h>
-#endif
-
-#include <optional>
+#include "llvm/Config/llvm-config.h"
+#include "llvm/ExecutionEngine/ExecutionEngine.h"
+#include "llvm/ExecutionEngine/JITSymbol.h"
+#include "llvm/ExecutionEngine/Orc/CompileUtils.h"
+#include "llvm/ExecutionEngine/Orc/IRCompileLayer.h"
+#include "llvm/ExecutionEngine/Orc/LambdaResolver.h"
+#include "llvm/ExecutionEngine/Orc/RTDyldObjectLinkingLayer.h"
+#include "llvm/ExecutionEngine/SectionMemoryManager.h"
+#include "llvm/Target/TargetMachine.h"
 
 namespace bpftrace {
-
-const std::string LLVMTargetTriple = "bpf-pc-linux";
 
 using namespace llvm;
 using namespace llvm::orc;
 
-/*
-Custom memory manager to keep track of the address and size of code sections
-created. Each section being a Probe.
-*/
-// name -> {addr, size}
-using SectionMap =
-    std::unordered_map<std::string, std::tuple<uint8_t *, uintptr_t>>;
 class MemoryManager : public SectionMemoryManager
 {
 public:
-  explicit MemoryManager(SectionMap &sections) : sections_(sections)
+  explicit MemoryManager(std::map<std::string, std::tuple<uint8_t *, uintptr_t>> &sections)
+    : sections_(sections) { }
+  uint8_t *allocateCodeSection(uintptr_t Size, unsigned Alignment, unsigned SectionID, StringRef SectionName) override
   {
+    uint8_t *addr = SectionMemoryManager::allocateCodeSection(Size, Alignment, SectionID, SectionName);
+    sections_[SectionName.str()] = std::make_tuple(addr, Size);
+    return addr;
   }
 
-  uint8_t *allocateCodeSection(uintptr_t Size,
-                               unsigned Alignment,
-                               unsigned SectionID,
-                               StringRef SectionName) override;
-  uint8_t *allocateDataSection(uintptr_t Size,
-                               unsigned Alignment,
-                               unsigned SectionID,
-                               StringRef SectionName,
-                               bool isReadOnly) override;
+  uint8_t *allocateDataSection(uintptr_t Size, unsigned Alignment, unsigned SectionID, StringRef SectionName, bool isReadOnly) override
+  {
+    uint8_t *addr = SectionMemoryManager::allocateDataSection(Size, Alignment, SectionID, SectionName, isReadOnly);
+    sections_[SectionName.str()] = std::make_tuple(addr, Size);
+    return addr;
+  }
 
 private:
-  SectionMap &sections_;
+  std::map<std::string, std::tuple<uint8_t *, uintptr_t>> &sections_;
 };
 
+#if LLVM_VERSION_MAJOR >= 5 && LLVM_VERSION_MAJOR < 7
 class BpfOrc
 {
 private:
-  SectionMap sections_;
   std::unique_ptr<TargetMachine> TM;
-  DataLayout DL;
-#if LLVM_VERSION_MAJOR >= 7
-  ExecutionSession ES;
-#endif
-#if LLVM_VERSION_MAJOR >= 7 && LLVM_VERSION_MAJOR < 12
-  std::shared_ptr<SymbolResolver> Resolver;
-#endif
-
-#ifdef LLVM_ORC_V2
   RTDyldObjectLinkingLayer ObjectLayer;
-  IRCompileLayer CompileLayer;
-  MangleAndInterner Mangle;
-  ThreadSafeContext CTX;
-  JITDylib &MainJD;
-#else // LLVM_ORC_V1
+  IRCompileLayer<decltype(ObjectLayer), SimpleCompiler> CompileLayer;
+
+public:
+  std::map<std::string, std::tuple<uint8_t *, uintptr_t>> sections_;
+
+  using ModuleHandle = decltype(CompileLayer)::ModuleHandleT;
+
+  BpfOrc(TargetMachine *TM_)
+    : TM(TM_),
+      ObjectLayer([this]() { return std::make_shared<MemoryManager>(sections_); }),
+      CompileLayer(ObjectLayer, SimpleCompiler(*TM))
+  {
+  }
+
+  void compileModule(std::unique_ptr<Module> M)
+  {
+    auto mod = addModule(move(M));
+    cantFail(CompileLayer.emitAndFinalize(mod));
+  }
+
+  ModuleHandle addModule(std::unique_ptr<Module> M)
+  {
+    // We don't actually care about resolving symbols from other modules
+    auto Resolver = createLambdaResolver(
+        [](const std::string &) { return JITSymbol(nullptr); },
+        [](const std::string &) { return JITSymbol(nullptr); });
+
+    return cantFail(CompileLayer.addModule(std::move(M), std::move(Resolver)));
+  }
+};
+#elif LLVM_VERSION_MAJOR >= 7
+class BpfOrc
+{
+private:
+  ExecutionSession ES;
+  std::unique_ptr<TargetMachine> TM;
+  std::shared_ptr<SymbolResolver> Resolver;
 #if LLVM_VERSION_MAJOR >= 8
-  LLVMContext CTX;
   LegacyRTDyldObjectLinkingLayer ObjectLayer;
   LegacyIRCompileLayer<decltype(ObjectLayer), SimpleCompiler> CompileLayer;
 #else
-  LLVMContext CTX;
   RTDyldObjectLinkingLayer ObjectLayer;
   IRCompileLayer<decltype(ObjectLayer), SimpleCompiler> CompileLayer;
 #endif
 
-#endif
-
 public:
-  BpfOrc(TargetMachine *TM, DataLayout DL);
-  void compile(std::unique_ptr<Module> M);
+  std::map<std::string, std::tuple<uint8_t *, uintptr_t>> sections_;
 
-  /* Helper for creating a orc object, responsible for creating internal objects
-   */
-  static std::unique_ptr<BpfOrc> Create();
-
-  /* get the {addr, size} of a code section */
-  std::optional<std::tuple<uint8_t *, uintptr_t>> getSection(
-      const std::string &name);
-
-  LLVMContext &getContext();
-  const DataLayout &getDataLayout() const
+  BpfOrc(TargetMachine *TM_)
+      : TM(TM_),
+        Resolver(createLegacyLookupResolver(
+            ES,
+            [](const std::string &Name __attribute__((unused))) -> JITSymbol {
+              return nullptr;
+            },
+            [](Error Err) { cantFail(std::move(Err), "lookup failed"); })),
+#if LLVM_VERSION_MAJOR > 8
+        ObjectLayer(AcknowledgeORCv1Deprecation,
+                    ES,
+                    [this](VModuleKey) {
+                      return LegacyRTDyldObjectLinkingLayer::Resources{
+                        std::make_shared<MemoryManager>(sections_), Resolver
+                      };
+                    }),
+        CompileLayer(AcknowledgeORCv1Deprecation,
+                     ObjectLayer,
+                     SimpleCompiler(*TM))
   {
-    return DL;
   }
-
-  TargetMachine &getTargetMachine()
+#elif LLVM_VERSION_MAJOR == 8
+        ObjectLayer(ES,
+                    [this](VModuleKey) {
+                      return LegacyRTDyldObjectLinkingLayer::Resources{
+                        std::make_shared<MemoryManager>(sections_), Resolver
+                      };
+                    }),
+        CompileLayer(ObjectLayer, SimpleCompiler(*TM))
   {
-    return *TM;
   }
-
-  /* Dump the JIT state, only works for ORCv2 */
-  void dump([[maybe_unused]] raw_ostream &os)
+#else
+        ObjectLayer(ES,
+                    [this](VModuleKey) {
+                      return RTDyldObjectLinkingLayer::Resources{
+                        std::make_shared<MemoryManager>(sections_), Resolver
+                      };
+                    }),
+        CompileLayer(ObjectLayer, SimpleCompiler(*TM))
   {
-#ifdef LLVM_ORC_V2
-    MainJD.dump(os);
+  }
 #endif
+
+  void compileModule(std::unique_ptr<Module> M)
+  {
+    auto K = addModule(move(M));
+    cantFail(CompileLayer.emitAndFinalize(K));
   }
 
-#ifdef LLVM_ORC_V2
-  Expected<JITEvaluatedSymbol> lookup(StringRef Name)
+  VModuleKey addModule(std::unique_ptr<Module> M)
   {
-    return ES.lookup({ &MainJD }, Mangle(Name.str()));
+    auto K = ES.allocateVModule();
+    cantFail(CompileLayer.addModule(K, std::move(M)));
+    return K;
   }
-#endif
 };
+#else
+#error Unsupported LLVM version
+#endif
 
 } // namespace bpftrace

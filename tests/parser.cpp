@@ -1,4 +1,3 @@
-#include <limits.h>
 #include <sstream>
 
 #include "gtest/gtest.h"
@@ -33,7 +32,7 @@ void test(BPFtrace &bpftrace,
 
   std::ostringstream out;
   Printer printer(out);
-  printer.print(driver.root_);
+  driver.root_->accept(printer);
   EXPECT_EQ(output, out.str());
 }
 
@@ -71,7 +70,6 @@ TEST(Parser, builtin_variables)
 TEST(Parser, positional_param)
 {
   test("kprobe:f { $1 }", "Program\n kprobe:f\n  param: $1\n");
-  test_parse_failure("kprobe:f { $0 }");
 }
 
 TEST(Parser, positional_param_count)
@@ -250,20 +248,6 @@ TEST(Parser, variable_assign)
       "  =\n"
       "   variable: $x\n"
       "   int: -1\n");
-
-  char in_cstr[128];
-  char out_cstr[128];
-
-  snprintf(in_cstr, sizeof(in_cstr), "kprobe:sys_open { $x = %ld; }", LONG_MIN);
-  snprintf(out_cstr,
-           sizeof(out_cstr),
-           "Program\n"
-           " kprobe:sys_open\n"
-           "  =\n"
-           "   variable: $x\n"
-           "   int: %ld\n",
-           LONG_MIN);
-  test(std::string(in_cstr), std::string(out_cstr));
 }
 
 TEST(semantic_analyser, compound_variable_assignments)
@@ -1065,10 +1049,6 @@ TEST(Parser, tracepoint_probe)
       "Program\n"
       " tracepoint:sched:sched_switch\n"
       "  int: 1\n");
-  test("tracepoint:* { 1 }",
-       "Program\n"
-       " tracepoint:*:*\n"
-       "  int: 1\n");
 
   test_parse_failure("tracepoint:f { 1 }");
   test_parse_failure("tracepoint { 1 }");
@@ -1119,30 +1099,14 @@ TEST(Parser, hardware_probe)
 
 TEST(Parser, watchpoint_probe)
 {
-  test("watchpoint:1234:8:w { 1 }",
+  test("watchpoint::1234:8:w { 1 }",
        "Program\n"
        " watchpoint:1234:8:w\n"
        "  int: 1\n");
 
-  test_parse_failure("watchpoint:1b:8:w { 1 }");
-  test_parse_failure("watchpoint:1:8a:w { 1 }");
-  test_parse_failure("watchpoint:1b:8a:w { 1 }");
-  test_parse_failure("watchpoint:+arg0:8:rw { 1 }");
-  test_parse_failure("watchpoint:func1:8:rw { 1 }");
-}
-
-TEST(Parser, asyncwatchpoint_probe)
-{
-  test("asyncwatchpoint:1234:8:w { 1 }",
-       "Program\n"
-       " asyncwatchpoint:1234:8:w\n"
-       "  int: 1\n");
-
-  test_parse_failure("asyncwatchpoint:1b:8:w { 1 }");
-  test_parse_failure("asyncwatchpoint:1:8a:w { 1 }");
-  test_parse_failure("asyncwatchpoint:1b:8a:w { 1 }");
-  test_parse_failure("asyncwatchpoint:+arg0:8:rw { 1 }");
-  test_parse_failure("asyncwatchpoint:func1:8:rw { 1 }");
+  test_parse_failure("watchpoint::1b:8:w { 1 }");
+  test_parse_failure("watchpoint::1:8a:w { 1 }");
+  test_parse_failure("watchpoint::1b:8a:w { 1 }");
 }
 
 TEST(Parser, multiple_attach_points_kprobe)
@@ -1162,24 +1126,6 @@ TEST(Parser, character_class_attach_point)
       "Program\n"
       " kprobe:[Ss]y[Ss]_read\n"
       "  int: 1\n");
-}
-
-TEST(Parser, wildcard_probetype)
-{
-  test("t*point:sched:sched_switch { 1; }",
-       "Program\n"
-       " tracepoint:sched:sched_switch\n"
-       "  int: 1\n");
-  test("*ware:* { 1; }",
-       "Program\n"
-       " hardware:*\n"
-       " software:*\n"
-       "  int: 1\n");
-  test("*:/bin/sh:* { 1; }",
-       "Program\n"
-       " uprobe:/bin/sh:*\n"
-       " usdt:/bin/sh:*\n"
-       "  int: 1\n");
 }
 
 TEST(Parser, wildcard_attach_points)
@@ -1689,17 +1635,6 @@ TEST(Parser, empty_arguments)
   test_parse_failure(":w:0x10000000:8:rw { 1 }");
 }
 
-TEST(Parser, scientific_notation)
-{
-  test("k:f { print(1e6); }",
-       "Program\n kprobe:f\n  call: print\n   int: 1000000\n");
-  test("k:f { print(5e9); }",
-       "Program\n kprobe:f\n  call: print\n   int: 5000000000\n");
-
-  test_parse_failure("k:f { print(5e-9); }");
-  test_parse_failure("k:f { print(1e100); }");
-}
-
 TEST(Parser, while_loop)
 {
   test("i:ms:100 { $a = 0; while($a < 10) { $a++ }}",
@@ -1716,45 +1651,6 @@ TEST(Parser, while_loop)
     variable: $a
      ++
 )PROG");
-}
-
-TEST(Parser, tuple_assignment_error_message)
-{
-  BPFtrace bpftrace;
-  std::stringstream out;
-  Driver driver(bpftrace, out);
-  EXPECT_EQ(driver.parse_str("i:s:1 { @x = (1, 2); $x.1 = 1; }"), 1);
-  std::string expected =
-      R"(stdin:1:22-30: ERROR: Tuples are immutable once created. Consider creating a new tuple and assigning it instead.
-i:s:1 { @x = (1, 2); $x.1 = 1; }
-                     ~~~~~~~~
-)";
-  EXPECT_EQ(out.str(), expected);
-}
-
-TEST(Parser, tuple_assignment_error)
-{
-  test_parse_failure("i:s:1 { (1, 0) = 0 }");
-  test_parse_failure("i:s:1 { ((1, 0), 3).0.0 = 3 }");
-  test_parse_failure("i:s:1 { ((1, 0), 3).0 = (0, 1) }");
-  test_parse_failure("i:s:1 { (1, \"two\", (3, 4)).5 = \"six\"; }");
-  test_parse_failure("i:s:1 { $a = 1; $a.2 = 3 }");
-  test_parse_failure("i:s:1 { 0.1 = 1.0 }");
-}
-
-TEST(Parser, abs_knl_address)
-{
-  char in_cstr[64];
-  char out_cstr[64];
-
-  snprintf(in_cstr, sizeof(in_cstr), "watchpoint:0x%lx:4:w { 1; }", ULONG_MAX);
-  snprintf(out_cstr,
-           sizeof(out_cstr),
-           "Program\n"
-           " watchpoint:%lu:4:w\n"
-           "  int: 1\n",
-           ULONG_MAX);
-  test(std::string(in_cstr), std::string(out_cstr));
 }
 
 } // namespace parser

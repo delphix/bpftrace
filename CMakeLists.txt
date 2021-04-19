@@ -3,7 +3,7 @@ project(bpftrace)
 
 # bpftrace version number components.
 set(bpftrace_VERSION_MAJOR 0)
-set(bpftrace_VERSION_MINOR 12)
+set(bpftrace_VERSION_MINOR 10)
 set(bpftrace_VERSION_PATCH 0)
 
 include(GNUInstallDirs)
@@ -18,9 +18,6 @@ set(LLVM_VERSION "8" CACHE STRING "Embedded LLVM/Clang version to build and link
 set(BUILD_ASAN OFF CACHE BOOL "Build bpftrace with -fsanitize=address")
 set(ENABLE_MAN ON CACHE BOOL "Build man pages")
 set(ENABLE_TEST_VALIDATE_CODEGEN ON CACHE BOOL "Run LLVM IR validation tests")
-set(BUILD_FUZZ OFF CACHE BOOL "Build bpftrace for fuzzing")
-set(USE_LIBFUZZER OFF CACHE BOOL "Use libfuzzer for fuzzing")
-set(FUZZ_TARGET "codegen" CACHE STRING "Fuzzing target")
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
@@ -51,6 +48,8 @@ add_compile_options("-Wpointer-arith")
 add_compile_options("-Wcast-align")
 add_compile_options("-Wwrite-strings")
 add_compile_options("-Wcast-qual")
+add_compile_options("-Wswitch-default")
+#add_compile_options("-Wswitch-enum")
 #add_compile_options("-Wconversion")
 add_compile_options("-Wunreachable-code")
 #add_compile_options("-Wformat=2")
@@ -101,20 +100,13 @@ set(CMAKE_REQUIRED_DEFINITIONS -D_GNU_SOURCE)
 check_symbol_exists(name_to_handle_at "sys/types.h;sys/stat.h;fcntl.h" HAVE_NAME_TO_HANDLE_AT)
 set(CMAKE_REQUIRED_DEFINITIONS)
 
-find_package(LibBpf)
-find_package(LibBfd)
-find_package(LibOpcodes)
-
 if(POLICY CMP0075)
   cmake_policy(SET CMP0075 NEW)
 endif()
 if(STATIC_LINKING)
   set(CMAKE_REQUIRED_LIBRARIES bcc bcc_bpf bpf elf z)
 else()
-  set(CMAKE_REQUIRED_LIBRARIES ${LIBBCC_LIBRARIES})
-  if (LIBBPF_FOUND)
-      set(CMAKE_REQUIRED_LIBRARIES ${CMAKE_REQUIRED_LIBRARIES} ${LIBBPF_LIBRARIES})
-  endif()
+  set(CMAKE_REQUIRED_LIBRARIES bcc)
 endif(STATIC_LINKING)
 get_filename_component(LIBBCC_LIBDIR ${LIBBCC_LIBRARIES} DIRECTORY)
 set(CMAKE_REQUIRED_LINK_OPTIONS -L${LIBBCC_LIBDIR})
@@ -124,14 +116,12 @@ check_symbol_exists(bcc_create_map "${LIBBCC_INCLUDE_DIRS}/bcc/libbpf.h" HAVE_BC
 check_symbol_exists(bcc_elf_foreach_sym "${LIBBCC_INCLUDE_DIRS}/bcc/bcc_elf.h" HAVE_BCC_ELF_FOREACH_SYM)
 check_symbol_exists(bpf_attach_kfunc "${LIBBCC_INCLUDE_DIRS}/bcc/libbpf.h" HAVE_BCC_KFUNC)
 check_symbol_exists(bcc_usdt_addsem_probe "${LIBBCC_INCLUDE_DIRS}/bcc/bcc_usdt.h" HAVE_BCC_USDT_ADDSEM)
-
-# bcc_prog_load_xattr needs struct bpf_load_program_attr,
-# which is defined in libbpf
-if (LIBBPF_FOUND)
-  check_symbol_exists(bcc_prog_load_xattr "${LIBBCC_INCLUDE_DIRS}/bcc/libbpf.h" HAVE_BCC_PROG_LOAD_XATTR)
-endif()
 set(CMAKE_REQUIRED_LIBRARIES)
 set(CMAKE_REQUIRED_LINK_OPTIONS)
+
+find_package(LibBpf)
+find_package(LibBfd)
+find_package(LibOpcodes)
 
 if(${LIBBFD_FOUND} AND ${LIBOPCODES_FOUND})
   set(HAVE_BFD_DISASM TRUE)
@@ -159,14 +149,6 @@ else()
   message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}: ${LLVM_CMAKE_DIR}")
   include_directories(SYSTEM ${LLVM_INCLUDE_DIRS})
   add_definitions(${LLVM_DEFINITIONS})
-endif()
-
-if(${LLVM_VERSION_MAJOR} VERSION_GREATER_EQUAL 11)
-  set(LLVM_ORC_V2)
-  add_definitions(-DLLVM_ORC_V2)
-  message(STATUS "Using LLVM orcv2")
-else()
-  add_definitions(-DLLVM_ORC_V1)
 endif()
 
 if(EMBED_CLANG)

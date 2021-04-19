@@ -25,14 +25,14 @@ public:
   void error(std::ostream &, const location &, const std::string &);
   void error(const location &l, const std::string &m);
   void error(const std::string &m);
-  ast::Program *root_ = nullptr;
+  ast::Program *root_{ nullptr };
 
   BPFtrace &bpftrace_;
 
-  bool listing_ = false;
-
 private:
+  std::unique_ptr<Parser> parser_;
   std::ostream &out_;
+  yyscan_t scanner_;
   bool failed_ = false;
 };
 

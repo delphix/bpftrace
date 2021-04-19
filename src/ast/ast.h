@@ -14,32 +14,12 @@ namespace ast {
 
 class Visitor;
 
-#define DEFINE_ACCEPT void accept(Visitor &v) override;
-
-/**
- * Copy the node but leave all it's child members uninitialized, effecitvely
- * turning it into a leaf node
- */
-#define DEFINE_LEAFCOPY(T)                                                     \
-  T *leafcopy()                                                                \
-  {                                                                            \
-    return new T(*this);                                                       \
-  };
-
 class Node {
 public:
-  Node() = default;
-  Node(location loc) : loc(loc){};
-  Node(const Node &other) = default;
-
-  Node &operator=(const Node &) = delete;
-  Node(Node &&) = delete;
-  Node &operator=(Node &&) = delete;
-
+  Node();
+  Node(location loc);
   virtual ~Node() = default;
-
   virtual void accept(Visitor &v) = 0;
-
   location loc;
 };
 
@@ -47,17 +27,8 @@ class Map;
 class Variable;
 class Expression : public Node {
 public:
-  Expression() = default;
-  Expression(location loc) : Node(loc){};
-  Expression(const Expression &other);
-
-  Expression &operator=(const Expression &) = delete;
-  Expression(Expression &&) = delete;
-  Expression &operator=(Expression &&) = delete;
-
-  // NB: do not free any of non-owned pointers we store
-  virtual ~Expression() = default;
-
+  Expression();
+  Expression(location loc);
   SizedType type;
   Map *key_for_map = nullptr;
   Map *map = nullptr; // Only set when this expression is assigned to a map
@@ -70,425 +41,268 @@ using ExpressionList = std::vector<Expression *>;
 
 class Integer : public Expression {
 public:
-  DEFINE_ACCEPT
-  DEFINE_LEAFCOPY(Integer)
-
+  explicit Integer(long n);
   explicit Integer(long n, location loc);
-
   long n;
 
-private:
-  Integer(const Integer &other) = default;
+  void accept(Visitor &v) override;
 };
 
 class PositionalParameter : public Expression {
 public:
-  DEFINE_ACCEPT
-  DEFINE_LEAFCOPY(PositionalParameter)
-
+  explicit PositionalParameter(PositionalParameterType ptype, long n);
   explicit PositionalParameter(PositionalParameterType ptype,
                                long n,
                                location loc);
-  ~PositionalParameter() = default;
-
   PositionalParameterType ptype;
   long n;
   bool is_in_str = false;
 
-private:
-  PositionalParameter(const PositionalParameter &other) = default;
+  void accept(Visitor &v) override;
 };
 
 class String : public Expression {
 public:
-  DEFINE_ACCEPT
-  DEFINE_LEAFCOPY(String)
-
+  explicit String(const std::string &str);
   explicit String(const std::string &str, location loc);
-  ~String() = default;
-
   std::string str;
 
-private:
-  String(const String &other) = default;
+  void accept(Visitor &v) override;
 };
 
 class StackMode : public Expression {
 public:
-  DEFINE_ACCEPT
-  DEFINE_LEAFCOPY(StackMode)
-
+  explicit StackMode(const std::string &mode);
   explicit StackMode(const std::string &mode, location loc);
-  ~StackMode() = default;
-
   std::string mode;
 
-private:
-  StackMode(const StackMode &other) = default;
+  void accept(Visitor &v) override;
 };
 
 class Identifier : public Expression {
 public:
-  DEFINE_ACCEPT
-  DEFINE_LEAFCOPY(Identifier)
-
+  explicit Identifier(const std::string &ident);
   explicit Identifier(const std::string &ident, location loc);
-  ~Identifier() = default;
-
   std::string ident;
 
-private:
-  Identifier(const Identifier &other) = default;
+  void accept(Visitor &v) override;
 };
 
 class Builtin : public Expression {
 public:
-  DEFINE_ACCEPT
-  DEFINE_LEAFCOPY(Builtin)
-
+  explicit Builtin(const std::string &ident);
   explicit Builtin(const std::string &ident, location loc);
-  ~Builtin() = default;
-
   std::string ident;
   int probe_id;
 
-private:
-  Builtin(const Builtin &other) = default;
+  void accept(Visitor &v) override;
 };
 
 class Call : public Expression {
 public:
-  DEFINE_ACCEPT
-  DEFINE_LEAFCOPY(Call)
-
+  explicit Call(const std::string &func);
   explicit Call(const std::string &func, location loc);
+  Call(const std::string &func, ExpressionList *vargs);
   Call(const std::string &func, ExpressionList *vargs, location loc);
-  ~Call();
-
   std::string func;
-  ExpressionList *vargs = nullptr;
+  ExpressionList *vargs;
 
-private:
-  Call(const Call &other);
+  void accept(Visitor &v) override;
 };
 
 class Map : public Expression {
 public:
-  DEFINE_ACCEPT
-  DEFINE_LEAFCOPY(Map)
-
   explicit Map(const std::string &ident, location loc);
+  Map(const std::string &ident, ExpressionList *vargs);
   Map(const std::string &ident, ExpressionList *vargs, location loc);
-  ~Map();
-
   std::string ident;
-  ExpressionList *vargs = nullptr;
+  ExpressionList *vargs;
   bool skip_key_validation = false;
 
-private:
-  Map(const Map &other);
+  void accept(Visitor &v) override;
 };
 
 class Variable : public Expression {
 public:
-  DEFINE_ACCEPT
-  DEFINE_LEAFCOPY(Variable)
-
+  explicit Variable(const std::string &ident);
   explicit Variable(const std::string &ident, location loc);
-  ~Variable() = default;
-
   std::string ident;
 
-private:
-  Variable(const Variable &other) = default;
+  void accept(Visitor &v) override;
 };
 
 class Binop : public Expression {
 public:
-  DEFINE_ACCEPT
-  DEFINE_LEAFCOPY(Binop)
-
   Binop(Expression *left, int op, Expression *right, location loc);
-
-  ~Binop();
-
-  Expression *left = nullptr;
-  Expression *right = nullptr;
+  Expression *left, *right;
   int op;
 
-private:
-  Binop(const Binop &other);
+  void accept(Visitor &v) override;
 };
 
 class Unop : public Expression {
 public:
-  DEFINE_ACCEPT
-  DEFINE_LEAFCOPY(Unop)
-
   Unop(int op, Expression *expr, location loc = location());
   Unop(int op,
        Expression *expr,
        bool is_post_op = false,
        location loc = location());
-
-  ~Unop();
-
-  Expression *expr = nullptr;
+  Expression *expr;
   int op;
   bool is_post_op;
 
-private:
-  Unop(const Unop &other);
+  void accept(Visitor &v) override;
 };
 
 class FieldAccess : public Expression {
 public:
-  DEFINE_ACCEPT
-  DEFINE_LEAFCOPY(FieldAccess)
-
   FieldAccess(Expression *expr, const std::string &field);
   FieldAccess(Expression *expr, const std::string &field, location loc);
   FieldAccess(Expression *expr, ssize_t index, location loc);
-  ~FieldAccess();
-
-  Expression *expr = nullptr;
+  Expression *expr;
   std::string field;
   ssize_t index = -1;
 
-private:
-  FieldAccess(const FieldAccess &other);
+  void accept(Visitor &v) override;
 };
 
 class ArrayAccess : public Expression {
 public:
-  DEFINE_ACCEPT
-  DEFINE_LEAFCOPY(ArrayAccess)
-
   ArrayAccess(Expression *expr, Expression *indexpr);
   ArrayAccess(Expression *expr, Expression *indexpr, location loc);
-  ~ArrayAccess();
+  Expression *expr;
+  Expression *indexpr;
 
-  Expression *expr = nullptr;
-  Expression *indexpr = nullptr;
-
-private:
-  ArrayAccess(const ArrayAccess &other) : Expression(other){};
+  void accept(Visitor &v) override;
 };
 
 class Cast : public Expression {
 public:
-  DEFINE_LEAFCOPY(Cast)
-  DEFINE_ACCEPT
-
+  Cast(const std::string &type, bool is_pointer, Expression *expr);
   Cast(const std::string &type,
        bool is_pointer,
-       bool is_double_pointer,
-       Expression *expr);
-  Cast(const std::string &type,
-       bool is_pointer,
-       bool is_double_pointer,
        Expression *expr,
        location loc);
-  ~Cast();
-
   std::string cast_type;
   bool is_pointer;
-  bool is_double_pointer;
-  Expression *expr = nullptr;
+  Expression *expr;
 
-private:
-  Cast(const Cast &other);
+  void accept(Visitor &v) override;
 };
 
 class Tuple : public Expression
 {
 public:
-  DEFINE_ACCEPT
-  DEFINE_LEAFCOPY(Tuple)
-
   Tuple(ExpressionList *elems, location loc);
-  ~Tuple();
+  ExpressionList *elems;
 
-  ExpressionList *elems = nullptr;
-
-private:
-  Tuple(const Tuple &other);
+  void accept(Visitor &v) override;
 };
 
 class Statement : public Node {
 public:
   Statement() = default;
-  Statement(location loc) : Node(loc){};
-  Statement(const Statement &other) = default;
-  ~Statement() = default;
-
-  Statement &operator=(const Statement &) = delete;
-  Statement(Statement &&) = delete;
-  Statement &operator=(Statement &&) = delete;
+  Statement(location loc);
 };
-
 using StatementList = std::vector<Statement *>;
 
 class ExprStatement : public Statement {
 public:
-  DEFINE_ACCEPT
-  DEFINE_LEAFCOPY(ExprStatement)
-
+  explicit ExprStatement(Expression *expr);
   explicit ExprStatement(Expression *expr, location loc);
-  ~ExprStatement();
+  Expression *expr;
 
-  Expression *expr = nullptr;
-
-private:
-  ExprStatement(const ExprStatement &other) : Statement(other){};
+  void accept(Visitor &v) override;
 };
 
 class AssignMapStatement : public Statement {
 public:
-  DEFINE_ACCEPT
-  DEFINE_LEAFCOPY(AssignMapStatement)
+  AssignMapStatement(Map *map, Expression *expr, location loc = location());
+  Map *map;
+  Expression *expr;
 
-  AssignMapStatement(Map *map,
-                     Expression *expr,
-                     bool compound = false,
-                     location loc = location());
-  ~AssignMapStatement();
-
-  Map *map = nullptr;
-  Expression *expr = nullptr;
-  bool compound;
-
-private:
-  AssignMapStatement(const AssignMapStatement &other);
+  void accept(Visitor &v) override;
 };
 
 class AssignVarStatement : public Statement {
 public:
-  DEFINE_ACCEPT
-  DEFINE_LEAFCOPY(AssignVarStatement)
+  AssignVarStatement(Variable *var, Expression *expr);
+  AssignVarStatement(Variable *var, Expression *expr, location loc);
+  Variable *var;
+  Expression *expr;
 
-  AssignVarStatement(Variable *var,
-                     Expression *expr,
-                     bool compound = false,
-                     location loc = location());
-  ~AssignVarStatement();
-
-  Variable *var = nullptr;
-  Expression *expr = nullptr;
-  bool compound;
-
-private:
-  AssignVarStatement(const AssignVarStatement &other);
+  void accept(Visitor &v) override;
 };
 
 class If : public Statement {
 public:
-  DEFINE_ACCEPT
-  DEFINE_LEAFCOPY(If)
-
   If(Expression *cond, StatementList *stmts);
   If(Expression *cond, StatementList *stmts, StatementList *else_stmts);
-  ~If();
-
-  Expression *cond = nullptr;
+  Expression *cond;
   StatementList *stmts = nullptr;
   StatementList *else_stmts = nullptr;
 
-private:
-  If(const If &other);
+  void accept(Visitor &v) override;
 };
 
 class Unroll : public Statement {
 public:
-  DEFINE_ACCEPT
-  DEFINE_LEAFCOPY(Unroll)
-
   Unroll(Expression *expr, StatementList *stmts, location loc);
-  ~Unroll();
-
   long int var = 0;
-  Expression *expr = nullptr;
-  StatementList *stmts = nullptr;
+  Expression *expr;
+  StatementList *stmts;
 
-private:
-  Unroll(const Unroll &other);
+  void accept(Visitor &v) override;
 };
 
 class Jump : public Statement
 {
 public:
-  DEFINE_ACCEPT
-  DEFINE_LEAFCOPY(Jump)
-
-  Jump(int ident, location loc = location()) : Statement(loc), ident(ident)
+  Jump(int ident, location loc = location()) : loc(loc), ident(ident)
   {
   }
-  ~Jump() = default;
 
-  int ident = 0;
+  location loc;
+  int ident;
 
-private:
-  Jump(const Jump &other) = default;
+  void accept(Visitor &v) override;
 };
 
 class Predicate : public Node {
 public:
-  DEFINE_ACCEPT
-  DEFINE_LEAFCOPY(Predicate)
-
+  explicit Predicate(Expression *expr);
   explicit Predicate(Expression *expr, location loc);
-  ~Predicate();
+  Expression *expr;
 
-  Expression *expr = nullptr;
-
-private:
-  Predicate(const Predicate &other) : Node(other){};
+  void accept(Visitor &v) override;
 };
 
 class Ternary : public Expression {
 public:
-  DEFINE_ACCEPT
-  DEFINE_LEAFCOPY(Ternary)
-
+  Ternary(Expression *cond, Expression *left, Expression *right);
   Ternary(Expression *cond, Expression *left, Expression *right, location loc);
-  ~Ternary();
+  Expression *cond, *left, *right;
 
-  Expression *cond = nullptr;
-  Expression *left = nullptr;
-  Expression *right = nullptr;
+  void accept(Visitor &v) override;
 };
 
 class While : public Statement
 {
 public:
-  DEFINE_ACCEPT
-  DEFINE_LEAFCOPY(While)
-
   While(Expression *cond, StatementList *stmts, location loc)
-      : Statement(loc), cond(cond), stmts(stmts)
+      : cond(cond), stmts(stmts), loc(loc)
   {
   }
-  ~While();
-
-  Expression *cond = nullptr;
+  Expression *cond;
   StatementList *stmts = nullptr;
+  location loc;
 
-private:
-  While(const While &other);
+  void accept(Visitor &v) override;
 };
 
 class AttachPoint : public Node {
 public:
-  DEFINE_ACCEPT
-  DEFINE_LEAFCOPY(AttachPoint)
-
   explicit AttachPoint(const std::string &raw_input, location loc = location());
-  AttachPoint(const std::string &raw_input, bool ignore_invalid)
-      : AttachPoint(raw_input)
-  {
-    this->ignore_invalid = ignore_invalid;
-  }
-  ~AttachPoint() = default;
 
   // Raw, unparsed input from user, eg. kprobe:vfs_read
   std::string raw_input;
@@ -497,78 +311,88 @@ public:
   std::string target;
   std::string ns;
   std::string func;
-  std::string pin;
   usdt_probe_entry usdt; // resolved USDT entry, used to support arguments with wildcard matches
   int freq = 0;
-  uint64_t len = 0;   // for watchpoint probes, the width of watched addr
-  std::string mode;   // for watchpoint probes, the watch mode
-  bool async = false; // for watchpoint probes, if it's an async watchpoint
+  uint64_t len = 0; // for watchpoint probes, the width of watched addr
+  std::string mode; // for watchpoint probes, the watch mode
   bool need_expansion = false;
   uint64_t address = 0;
   uint64_t func_offset = 0;
-  bool ignore_invalid = false;
 
+  void accept(Visitor &v) override;
   std::string name(const std::string &attach_point) const;
-  std::string name(const std::string &attach_target,
-                   const std::string &attach_point) const;
 
-  int index(const std::string &name) const;
-  void set_index(const std::string &name, int index);
-
+  int index(std::string name);
+  void set_index(std::string name, int index);
 private:
-  AttachPoint(const AttachPoint &other) = default;
-
   std::map<std::string, int> index_;
 };
 using AttachPointList = std::vector<AttachPoint *>;
 
 class Probe : public Node {
 public:
-  DEFINE_ACCEPT
-  DEFINE_LEAFCOPY(Probe)
-
   Probe(AttachPointList *attach_points, Predicate *pred, StatementList *stmts);
-  ~Probe();
 
-  AttachPointList *attach_points = nullptr;
-  Predicate *pred = nullptr;
-  StatementList *stmts = nullptr;
+  AttachPointList *attach_points;
+  Predicate *pred;
+  StatementList *stmts;
 
+  void accept(Visitor &v) override;
   std::string name() const;
   bool need_expansion = false;        // must build a BPF program per wildcard match
-  int tp_args_structs_level = -1;     // number of levels of structs that must
-                                      // be imported/resolved for tracepoints
+  bool need_tp_args_structs = false;  // must import struct for tracepoints
 
-  int index() const;
+  int index();
   void set_index(int index);
-
 private:
-  Probe(const Probe &other);
   int index_ = 0;
 };
 using ProbeList = std::vector<Probe *>;
 
 class Program : public Node {
 public:
-  DEFINE_ACCEPT
-  DEFINE_LEAFCOPY(Program)
-
   Program(const std::string &c_definitions, ProbeList *probes);
-
-  ~Program();
-
   std::string c_definitions;
-  ProbeList *probes = nullptr;
+  ProbeList *probes;
 
-private:
-  Program(const Program &other);
+  void accept(Visitor &v) override;
+};
+
+class Visitor {
+public:
+  virtual ~Visitor() = default;
+  virtual void visit(Integer &integer) = 0;
+  virtual void visit(PositionalParameter &integer) = 0;
+  virtual void visit(String &string) = 0;
+  virtual void visit(Builtin &builtin) = 0;
+  virtual void visit(Identifier &identifier) = 0;
+  virtual void visit(StackMode &mode) = 0;
+  virtual void visit(Call &call) = 0;
+  virtual void visit(Map &map) = 0;
+  virtual void visit(Variable &var) = 0;
+  virtual void visit(Binop &binop) = 0;
+  virtual void visit(Unop &unop) = 0;
+  virtual void visit(Ternary &ternary) = 0;
+  virtual void visit(FieldAccess &acc) = 0;
+  virtual void visit(ArrayAccess &arr) = 0;
+  virtual void visit(Cast &cast) = 0;
+  virtual void visit(Tuple &tuple) = 0;
+  virtual void visit(ExprStatement &expr) = 0;
+  virtual void visit(AssignMapStatement &assignment) = 0;
+  virtual void visit(AssignVarStatement &assignment) = 0;
+  virtual void visit(If &if_block) = 0;
+  virtual void visit(Jump &jump) = 0;
+  virtual void visit(Unroll &unroll) = 0;
+  virtual void visit(While &while_block) = 0;
+  virtual void visit(Predicate &pred) = 0;
+  virtual void visit(AttachPoint &ap) = 0;
+  virtual void visit(Probe &probe) = 0;
+  virtual void visit(Program &program) = 0;
 };
 
 std::string opstr(Binop &binop);
 std::string opstr(Unop &unop);
 std::string opstr(Jump &jump);
-
-#undef DEFINE_ACCEPT
 
 } // namespace ast
 } // namespace bpftrace

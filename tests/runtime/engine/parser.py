@@ -5,6 +5,8 @@ from collections import namedtuple
 import os
 import platform
 
+from utils import ERROR_COLOR, NO_COLOR
+
 
 class RequiredFieldError(Exception):
     pass
@@ -14,22 +16,25 @@ class UnknownFieldError(Exception):
     pass
 
 
-TestStruct = namedtuple('TestStruct', 'name run expect timeout before after suite kernel requirement env arch, feature_requirement neg_feature_requirement')
+TestStruct = namedtuple('TestStruct', 'name run expect timeout before after suite kernel requirement env arch')
 
 
 class TestParser(object):
     @staticmethod
     def read_all(test_filter):
-        for root, subdirs, files in os.walk('./runtime'):
-            for ignore_dir in ["engine", "scripts", "outputs"]:
-                if ignore_dir in subdirs:
-                    subdirs.remove(ignore_dir)
-            for filename in files:
-                if filename.startswith("."):
-                    continue
-                parser = TestParser.read(root + '/' + filename, test_filter)
-                if parser[1]:
-                    yield parser
+        try:
+            for root, subdirs, files in os.walk('./runtime'):
+                for ignore_dir in ["engine", "scripts", "outputs"]:
+                    if ignore_dir in subdirs:
+                        subdirs.remove(ignore_dir)
+                for filename in files:
+                    if filename.startswith("."):
+                        continue
+                    parser = TestParser.read(root + '/' + filename, test_filter)
+                    if parser[1]:
+                        yield parser
+        except RequiredFieldError as error:
+            print(ERROR_COLOR + str(error) + NO_COLOR)
 
     @staticmethod
     def read(file_name, test_filter):
@@ -67,8 +72,6 @@ class TestParser(object):
         requirement = ''
         env = {}
         arch = []
-        feature_requirement = set()
-        neg_feature_requirement = set()
 
         for item in test:
             item_split = item.split()
@@ -97,19 +100,6 @@ class TestParser(object):
                     env[k]=v
             elif item_name == 'ARCH':
                 arch = [x.strip() for x in line.split("|")]
-            elif item_name == 'REQUIRES_FEATURE':
-                features = {"loop", "btf", "probe_read_kernel", "dpath", "uprobe_refcount", "signal",  "iter:task", "iter:task_file"}
-
-                for f in line.split(" "):
-                    f = f.strip()
-                    if f.startswith("!"):
-                        neg_feature_requirement.add(f[1:])
-                    else:
-                        feature_requirement.add(f)
-
-                unknown = (feature_requirement | neg_feature_requirement) - features
-                if len(unknown) > 0:
-                    raise UnknownFieldError('%s is invalid for REQUIRES_FEATURE. Suite: %s' % (','.join(unknown), test_suite))
             else:
                 raise UnknownFieldError('Field %s is unknown. Suite: %s' % (item_name, test_suite))
 
@@ -122,17 +112,4 @@ class TestParser(object):
         elif timeout == '':
             raise RequiredFieldError('Test TIMEOUT is required. Suite: ' + test_suite)
 
-        return TestStruct(
-            name,
-            run,
-            expect,
-            timeout,
-            before,
-            after,
-            test_suite,
-            kernel,
-            requirement,
-            env,
-            arch,
-            feature_requirement,
-            neg_feature_requirement)
+        return TestStruct(name, run, expect, timeout, before, after, test_suite, kernel, requirement, env, arch)

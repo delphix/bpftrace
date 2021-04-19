@@ -3,32 +3,130 @@
 #include <istream>
 #include <set>
 
-#include "ast/visitors.h"
+#include "ast/ast.h"
 #include "bpftrace.h"
 
 namespace bpftrace {
 
 namespace ast {
 
-class TracepointArgsVisitor : public ASTVisitor
+class TracepointArgsVisitor : public Visitor
 {
 public:
-  void visit(Builtin &builtin) override
-  {
-    if (builtin.ident == "args" && probe_->tp_args_structs_level == -1)
-      probe_->tp_args_structs_level = 0;
+  ~TracepointArgsVisitor() override { }
+  void visit(__attribute__((unused)) Integer &integer) override { };  // Leaf
+  void visit(__attribute__((unused)) PositionalParameter &integer) override { };  // Leaf
+  void visit(__attribute__((unused)) String &string) override { };  // Leaf
+  void visit(__attribute__((unused)) StackMode &mode) override { };  // Leaf
+  void visit(__attribute__((unused)) Identifier &identifier) override { };  // Leaf
+  void visit(__attribute__((unused)) Jump &jump) override{}; // Leaf
+  void visit(Builtin &builtin) override {  // Leaf
+    if (builtin.ident == "args")
+      probe_->need_tp_args_structs = true;
+  };  // Leaf
+  void visit(Call &call) override {
+    if (call.vargs) {
+      for (Expression *expr : *call.vargs) {
+        expr->accept(*this);
+      }
+    }
   };
-  void visit(FieldAccess &acc) override
-  {
+  void visit(Map &map) override {
+    if (map.vargs) {
+      for (Expression *expr : *map.vargs) {
+        expr->accept(*this);
+      }
+    }
+  };
+  void visit(__attribute__((unused)) Variable &var) override { };  // Leaf
+  void visit(Binop &binop) override {
+    binop.left->accept(*this);
+    binop.right->accept(*this);
+  };
+  void visit(Unop &unop) override {
+    unop.expr->accept(*this);
+  };
+  void visit(Ternary &ternary) override {
+    ternary.cond->accept(*this);
+    ternary.left->accept(*this);
+    ternary.right->accept(*this);
+  };
+  void visit(FieldAccess &acc) override {
     acc.expr->accept(*this);
-    if (probe_->tp_args_structs_level >= 0)
-      probe_->tp_args_structs_level++;
+  };
+  void visit(ArrayAccess &acc) override {
+    acc.expr->accept(*this);
+  };
+  void visit(Cast &cast) override {
+    cast.expr->accept(*this);
+  };
+  void visit(Tuple &tuple) override
+  {
+    for (Expression *expr : *tuple.elems)
+      expr->accept(*this);
+  };
+  void visit(ExprStatement &expr) override {
+    expr.expr->accept(*this);
+  };
+  void visit(AssignMapStatement &assignment) override {
+    assignment.map->accept(*this);
+    assignment.expr->accept(*this);
+  };
+  void visit(AssignVarStatement &assignment) override {
+    assignment.expr->accept(*this);
+  };
+  void visit(If &if_block) override {
+    if_block.cond->accept(*this);
+
+    for (Statement *stmt : *if_block.stmts) {
+      stmt->accept(*this);
+    }
+
+    if (if_block.else_stmts) {
+      for (Statement *stmt : *if_block.else_stmts) {
+        stmt->accept(*this);
+      }
+    }
+  };
+  void visit(Unroll &unroll) override {
+    for (Statement *stmt : *unroll.stmts) {
+      stmt->accept(*this);
+    }
+  };
+  void visit(While &while_block) override
+  {
+    while_block.cond->accept(*this);
+
+    for (Statement *stmt : *while_block.stmts)
+    {
+      stmt->accept(*this);
+    }
   }
+  void visit(Predicate &pred) override {
+    pred.expr->accept(*this);
+  };
+  void visit(__attribute__((unused)) AttachPoint &ap) override { };  // Leaf
   void visit(Probe &probe) override {
     probe_ = &probe;
-    ASTVisitor::visit(probe);
+    for (AttachPoint *ap : *probe.attach_points) {
+      ap->accept(*this);
+    }
+    if (probe.pred) {
+      probe.pred->accept(*this);
+    }
+    for (Statement *stmt : *probe.stmts) {
+      stmt->accept(*this);
+    }
+  };
+  void visit(Program &program) override {
+    for (Probe *probe : *program.probes)
+      probe->accept(*this);
   };
 
+  void analyse(Probe *probe) {
+    probe_ = probe;
+    probe->accept(*this);
+  }
 private:
   Probe *probe_;
 };
@@ -40,11 +138,6 @@ public:
   static bool parse(ast::Program *program, BPFtrace &bpftrace);
   static std::string get_struct_name(const std::string &category,
                                      const std::string &event_name);
-  static std::string get_struct_name(const std::string &probe_id);
-  static void clear_struct_list()
-  {
-    struct_list.clear();
-  }
 
 private:
   static std::string parse_field(const std::string &line,
