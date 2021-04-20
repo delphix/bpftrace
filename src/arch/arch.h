@@ -1,6 +1,8 @@
 #pragma once
 
+#include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace bpftrace {
 namespace arch {
@@ -13,6 +15,8 @@ int pc_offset();
 int sp_offset();
 int arg_stack_offset();
 std::string name();
+// Each string is lexicographically sorted by character
+std::vector<std::string> invalid_watchpoint_modes();
 
 } // namespace arch
 } // namespace bpftrace

@@ -45,7 +45,6 @@ class IRBuilderBPF : public IRBuilder<>
 public:
   IRBuilderBPF(LLVMContext &context, Module &module, BPFtrace &bpftrace);
 
-  // clang-format off
   AllocaInst *CreateAllocaBPF(llvm::Type *ty, const std::string &name="");
   AllocaInst *CreateAllocaBPF(const SizedType &stype, const std::string &name="");
   AllocaInst *CreateAllocaBPFInit(const SizedType &stype, const std::string &name);
@@ -55,23 +54,95 @@ public:
   llvm::Type *GetType(const SizedType &stype);
   llvm::ConstantInt *GetIntSameSize(uint64_t C, llvm::Value *expr);
   llvm::ConstantInt *GetIntSameSize(uint64_t C, llvm::Type *ty);
-  CallInst   *CreateBpfPseudoCall(int mapfd);
-  CallInst   *CreateBpfPseudoCall(Map &map);
-  Value      *CreateMapLookupElem(Value* ctx, Map &map, AllocaInst *key, const location& loc);
-  Value      *CreateMapLookupElem(Value* ctx, int mapfd, AllocaInst *key, SizedType &type, const location& loc);
-  void        CreateMapUpdateElem(Value* ctx, Map &map, AllocaInst *key, Value *val, const location& loc);
-  void        CreateMapDeleteElem(Value* ctx, Map &map, AllocaInst *key, const location& loc);
-  void        CreateProbeRead(Value *ctx, AllocaInst *dst, size_t size, Value *src, const location& loc);
-  void        CreateProbeRead(Value *ctx, AllocaInst *dst, llvm::Value *size, Value *src, const location& loc);
-  CallInst   *CreateProbeReadStr(Value* ctx, AllocaInst *dst, llvm::Value *size, Value *src, const location& loc);
-  CallInst   *CreateProbeReadStr(Value* ctx, AllocaInst *dst, size_t size, Value *src, const location& loc);
-  CallInst   *CreateProbeReadStr(Value* ctx, Value *dst, size_t size, Value *src, const location& loc);
-  Value      *CreateUSDTReadArgument(Value *ctx, AttachPoint *attach_point, int usdt_location_index, int arg_name, Builtin &builtin, pid_t pid, const location& loc);
-  Value      *CreateStrcmp(Value* ctx, Value* val, std::string str, const location& loc, bool inverse=false);
-  Value      *CreateStrcmp(Value* ctx, Value* val1, Value* val2, const location& loc, bool inverse=false);
-  Value      *CreateStrncmp(Value* ctx, Value* val, std::string str, uint64_t n, const location& loc, bool inverse=false);
-  Value      *CreateStrncmp(Value* ctx, Value* val1, Value* val2, uint64_t n, const location& loc, bool inverse=false);
-  CallInst   *CreateGetNs();
+  CallInst *CreateBpfPseudoCallFd(int mapfd);
+  CallInst *CreateBpfPseudoCallFd(Map &map);
+  CallInst *CreateBpfPseudoCallValue(int mapfd);
+  CallInst *CreateBpfPseudoCallValue(Map &map);
+  Value *CreateMapLookupElem(Value *ctx,
+                             Map &map,
+                             AllocaInst *key,
+                             const location &loc);
+  Value *CreateMapLookupElem(Value *ctx,
+                             int mapfd,
+                             AllocaInst *key,
+                             SizedType &type,
+                             const location &loc);
+  void CreateMapUpdateElem(Value *ctx,
+                           Map &map,
+                           AllocaInst *key,
+                           Value *val,
+                           const location &loc);
+  void CreateMapDeleteElem(Value *ctx,
+                           Map &map,
+                           AllocaInst *key,
+                           const location &loc);
+  void CreateProbeRead(Value *ctx,
+                       Value *dst,
+                       size_t size,
+                       Value *src,
+                       AddrSpace as,
+                       const location &loc);
+  void CreateProbeRead(Value *ctx,
+                       Value *dst,
+                       llvm::Value *size,
+                       Value *src,
+                       AddrSpace as,
+                       const location &loc);
+  CallInst *CreateProbeReadStr(Value *ctx,
+                               AllocaInst *dst,
+                               llvm::Value *size,
+                               Value *src,
+                               AddrSpace as,
+                               const location &loc);
+  CallInst *CreateProbeReadStr(Value *ctx,
+                               AllocaInst *dst,
+                               size_t size,
+                               Value *src,
+                               AddrSpace as,
+                               const location &loc);
+  CallInst *CreateProbeReadStr(Value *ctx,
+                               Value *dst,
+                               size_t size,
+                               Value *src,
+                               AddrSpace as,
+                               const location &loc);
+  Value *CreateUSDTReadArgument(Value *ctx,
+                                AttachPoint *attach_point,
+                                int usdt_location_index,
+                                int arg_name,
+                                Builtin &builtin,
+                                pid_t pid,
+                                AddrSpace as,
+                                const location &loc);
+  Value *CreateStrcmp(Value *ctx,
+                      Value *val,
+                      AddrSpace as,
+                      std::string str,
+                      const location &loc,
+                      bool inverse = false);
+  Value *CreateStrcmp(Value *ctx,
+                      Value *val1,
+                      AddrSpace as1,
+                      Value *val2,
+                      AddrSpace as2,
+                      const location &loc,
+                      bool inverse = false);
+  Value *CreateStrncmp(Value *ctx,
+                       Value *val,
+                       AddrSpace as,
+                       std::string str,
+                       uint64_t n,
+                       const location &loc,
+                       bool inverse = false);
+  Value *CreateStrncmp(Value *ctx,
+                       Value *val1,
+                       AddrSpace as1,
+                       Value *val2,
+                       AddrSpace as2,
+                       uint64_t n,
+                       const location &loc,
+                       bool inverse = false);
+  CallInst *CreateGetNs(bool boot_time);
   CallInst   *CreateGetPidTgid();
   CallInst   *CreateGetCurrentCgroupId();
   CallInst   *CreateGetUidGid();
@@ -80,6 +151,7 @@ public:
   CallInst   *CreateGetRandom();
   CallInst   *CreateGetStackId(Value *ctx, bool ustack, StackType stack_type, const location& loc);
   CallInst   *CreateGetJoinMap(Value *ctx, const location& loc);
+  CallInst   *createCall(Value *callee, ArrayRef<Value *> args, const Twine &Name);
   void        CreateGetCurrentComm(Value *ctx, AllocaInst *buf, size_t size, const location& loc);
   void        CreatePerfEventOutput(Value *ctx, Value *data, size_t size);
   void        CreateSignal(Value *ctx, Value *sig, const location &loc);
@@ -89,18 +161,34 @@ public:
   StructType *GetStructType(std::string name, const std::vector<llvm::Type *> & elements, bool packed = false);
   AllocaInst *CreateUSym(llvm::Value *val);
   Value      *CreatKFuncArg(Value *ctx, SizedType& type, std::string& name);
+  void CreatePath(Value *ctx,
+                  AllocaInst *buf,
+                  Value *path,
+                  const location &loc);
+  void CreateSeqPrintf(Value *ctx,
+                       Value *fmt,
+                       Value *fmt_size,
+                       AllocaInst *data,
+                       Value *data_len,
+                       const location &loc);
   int helper_error_id_ = 0;
 
 private:
   Module &module_;
   BPFtrace &bpftrace_;
 
-  Value      *CreateUSDTReadArgument(Value *ctx, struct bcc_usdt_argument *argument, Builtin &builtin, const location& loc);
+  Value *CreateUSDTReadArgument(Value *ctx,
+                                struct bcc_usdt_argument *argument,
+                                Builtin &builtin,
+                                AddrSpace as,
+                                const location &loc);
   CallInst   *createMapLookup(int mapfd, AllocaInst *key);
-  Constant   *createProbeReadStrFn(llvm::Type * dst, llvm::Type * src);
+  Constant *createProbeReadStrFn(llvm::Type *dst,
+                                 llvm::Type *src,
+                                 AddrSpace as);
+  libbpf::bpf_func_id selectProbeReadHelper(AddrSpace as, bool str);
 
   std::map<std::string, StructType *> structs_;
-  // clang-format on
 };
 
 } // namespace ast

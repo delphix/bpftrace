@@ -2,6 +2,8 @@
 #include <cassert>
 #include <iostream>
 
+#include "log.h"
+#include "struct.h"
 #include "types.h"
 
 namespace bpftrace {
@@ -12,19 +14,33 @@ std::ostream &operator<<(std::ostream &os, Type type)
   return os;
 }
 
+std::ostream &operator<<(std::ostream &os, AddrSpace as)
+{
+  os << addrspacestr(as);
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, ProbeType type)
+{
+  os << probetypeName(type);
+  return os;
+}
+
 std::ostream &operator<<(std::ostream &os, const SizedType &type)
 {
-  if (type.IsCastTy())
+  if (type.IsRecordTy())
   {
-    os << type.cast_type;
+    os << type.GetName();
   }
-  else if (type.IsCtxTy())
+  else if (type.IsPtrTy())
   {
-    os << "(ctx) " << type.cast_type;
+    if (type.IsCtxAccess())
+      os << "(ctx) ";
+    os << *type.GetPointeeTy() << " *";
   }
   else if (type.IsIntTy())
   {
-    os << (type.is_signed_ ? "" : "unsigned ") << "int" << 8 * type.size;
+    os << (type.is_signed_ ? "" : "unsigned ") << "int" << 8 * type.GetSize();
   }
   else if (type.IsArrayTy())
   {
@@ -32,15 +48,15 @@ std::ostream &operator<<(std::ostream &os, const SizedType &type)
   }
   else if (type.IsStringTy() || type.IsBufferTy())
   {
-    os << type.type << "[" << type.size << "]";
+    os << type.type << "[" << type.GetSize() << "]";
   }
-  else if (type.type == Type::tuple)
+  else if (type.IsTupleTy())
   {
     os << "(";
-    size_t n = type.tuple_elems.size();
+    size_t n = type.GetFieldCount();
     for (size_t i = 0; i < n; ++i)
     {
-      os << type.tuple_elems[i];
+      os << type.GetField(i).type;
       if (i != n - 1)
         os << ",";
     }
@@ -51,15 +67,36 @@ std::ostream &operator<<(std::ostream &os, const SizedType &type)
     os << type.type;
   }
 
-  if (type.is_pointer)
-    os << "*";
-
   return os;
+}
+
+bool SizedType::IsSameType(const SizedType &t) const
+{
+  if (t.type != type)
+    return false;
+
+  if (IsRecordTy())
+    return t.GetName() == GetName();
+
+  if (IsPtrTy() && t.IsPtrTy())
+    return GetPointeeTy()->IsSameType(*t.GetPointeeTy());
+
+  return type == t.type;
 }
 
 bool SizedType::IsEqual(const SizedType &t) const
 {
-  return type == t.type && size == t.size && is_signed_ == t.is_signed_;
+  if (t.type != type)
+    return false;
+
+  if (IsRecordTy())
+    return t.GetName() == GetName() && t.GetSize() == GetSize();
+
+  if (IsPtrTy())
+    return *t.GetPointeeTy() == *GetPointeeTy();
+
+  return type == t.type && GetSize() == t.GetSize() &&
+         is_signed_ == t.is_signed_;
 }
 
 bool SizedType::operator!=(const SizedType &t) const
@@ -72,21 +109,39 @@ bool SizedType::operator==(const SizedType &t) const
   return IsEqual(t);
 }
 
-bool SizedType::IsArray() const
+bool SizedType::IsByteArray() const
 {
-  return type == Type::array || type == Type::string || type == Type::usym ||
-         type == Type::inet || type == Type::buffer ||
-         ((type == Type::cast || type == Type::ctx) && !is_pointer);
+  return type == Type::string || type == Type::usym || type == Type::inet ||
+         type == Type::buffer || type == Type::timestamp ||
+         type == Type::mac_address;
 }
 
 bool SizedType::IsAggregate() const
 {
-  return IsArray() || IsTupleTy();
+  return IsArrayTy() || IsByteArray() || IsTupleTy() || IsRecordTy();
 }
 
 bool SizedType::IsStack() const
 {
   return type == Type::ustack || type == Type::kstack;
+}
+
+std::string addrspacestr(AddrSpace as)
+{
+  switch (as)
+  {
+    case AddrSpace::kernel:
+      return "kernel";
+      break;
+    case AddrSpace::user:
+      return "user";
+      break;
+    case AddrSpace::none:
+      return "none";
+      break;
+  }
+
+  return {}; // unreached
 }
 
 std::string typestr(Type t)
@@ -96,6 +151,8 @@ std::string typestr(Type t)
     // clang-format off
     case Type::none:     return "none";     break;
     case Type::integer:  return "integer";  break;
+    case Type::pointer:  return "pointer";  break;
+    case Type::record:   return "record";   break;
     case Type::hist:     return "hist";     break;
     case Type::lhist:    return "lhist";    break;
     case Type::count:    return "count";    break;
@@ -109,21 +166,20 @@ std::string typestr(Type t)
     case Type::string:   return "string";   break;
     case Type::ksym:     return "ksym";     break;
     case Type::usym:     return "usym";     break;
-    case Type::cast:     return "cast";     break;
     case Type::join:     return "join";     break;
     case Type::probe:    return "probe";    break;
     case Type::username: return "username"; break;
     case Type::inet:     return "inet";     break;
     case Type::stack_mode:return "stack mode";break;
     case Type::array:    return "array";    break;
-    case Type::ctx:      return "ctx";      break;
     case Type::buffer:   return "buffer";   break;
     case Type::tuple:    return "tuple";    break;
-    // clang-format on
-    default:
-      std::cerr << "call or probe type not found" << std::endl;
-      abort();
+    case Type::timestamp:return "timestamp";break;
+    case Type::mac_address: return "mac_address"; break;
+      // clang-format on
   }
+
+  return {}; // unreached
 }
 
 ProbeType probetype(const std::string &probeName)
@@ -174,12 +230,23 @@ std::string probetypeName(ProbeType t)
     case ProbeType::software:    return "software";    break;
     case ProbeType::hardware:    return "hardware";    break;
     case ProbeType::watchpoint:  return "watchpoint";  break;
+    case ProbeType::asyncwatchpoint:
+      return "asyncwatchpoint";
+      break;
     case ProbeType::kfunc:       return "kfunc";       break;
     case ProbeType::kretfunc:    return "kretfunc";    break;
-    default:
-      std::cerr << "probe type not found" << std::endl;
-      abort();
+    case ProbeType::iter:
+      return "iter";
+      break;
   }
+
+  return {}; // unreached
+}
+
+bool is_userspace_probe(const ProbeType &probe_type)
+{
+  return probe_type == ProbeType::uprobe ||
+         probe_type == ProbeType::uretprobe || probe_type == ProbeType::usdt;
 }
 
 uint64_t asyncactionint(AsyncAction a)
@@ -194,8 +261,16 @@ SizedType CreateInteger(size_t bits, bool is_signed)
   // analysis when we're inferring types, the first pass may not have
   // enough information to figure out the exact size of the integer. Later
   // passes infer the exact size.
-  assert(bits == 0 || bits == 8 || bits == 16 || bits == 32 || bits == 64);
-  return SizedType(Type::integer, bits / 8, is_signed);
+  assert(bits == 0 || bits == 1 || bits == 8 || bits == 16 || bits == 32 ||
+         bits == 64);
+  auto t = SizedType(Type::integer, bits / 8, is_signed);
+  t.size_bits_ = bits;
+  return t;
+}
+
+SizedType CreateBool(void)
+{
+  return CreateInteger(1, false);
 }
 
 SizedType CreateInt(size_t bits)
@@ -263,22 +338,28 @@ SizedType CreateStackMode()
   return SizedType(Type::stack_mode, 0);
 }
 
-SizedType CreateCast(size_t size, std::string name)
-{
-  assert(size % 8 == 0);
-  return SizedType(Type::cast, size / 8, name);
-}
-
-SizedType CreateCTX(size_t size, std::string name)
-{
-  return SizedType(Type::ctx, size, name);
-}
-
 SizedType CreateArray(size_t num_elements, const SizedType &element_type)
 {
-  auto ty = SizedType(Type::array, num_elements);
+  size_t size = num_elements * element_type.GetSize();
+  auto ty = SizedType(Type::array, size);
   ty.num_elements_ = num_elements;
-  ty.element_type_ = new SizedType(element_type);
+  ty.element_type_ = std::make_shared<SizedType>(element_type);
+  return ty;
+}
+
+SizedType CreatePointer(const SizedType &pointee_type, AddrSpace as)
+{
+  // Pointer itself is always an uint64
+  auto ty = SizedType(Type::pointer, 8);
+  ty.element_type_ = std::make_shared<SizedType>(pointee_type);
+  ty.SetAS(as);
+  return ty;
+}
+
+SizedType CreateRecord(size_t size, const std::string &name)
+{
+  auto ty = SizedType(Type::record, size);
+  ty.name_ = name;
   return ty;
 }
 
@@ -366,9 +447,84 @@ SizedType CreateBuffer(size_t size)
   return SizedType(Type::buffer, size);
 }
 
+SizedType CreateTimestamp()
+{
+  return SizedType(Type::timestamp, 16);
+}
+
+SizedType CreateTuple(const std::vector<SizedType> &fields)
+{
+  auto s = SizedType(Type::tuple, 0);
+  s.tuple_fields = Tuple::Create(fields);
+  s.size_ = s.tuple_fields->size;
+  return s;
+}
+
+SizedType CreateMacAddress()
+{
+  auto st = SizedType(Type::mac_address, 6);
+  st.is_internal = true;
+  return st;
+}
+
 bool SizedType::IsSigned(void) const
 {
   return is_signed_;
+}
+
+std::vector<Field> &SizedType::GetFields() const
+{
+  assert(IsTupleTy());
+  return tuple_fields->fields;
+}
+
+Field &SizedType::GetField(ssize_t n) const
+{
+  assert(IsTupleTy());
+  if (n >= GetFieldCount())
+    throw std::runtime_error("Getfield(): out of bound");
+  return tuple_fields->fields[n];
+}
+
+ssize_t SizedType::GetFieldCount() const
+{
+  assert(IsTupleTy());
+  return tuple_fields->fields.size();
+}
+
+void SizedType::DumpStructure(std::ostream &os)
+{
+  assert(IsTupleTy());
+  return tuple_fields->Dump(os);
+}
+
+ssize_t SizedType::GetAlignment() const
+{
+  if (IsStringTy())
+    return 1;
+
+  if (IsTupleTy())
+    return tuple_fields->align;
+
+  if (GetSize() <= 2)
+    return GetSize();
+  else if (IsArrayTy())
+    return element_type_->GetAlignment();
+  else if (IsByteArray() || GetSize() <= 4)
+    return 4;
+  else
+    return 8;
+}
+
+bool SizedType::IsTupleWithStruct(void) const
+{
+  if (!IsTupleTy())
+    return false;
+
+  for (auto &field : tuple_fields->fields)
+    if (field.type.IsRecordTy())
+      return true;
+  return false;
 }
 
 } // namespace bpftrace

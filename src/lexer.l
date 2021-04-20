@@ -18,18 +18,19 @@ static std::string buffer;
 using namespace bpftrace;
 %}
 
-ident   [_a-zA-Z][_a-zA-Z0-9]*
-map     @{ident}|@
-var     ${ident}
-int     [0-9]+|0[xX][0-9a-fA-F]+
-hex     (x|X)[0-9a-fA-F]{1,2}
-oct     [0-7]{1,3}
-hspace  [ \t]
-vspace  [\n\r]
-space   {hspace}|{vspace}
-path    :(\\.|[_\-\./a-zA-Z0-9#\*])*:
-builtin arg[0-9]|args|cgroup|comm|cpid|cpu|ctx|curtask|elapsed|func|gid|nsecs|pid|probe|rand|retval|sarg[0-9]|tid|uid|username
-call    avg|buf|cat|cgroupid|clear|count|delete|exit|hist|join|kaddr|ksym|lhist|max|min|ntop|override|print|printf|reg|signal|sizeof|stats|str|strncmp|sum|system|time|uaddr|usym|zero
+ident    [_a-zA-Z][_a-zA-Z0-9]*
+map      @{ident}|@
+var      ${ident}
+int      [0-9]+|0[xX][0-9a-fA-F]+
+exponent [0-9]+e[0-9]+
+hex      (x|X)[0-9a-fA-F]{1,2}
+oct      [0-7]{1,3}
+hspace   [ \t]
+vspace   [\n\r]
+space    {hspace}|{vspace}
+path     :(\\.|[_\-\./a-zA-Z0-9#\*])+
+builtin  arg[0-9]|args|cgroup|comm|cpid|cpu|ctx|curtask|elapsed|func|gid|nsecs|pid|probe|rand|retval|sarg[0-9]|tid|uid|username
+call     avg|buf|cat|cgroupid|clear|count|delete|exit|hist|join|kaddr|kptr|ksym|lhist|macaddr|max|min|ntop|override|print|printf|reg|signal|sizeof|stats|str|strftime|strncmp|sum|system|time|uaddr|uptr|usym|zero|path|unwatch
 
 /* Don't add to this! Use builtin OR call not both */
 call_and_builtin kstack|ustack
@@ -58,7 +59,16 @@ bpftrace|perf           { return Parser::make_STACK_MODE(yytext, loc); }
 {builtin}               { return Parser::make_BUILTIN(yytext, loc); }
 {call}                  { return Parser::make_CALL(yytext, loc); }
 {call_and_builtin}      { return Parser::make_CALL_BUILTIN(yytext, loc); }
-{int}                   { return Parser::make_INT(strtoll(yytext, NULL, 0), loc); }
+{int}                   { return Parser::make_INT(strtoul(yytext, NULL, 0), loc); }
+{exponent}              {
+                          uint64_t num;
+                          try {
+                            num = parse_exponent(yytext);
+                            return Parser::make_INT(num, loc);
+                          } catch (std::exception const &e) {
+                            driver.error(loc, e.what());
+                          }
+                        }
 {path}                  { return Parser::make_PATH(yytext, loc); }
 {map}                   { return Parser::make_MAP(yytext, loc); }
 {var}                   { return Parser::make_VAR(yytext, loc); }
@@ -177,6 +187,7 @@ struct|union|enum       yy_push_state(STRUCT, yyscanner); buffer.clear(); struct
 }
 
 {ident}                 {
+                          static int unput_count = 0;
                           if (driver.bpftrace_.macros_.count(yytext) != 0)
                           {
                             const char *s = driver.bpftrace_.macros_[yytext].c_str();
@@ -188,14 +199,27 @@ struct|union|enum       yy_push_state(STRUCT, yyscanner); buffer.clear(); struct
                             // future.
                             if (strcmp(s, yytext) == 0)
                             {
+                              unput_count = 0;
                               return Parser::make_IDENT(yytext, loc);
                             }
                             else
                             {
-                              for (z=strlen(s) - 1; z >= 0; z--)
+                              int leng = yyleng;
+                              std::string original_s(s);
+                              std::string original_yytext(yytext);
+                              for (z=strlen(s) - 1; z >= 0; z--){
+                                if (unput_count >= 1000 || leng <= 0) {
+                                  driver.error(loc, std::string("Macro recursion limit reached: ")
+                                                    + original_yytext + ", " + original_s);
+                                  yyterminate();
+                                }
                                 unput(s[z]);
+                                unput_count++;
+                                leng--;
+                              }
                             }
                           } else {
+                            unput_count = 0;
                             return Parser::make_IDENT(yytext, loc);
                           }
                         }

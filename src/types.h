@@ -21,6 +21,8 @@ enum class Type
   // clang-format off
   none,
   integer,
+  pointer,
+  record, // struct/union, as struct is a protected keyword
   hist,
   lhist,
   count,
@@ -34,22 +36,28 @@ enum class Type
   string,
   ksym,
   usym,
-  cast,
   join,
   probe,
   username,
   inet,
   stack_mode,
   array,
-  // BPF program context; needing a different access method to satisfy the verifier
-  ctx,
-  record, // struct or union
   buffer,
   tuple,
+  timestamp,
+  mac_address
   // clang-format on
 };
 
+enum class AddrSpace
+{
+  none,
+  kernel,
+  user,
+};
+
 std::ostream &operator<<(std::ostream &os, Type type);
+std::ostream &operator<<(std::ostream &os, AddrSpace as);
 
 enum class StackMode
 {
@@ -67,90 +75,156 @@ struct StackType
   }
 };
 
+struct Tuple;
+struct Field;
+
 class SizedType
 {
 public:
-  SizedType() : type(Type::none), size(0) { }
-  SizedType(Type type,
-            size_t size_,
-            bool is_signed,
-            const std::string &cast_type = "")
-      : type(type), size(size_), cast_type(cast_type), is_signed_(is_signed)
+  SizedType() : type(Type::none), size_(0)
   {
   }
-  SizedType(Type type, size_t size_, const std::string &cast_type = "")
-      : type(type), size(size_), cast_type(cast_type)
+  SizedType(Type type, size_t size_, bool is_signed)
+      : type(type), size_(size_), is_signed_(is_signed)
+  {
+  }
+  SizedType(Type type, size_t size_) : type(type), size_(size_)
   {
   }
 
   Type type;
-  Type elem_type = Type::none; // Array element type if accessing elements of an
-                               // array
-
-  size_t size;                 // in bytes
   StackType stack_type;
-  std::string cast_type;
   bool is_internal = false;
-  bool is_pointer = false;
   bool is_tparg = false;
   bool is_kfarg = false;
-  size_t pointee_size = 0;
   int kfarg_idx = -1;
-  // Only valid if `type == Type::tuple`
-  std::vector<SizedType> tuple_elems;
 
 private:
+  size_t size_; // in bytes
   bool is_signed_ = false;
-  SizedType *element_type_ = nullptr; // for "container" and pointer
-                                      // (like) types
+  std::shared_ptr<SizedType> element_type_; // for "container" and pointer
+                                            // (like) types
   size_t num_elements_;               // for array like types
+  std::string name_; // name of this type, for named types like struct
+  bool ctx_ = false; // Is bpf program context
+  AddrSpace as_ = AddrSpace::none;
+  ssize_t size_bits_; // size in bits for integer types
+
+  std::shared_ptr<Tuple> tuple_fields; // tuple fields
 
 public:
-  bool IsArray() const;
+  /**
+     Tuple accessors
+  */
+  std::vector<Field> &GetFields() const;
+  Field &GetField(ssize_t n) const;
+  ssize_t GetFieldCount() const;
+
+  /**
+     Required alignment for this type
+   */
+  ssize_t GetAlignment() const;
+
+  /**
+     Dump the underlying structure for debug purposes
+  */
+  void DumpStructure(std::ostream &os);
+
+  AddrSpace GetAS() const
+  {
+    return as_;
+  }
+
+  void SetAS(AddrSpace as)
+  {
+    as_ = as;
+  }
+
+  bool IsCtxAccess() const
+  {
+    return ctx_;
+  };
+
+  void MarkCtxAccess()
+  {
+    ctx_ = true;
+  };
+
+  bool IsByteArray() const;
   bool IsAggregate() const;
   bool IsStack() const;
 
   bool IsEqual(const SizedType &t) const;
   bool operator==(const SizedType &t) const;
   bool operator!=(const SizedType &t) const;
+  bool IsSameType(const SizedType &t) const;
 
   bool IsPrintableTy()
   {
-    return type != Type::none && type != Type::cast && type != Type::ctx &&
-           type != Type::stack_mode && type != Type::array &&
-           type != Type::record;
+    return type != Type::none && type != Type::pointer &&
+           type != Type::stack_mode && !IsCtxAccess();
   }
 
   bool IsSigned(void) const;
 
+  size_t GetSize() const
+  {
+    return size_;
+  }
+
+  void SetSize(size_t size)
+  {
+    size_ = size;
+    if (IsIntTy())
+    {
+      assert(size == 0 || size == 1 || size == 8 || size == 16 || size == 32 ||
+             size == 64);
+      size_bits_ = size * 8;
+    }
+  }
+
   size_t GetIntBitWidth() const
   {
     assert(IsIntTy());
-    return 8 * size;
+    return size_bits_;
   };
 
   size_t GetNumElements() const
   {
     assert(IsArrayTy() || IsStringTy());
-    return size;
+    return IsStringTy() ? size_ : size_ / element_type_->size_;
   };
+
+  const std::string GetName() const
+  {
+    assert(IsRecordTy());
+    return name_;
+  }
 
   const SizedType *GetElementTy() const
   {
-    assert(IsArrayTy() || IsCtxTy());
-    return element_type_;
+    assert(IsArrayTy());
+    return element_type_.get();
   }
 
+  const SizedType *GetPointeeTy() const
+  {
+    assert(IsPtrTy());
+    return element_type_.get();
+  }
+
+  bool IsBoolTy() const
+  {
+    return type == Type::integer && size_bits_ == 1;
+  };
   bool IsPtrTy() const
   {
-    return IsIntTy() && is_pointer;
+    return type == Type::pointer;
   };
-
   bool IsIntTy() const
   {
     return type == Type::integer;
   };
-
   bool IsNoneTy(void) const
   {
     return type == Type::none;
@@ -211,10 +285,7 @@ public:
   {
     return type == Type::usym;
   };
-  bool IsCastTy(void) const
-  {
-    return type == Type::cast;
-  };
+
   bool IsJoinTy(void) const
   {
     return type == Type::join;
@@ -239,10 +310,6 @@ public:
   {
     return type == Type::array;
   };
-  bool IsCtxTy(void) const
-  {
-    return type == Type::ctx;
-  };
   bool IsRecordTy(void) const
   {
     return type == Type::record;
@@ -255,6 +322,16 @@ public:
   {
     return type == Type::tuple;
   };
+  bool IsTimestampTy(void) const
+  {
+    return type == Type::timestamp;
+  };
+  bool IsMacAddressTy(void) const
+  {
+    return type == Type::mac_address;
+  };
+
+  bool IsTupleWithStruct(void) const;
 
   friend std::ostream &operator<<(std::ostream &, const SizedType &);
   friend std::ostream &operator<<(std::ostream &, Type);
@@ -263,10 +340,16 @@ public:
 
   friend SizedType CreateArray(size_t num_elements,
                                const SizedType &element_type);
+
+  friend SizedType CreatePointer(const SizedType &pointee_type, AddrSpace as);
+  friend SizedType CreateRecord(size_t size, const std::string &name);
+  friend SizedType CreateInteger(size_t bits, bool is_signed);
+  friend SizedType CreateTuple(const std::vector<SizedType> &fields);
 };
 // Type helpers
 
 SizedType CreateNone();
+SizedType CreateBool();
 SizedType CreateInteger(size_t bits, bool is_signed);
 SizedType CreateInt(size_t bits);
 SizedType CreateUInt(size_t bits);
@@ -281,13 +364,17 @@ SizedType CreateUInt64();
 
 SizedType CreateString(size_t size);
 SizedType CreateArray(size_t num_elements, const SizedType &element_type);
+SizedType CreatePointer(const SizedType &pointee_type,
+                        AddrSpace as = AddrSpace::none);
+/**
+   size in bytes
+ */
+SizedType CreateRecord(size_t size, const std::string &name);
+
+SizedType CreateTuple(const std::vector<SizedType> &fields);
 
 SizedType CreateStackMode();
 SizedType CreateStack(bool kernel, StackType st = StackType());
-
-// Size in bits
-SizedType CreateCast(size_t size, std::string name = "");
-SizedType CreateCTX(size_t size, std::string name);
 
 SizedType CreateMin(bool is_signed);
 SizedType CreateMax(bool is_signed);
@@ -304,6 +391,8 @@ SizedType CreateUSym();
 SizedType CreateKSym();
 SizedType CreateJoin(size_t argnum, size_t argsize);
 SizedType CreateBuffer(size_t size);
+SizedType CreateTimestamp();
+SizedType CreateMacAddress();
 
 std::ostream &operator<<(std::ostream &os, const SizedType &type);
 
@@ -321,9 +410,13 @@ enum class ProbeType
   software,
   hardware,
   watchpoint,
+  asyncwatchpoint,
   kfunc,
   kretfunc,
+  iter,
 };
+
+std::ostream &operator<<(std::ostream &os, ProbeType type);
 
 struct ProbeItem
 {
@@ -332,8 +425,7 @@ struct ProbeItem
   ProbeType type;
 };
 
-const std::vector<ProbeItem> PROBE_LIST =
-{
+const std::vector<ProbeItem> PROBE_LIST = {
   { "kprobe", "k", ProbeType::kprobe },
   { "kretprobe", "kr", ProbeType::kretprobe },
   { "uprobe", "u", ProbeType::uprobe },
@@ -347,12 +439,16 @@ const std::vector<ProbeItem> PROBE_LIST =
   { "software", "s", ProbeType::software },
   { "hardware", "h", ProbeType::hardware },
   { "watchpoint", "w", ProbeType::watchpoint },
+  { "asyncwatchpoint", "aw", ProbeType::asyncwatchpoint },
   { "kfunc", "f", ProbeType::kfunc },
   { "kretfunc", "fr", ProbeType::kretfunc },
+  { "iter", "it", ProbeType::iter },
 };
 
-std::string typestr(Type t);
 ProbeType probetype(const std::string &type);
+bool is_userspace_probe(const ProbeType &probe_type);
+std::string addrspacestr(AddrSpace as);
+std::string typestr(Type t);
 std::string probetypeName(const std::string &type);
 std::string probetypeName(ProbeType t);
 
@@ -364,15 +460,17 @@ struct Probe
   std::string orig_name;        // original full probe name,
                                 // before wildcard expansion
   std::string name;             // full probe name
+  std::string pin;              // pin file for iterator probes
   std::string ns;               // for USDT probes, if provider namespace not from path
-  uint64_t loc;                 // for USDT probes
+  uint64_t loc = 0;             // for USDT probes
   int usdt_location_idx = 0;    // to disambiguate duplicate USDT markers
-  uint64_t log_size;
+  uint64_t log_size = 1000000;
   int index = 0;
-  int freq;
+  int freq = 0;
   pid_t pid = -1;
   uint64_t len = 0;             // for watchpoint probes, size of region
   std::string mode;             // for watchpoint probes, watch mode (rwx)
+  bool async = false; // for watchpoint probes, if it's an async watchpoint
   uint64_t address = 0;
   uint64_t func_offset = 0;
 };
@@ -393,6 +491,9 @@ enum class AsyncAction
   join,
   helper_error,
   print_non_map,
+  strftime,
+  watchpoint_attach,
+  watchpoint_detach,
   // clang-format on
 };
 
@@ -418,10 +519,9 @@ struct hash<bpftrace::StackType>
         return std::hash<std::string>()("bpftrace#" + to_string(obj.limit));
       case bpftrace::StackMode::perf:
         return std::hash<std::string>()("perf#" + to_string(obj.limit));
-      // TODO (mmarchini): enable -Wswitch-enum and disable -Wswitch-default
-      default:
-        abort();
     }
+
+    return {}; // unreached
   }
 };
 

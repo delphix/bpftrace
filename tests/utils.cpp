@@ -87,6 +87,17 @@ static void symlink_test_binary(const std::string& destination)
   }
 }
 
+static std::string get_working_path()
+{
+  char cwd_path[PATH_MAX];
+  if (::getcwd(cwd_path, PATH_MAX) == nullptr)
+  {
+    throw std::runtime_error(
+        "getting current working directory for tests failed");
+  }
+  return std::string(cwd_path);
+}
+
 TEST(utils, resolve_binary_path)
 {
   std::string path = "/tmp/bpftrace-test-utils-XXXXXX";
@@ -116,6 +127,48 @@ TEST(utils, resolve_binary_path)
   EXPECT_EQ(resolve_binary_path(path + "/*executable*"), paths_all_executables);
 
   exec_system(("rm -rf " + path).c_str());
+}
+
+TEST(utils, parse_exponent)
+{
+  EXPECT_EQ(parse_exponent((const char*)"1e0"), 1e0);
+  EXPECT_EQ(parse_exponent((const char*)"1e1"), 1e1);
+  EXPECT_EQ(parse_exponent((const char*)"1e9"), 1e9);
+  EXPECT_EQ(parse_exponent((const char*)"2e1"), 2e1);
+  EXPECT_EQ(parse_exponent((const char*)"2e9"), 2e9);
+  EXPECT_EQ(parse_exponent((const char*)"2e9"), 2e9);
+  EXPECT_EQ(parse_exponent((const char*)"010e010"), 1e11);
+
+  EXPECT_EQ(parse_exponent((const char*)"2a9"), 2ULL);
+}
+
+TEST(utils, abs_path)
+{
+  std::string path = "/tmp/bpftrace-test-utils-XXXXXX";
+  std::string rel_file = "bpftrace-test-utils-abs-path";
+  if (::mkdtemp(&path[0]) == nullptr)
+  {
+    throw std::runtime_error("creating temporary path for tests failed");
+  }
+
+  int fd;
+  fd = open((path + "/somefile").c_str(), O_CREAT, S_IRUSR);
+  close(fd);
+  fd = open(rel_file.c_str(), O_CREAT, S_IRUSR);
+  close(fd);
+
+  // Translates absolute path with '../..'
+  EXPECT_EQ(abs_path(path + "/../.." + path + "/somefile"), path + "/somefile");
+  // Translates relative path with './'
+  EXPECT_EQ(abs_path("./" + rel_file), get_working_path() + "/" + rel_file);
+
+  // /proc/<pid>/root path returned as is (and doesn't throw)
+  EXPECT_NO_THROW(
+      abs_path(std::string("/proc/1/root/usr/local/bin/usdt_test.so")));
+  EXPECT_EQ(abs_path(std::string("/proc/1/root/usr/local/bin/usdt_test.so")),
+            std::string("/proc/1/root/usr/local/bin/usdt_test.so"));
+
+  remove(rel_file.c_str());
 }
 
 } // namespace utils

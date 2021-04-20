@@ -2,11 +2,13 @@ NAME kprobe
 RUN bpftrace -v -e 'kprobe:vfs_read { printf("SUCCESS '$test' %d\n", pid); exit(); }'
 EXPECT SUCCESS kprobe [0-9][0-9]*
 TIMEOUT 5
+AFTER ./testprogs/syscall read
 
 NAME kprobe_short_name
 RUN bpftrace -v -e 'k:vfs_read { printf("SUCCESS '$test' %d\n", pid); exit(); }'
 EXPECT SUCCESS kprobe_short_name [0-9][0-9]*
 TIMEOUT 5
+AFTER ./testprogs/syscall read
 
 NAME kprobe_target
 RUN bpftrace -v -e 'kprobe:syscalls:sys_exit_nanosleep { printf("SUCCESS '$test' %d\n", pid); exit(); }'
@@ -23,7 +25,11 @@ NAME kprobe_offset
 RUN bpftrace -v -e 'kprobe:vfs_read+0 { printf("SUCCESS '$test' %d\n", pid); exit(); }'
 EXPECT SUCCESS kprobe_offset [0-9][0-9]*
 TIMEOUT 5
+AFTER ./testprogs/syscall read
 
+# Note: this test may fail if you've installed a new kernel but not rebooted
+# yet. Reason is b/c bpftrace will look for a vmlinux based on the running kernel's
+# version.
 NAME kprobe_offset_fail_size
 RUN bpftrace -v -e 'kprobe:vfs_read+1000000 { printf("SUCCESS '$test' %d\n", pid); exit(); }'
 EXPECT Offset outside the function bounds \('vfs_read' size is*
@@ -33,11 +39,13 @@ NAME kretprobe
 RUN bpftrace -v -e 'kretprobe:vfs_read { printf("SUCCESS '$test' %d\n", pid); exit(); }'
 EXPECT SUCCESS kretprobe [0-9][0-9]*
 TIMEOUT 5
+AFTER ./testprogs/syscall read
 
 NAME kretprobe_short_name
 RUN bpftrace -v -e 'kr:vfs_read { printf("SUCCESS '$test' %d\n", pid); exit(); }'
 EXPECT SUCCESS kretprobe_short_name [0-9][0-9]*
 TIMEOUT 5
+AFTER ./testprogs/syscall read
 
 NAME kretprobe_target
 RUN bpftrace -v -e 'kretprobe:syscalls:sys_exit_nanosleep { printf("SUCCESS '$test' %d\n", pid); exit(); }'
@@ -119,6 +127,12 @@ RUN bpftrace -v -e 'tracepoint:syscalls:sys_*_nanosleep { printf("hit "); }' -c 
 EXPECT hit hit
 TIMEOUT 5
 
+# Test that we get at least two characters out
+NAME tracepoint_data_loc
+RUN bpftrace -v -e 'tracepoint:irq:irq_handler_entry { print(str(args->name)) }'
+EXPECT ..+
+TIMEOUT 5
+
 NAME profile
 RUN bpftrace -v -e 'profile:hz:599 { @[tid] = count(); exit();}'
 EXPECT \@\[[0-9]*\]\:\s[0-9]
@@ -127,11 +141,6 @@ TIMEOUT 5
 NAME profile_short_name
 RUN bpftrace -v -e 'p:hz:599 { @[tid] = count(); exit();}'
 EXPECT \@\[[0-9]*\]\:\s[0-9]
-TIMEOUT 5
-
-NAME profile_order
-RUN bpftrace -v runtime/scripts/profile_order.bt
-EXPECT first second
 TIMEOUT 5
 
 NAME interval

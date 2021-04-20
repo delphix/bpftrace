@@ -1,12 +1,14 @@
 #pragma once
 
-#include <csignal>
 #include <cstring>
+#include <exception>
 #include <iostream>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <sys/utsname.h>
 #include <tuple>
+#include <unordered_set>
 #include <vector>
 
 namespace bpftrace {
@@ -49,6 +51,14 @@ public:
 
 private:
   std::string msg_;
+};
+
+class EnospcException : public std::runtime_error
+{
+public:
+  // C++11 feature: bring base class constructor into scope to automatically
+  // forward constructor calls to base class
+  using std::runtime_error::runtime_error;
 };
 
 class StdioSilencer
@@ -117,10 +127,12 @@ static std::vector<std::string> COMPILE_TIME_FUNCS = { "cgroupid" };
 
 bool get_uint64_env_var(const ::std::string &str, uint64_t &dest);
 std::string get_pid_exe(pid_t pid);
+std::string get_pid_exe(const std::string &pid);
 bool has_wildcard(const std::string &str);
 std::vector<std::string> split_string(const std::string &str,
                                       char delimiter,
                                       bool remove_empty = false);
+std::string erase_prefix(std::string &str);
 bool wildcard_match(const std::string &str,
                     std::vector<std::string> &tokens,
                     bool start_wildcard,
@@ -129,10 +141,12 @@ std::vector<int> get_online_cpus();
 std::vector<int> get_possible_cpus();
 bool is_dir(const std::string &path);
 std::tuple<std::string, std::string> get_kernel_dirs(
-    const struct utsname &utsname);
+    const struct utsname &utsname,
+    bool unpack_kheaders);
 std::vector<std::string> get_kernel_cflags(const char *uname_machine,
                                            const std::string &ksrc,
                                            const std::string &kobj);
+std::unordered_set<std::string> get_traceable_funcs();
 const std::string &is_deprecated(const std::string &str);
 bool is_unsafe_func(const std::string &func_name);
 bool is_compile_time_func(const std::string &func_name);
@@ -147,6 +161,37 @@ bool is_numeric(const std::string &str);
 bool symbol_has_cpp_mangled_signature(const std::string &sym_name);
 pid_t parse_pid(const std::string &str);
 std::string hex_format_buffer(const char *buf, size_t size);
+std::optional<std::string> abs_path(const std::string &rel_path);
+
+// Generate object file section name for a given probe
+inline std::string get_section_name_for_probe(
+    const std::string &probe_name,
+    int index,
+    std::optional<int> usdt_location_index = std::nullopt)
+{
+  auto ret = "s_" + probe_name;
+
+  if (usdt_location_index)
+    ret += "_loc" + std::to_string(*usdt_location_index);
+
+  ret += "_" + std::to_string(index);
+
+  return ret;
+}
+
+inline std::string get_watchpoint_setup_probe_name(
+    const std::string &probe_name)
+{
+  return probe_name + "_wp_setup";
+}
+
+inline std::string get_section_name_for_watchpoint_setup(
+    const std::string &probe_name,
+    int index)
+{
+  return get_section_name_for_probe(get_watchpoint_setup_probe_name(probe_name),
+                                    index);
+}
 
 // trim from end of string (right)
 inline std::string &rtrim(std::string &s)
@@ -168,8 +213,6 @@ inline std::string &trim(std::string &s)
   return ltrim(rtrim(s));
 }
 
-int signal_name_to_num(std::string &signal);
-
 template <typename T>
 T read_data(const void *src)
 {
@@ -178,4 +221,6 @@ T read_data(const void *src)
   return v;
 }
 
+uint64_t parse_exponent(const char *str);
+uint32_t kernel_version(int attempt);
 } // namespace bpftrace

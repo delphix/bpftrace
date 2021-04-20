@@ -1,9 +1,9 @@
 add_compile_options("-Wno-undef")
-add_compile_options("-Wno-switch-default")
-add_compile_options("-Wno-switch-enum")
 
-if(HAVE_BFD_DISASM)
-  set(BFD_DISASM_SRC ${CMAKE_SOURCE_DIR}/src/bfd-disasm.cpp)
+if (STATIC_LIBC)
+  # STATIC_LIBC will set linker flags to -static. We don't want this for
+  # testprogs linking, so we clear the flags.
+  unset(CMAKE_EXE_LINKER_FLAGS)
 endif()
 
 # Regenerate codegen_includes.cpp whenever anything in the tests/codegen
@@ -16,11 +16,19 @@ add_custom_command(OUTPUT ${CMAKE_BINARY_DIR}/tests/codegen_includes.cpp
     -P ${CMAKE_SOURCE_DIR}/tests/codegen/generate_codegen_includes.cmake
   DEPENDS ${CODEGEN_SOURCES})
 
+if(${LLVM_VERSION} VERSION_LESS 11.0.0)
+  set(CODEGEN_SRC ${CMAKE_BINARY_DIR}/tests/codegen_includes.cpp)
+else()
+  set(CODEGEN_SRC "")
+  message("Disabled codegen test for LLVM >= 11")
+endif()
+
 add_executable(bpftrace_test
   ast.cpp
   bpftrace.cpp
   child.cpp
   clang_parser.cpp
+  log.cpp
   main.cpp
   mocks.cpp
   parser.cpp
@@ -30,95 +38,31 @@ add_executable(bpftrace_test
   tracepoint_format_parser.cpp
   utils.cpp
 
-  ${CMAKE_BINARY_DIR}/tests/codegen_includes.cpp
-
-  ${CMAKE_SOURCE_DIR}/src/attached_probe.cpp
-  ${CMAKE_SOURCE_DIR}/src/bpftrace.cpp
-  ${CMAKE_SOURCE_DIR}/src/bpffeature.cpp
-  ${CMAKE_SOURCE_DIR}/src/btf.cpp
-  ${CMAKE_SOURCE_DIR}/src/child.cpp
-  ${CMAKE_SOURCE_DIR}/src/clang_parser.cpp
-  ${CMAKE_SOURCE_DIR}/src/disasm.cpp
-  ${CMAKE_SOURCE_DIR}/src/driver.cpp
-  ${CMAKE_SOURCE_DIR}/src/fake_map.cpp
-  ${CMAKE_SOURCE_DIR}/src/map.cpp
-  ${CMAKE_SOURCE_DIR}/src/mapkey.cpp
-  ${CMAKE_SOURCE_DIR}/src/output.cpp
-  ${CMAKE_SOURCE_DIR}/src/printf.cpp
-  ${CMAKE_SOURCE_DIR}/src/procmon.cpp
-  ${CMAKE_SOURCE_DIR}/src/resolve_cgroupid.cpp
-  ${CMAKE_SOURCE_DIR}/src/signal.cpp
-  ${CMAKE_SOURCE_DIR}/src/struct.cpp
-  ${CMAKE_SOURCE_DIR}/src/tracepoint_format_parser.cpp
-  ${CMAKE_SOURCE_DIR}/src/types.cpp
-  ${CMAKE_SOURCE_DIR}/src/usdt.cpp
-  ${CMAKE_SOURCE_DIR}/src/utils.cpp
-  ${BFD_DISASM_SRC}
+  ${CODEGEN_SRC}
 )
 
-if(HAVE_NAME_TO_HANDLE_AT)
-  target_compile_definitions(bpftrace_test PRIVATE HAVE_NAME_TO_HANDLE_AT=1)
-endif(HAVE_NAME_TO_HANDLE_AT)
-if(HAVE_BCC_PROG_LOAD)
-  target_compile_definitions(bpftrace_test PRIVATE HAVE_BCC_PROG_LOAD)
-endif(HAVE_BCC_PROG_LOAD)
-if(HAVE_BCC_CREATE_MAP)
-  target_compile_definitions(bpftrace_test PRIVATE HAVE_BCC_CREATE_MAP)
-endif(HAVE_BCC_CREATE_MAP)
-if (LIBBPF_BTF_DUMP_FOUND)
-  target_compile_definitions(bpftrace_test PRIVATE HAVE_LIBBPF_BTF_DUMP)
-  target_include_directories(bpftrace_test PUBLIC ${LIBBPF_INCLUDE_DIRS})
-  target_link_libraries(bpftrace_test ${LIBBPF_LIBRARIES})
-  if (HAVE_LIBBPF_BTF_DUMP_EMIT_TYPE_DECL)
-    target_compile_definitions(bpftrace_test PRIVATE HAVE_LIBBPF_BTF_DUMP_EMIT_TYPE_DECL)
-  endif()
-endif(LIBBPF_BTF_DUMP_FOUND)
-if (HAVE_BCC_KFUNC)
-  target_compile_definitions(bpftrace_test PRIVATE HAVE_BCC_KFUNC)
-endif(HAVE_BCC_KFUNC)
-if(HAVE_BCC_USDT_ADDSEM)
-  target_compile_definitions(bpftrace PRIVATE HAVE_BCC_USDT_ADDSEM)
-endif(HAVE_BCC_USDT_ADDSEM)
 target_compile_definitions(bpftrace_test PRIVATE TEST_CODEGEN_LOCATION="${CMAKE_SOURCE_DIR}/tests/codegen/llvm/")
-if(HAVE_BFD_DISASM)
-  target_compile_definitions(bpftrace_test PRIVATE HAVE_BFD_DISASM)
-  if(LIBBFD_DISASM_FOUR_ARGS_SIGNATURE)
-    target_compile_definitions(bpftrace_test PRIVATE LIBBFD_DISASM_FOUR_ARGS_SIGNATURE)
-  endif(LIBBFD_DISASM_FOUR_ARGS_SIGNATURE)
-  if(STATIC_LINKING)
-    add_library(LIBBFD STATIC IMPORTED)
-    set_property(TARGET LIBBFD PROPERTY IMPORTED_LOCATION ${LIBBFD_LIBRARIES})
-    target_link_libraries(bpftrace_test LIBBFD)
-    add_library(LIBOPCODES STATIC IMPORTED)
-    set_property(TARGET LIBOPCODES PROPERTY IMPORTED_LOCATION ${LIBOPCODES_LIBRARIES})
-    target_link_libraries(bpftrace_test LIBOPCODES)
-    add_library(LIBIBERTY STATIC IMPORTED)
-    set_property(TARGET LIBIBERTY PROPERTY IMPORTED_LOCATION ${LIBIBERTY_LIBRARIES})
-    target_link_libraries(bpftrace_test LIBIBERTY)
-  else()
-    target_link_libraries(bpftrace_test ${LIBBFD_LIBRARIES})
-    target_link_libraries(bpftrace_test ${LIBOPCODES_LIBRARIES})
-  endif(STATIC_LINKING)
-endif(HAVE_BFD_DISASM)
+target_link_libraries(bpftrace_test libbpftrace)
 
-target_link_libraries(bpftrace_test arch ast parser resources)
+if(CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
+  target_compile_definitions(bpftrace_test PRIVATE ARCH_AARCH64)
+elseif(CMAKE_SYSTEM_PROCESSOR STREQUAL "ppc64" OR
+       CMAKE_SYSTEM_PROCESSOR STREQUAL "ppc64le")
+  target_compile_definitions(bpftrace_test PRIVATE ARCH_PPC64)
+elseif(CMAKE_SYSTEM_PROCESSOR STREQUAL "s390" OR
+       CMAKE_SYSTEM_PROCESSOR STREQUAL "s390x")
+  target_compile_definitions(bpftrace_test PRIVATE ARCH_S390)
+elseif(CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
+  target_compile_definitions(bpftrace_test PRIVATE ARCH_X86_64)
+endif()
 
-target_link_libraries(bpftrace_test ${LIBBCC_LIBRARIES})
-if (STATIC_LINKING)
+if(STATIC_LINKING)
   if(EMBED_LLVM OR EMBED_CLANG)
     set_target_properties(bpftrace_test PROPERTIES LINK_FLAGS "${EMBEDDED_LINK_FLAGS}")
   endif()
-
-  # These are not part of the static libbcc so have to be added separate
-  target_link_libraries(bpftrace_test ${LIBBCC_BPF_LIBRARY_STATIC})
-  target_link_libraries(bpftrace_test ${LIBBPF_LIBRARIES})
-  target_link_libraries(bpftrace_test ${LIBBCC_LOADER_LIBRARY_STATIC})
-
-  add_library(LIBELF STATIC IMPORTED)
-  set_property(TARGET LIBELF PROPERTY IMPORTED_LOCATION ${LIBELF_LIBRARIES})
-  target_link_libraries(bpftrace_test LIBELF)
-else()
-  target_link_libraries(bpftrace_test ${LIBELF_LIBRARIES})
+  if(STATIC_LIBC)
+    set_target_properties(bpftrace_test PROPERTIES LINK_FLAGS "-static")
+  endif()
 endif(STATIC_LINKING)
 
 find_package(Threads REQUIRED)
@@ -173,10 +117,14 @@ foreach(testprog ${testprogs})
   if(HAVE_SYSTEMTAP_SYS_SDT_H)
     target_compile_definitions(${bin_name} PRIVATE HAVE_SYSTEMTAP_SYS_SDT_H)
   endif(HAVE_SYSTEMTAP_SYS_SDT_H)
-  set_target_properties( ${bin_name} PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/testprogs/ COMPILE_FLAGS "-g -O0" LINK_FLAGS "-no-pie")
+  set_target_properties(${bin_name} PROPERTIES LINK_SEARCH_START_STATIC FALSE LINK_SEARCH_END_STATIC FALSE RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/testprogs/ COMPILE_FLAGS "-g -O0" LINK_FLAGS "-no-pie")
   list(APPEND compiled_testprogs ${CMAKE_CURRENT_BINARY_DIR}/testprogs/${bin_name})
 endforeach()
 add_custom_target(testprogs DEPENDS ${compiled_testprogs})
+
+target_include_directories(usdt_lib PUBLIC ${CMAKE_SOURCE_DIR}/tests/testlibs/)
+target_compile_options(usdt_lib PRIVATE -fPIC)
+target_link_libraries(usdt_lib usdt_tp)
 
 # Similarly compile all test libs
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/testlibs/)
@@ -186,6 +134,9 @@ foreach(testlib_source ${testlibs})
   get_filename_component(testlib_name ${testlib_source} NAME_WE)
   add_library(${testlib_name} SHARED ${testlib_source})
   set_target_properties(${testlib_name} PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/testlibs/ COMPILE_FLAGS "-g -O0")
+  if(HAVE_SYSTEMTAP_SYS_SDT_H)
+    target_compile_definitions(${testlib_name} PRIVATE HAVE_SYSTEMTAP_SYS_SDT_H)
+  endif(HAVE_SYSTEMTAP_SYS_SDT_H)
   # clear the executable bit
   add_custom_command(TARGET ${testlib_name}
     POST_BUILD

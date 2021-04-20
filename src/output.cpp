@@ -1,5 +1,6 @@
 #include "output.h"
 #include "bpftrace.h"
+#include "log.h"
 #include "utils.h"
 
 namespace bpftrace {
@@ -168,7 +169,7 @@ void TextOutput::map(BPFtrace &bpftrace, IMap &map, uint32_t top, uint32_t div,
       out_ << tuple_to_str(bpftrace, map.type_, value);
     else
       out_ << bpftrace.map_value_to_str(
-          map.type_, value, map.is_per_cpu_type(), div);
+          map.type_, value, map.is_per_cpu_type(), div, *this);
 
     if (map.type_.type != Type::kstack && map.type_.type != Type::ustack &&
         map.type_.type != Type::ksym && map.type_.type != Type::usym &&
@@ -258,11 +259,8 @@ void TextOutput::map_hist(BPFtrace &bpftrace, IMap &map, uint32_t top, uint32_t 
     auto &key = key_count.first;
     auto &value = values_by_key.at(key);
 
-    if (top)
-    {
-      if (i++ < (values_by_key.size() - top))
-        continue;
-    }
+    if (top && values_by_key.size() > top && i++ < (values_by_key.size() - top))
+      continue;
 
     out_ << map.name_ << map.key_.argument_value_list_str(bpftrace, key) << ": " << std::endl;
 
@@ -275,14 +273,25 @@ void TextOutput::map_hist(BPFtrace &bpftrace, IMap &map, uint32_t top, uint32_t 
   }
 }
 
-void TextOutput::map_stats(BPFtrace &bpftrace, IMap &map,
-                           const std::map<std::vector<uint8_t>, std::vector<int64_t>> &values_by_key,
-                           const std::vector<std::pair<std::vector<uint8_t>, int64_t>> &total_counts_by_key) const
+void TextOutput::map_stats(
+    BPFtrace &bpftrace,
+    IMap &map,
+    uint32_t top,
+    uint32_t div,
+    const std::map<std::vector<uint8_t>, std::vector<int64_t>> &values_by_key,
+    const std::vector<std::pair<std::vector<uint8_t>, int64_t>>
+        &total_counts_by_key) const
 {
+  uint32_t i = 0;
   for (auto &key_count : total_counts_by_key)
   {
     auto &key = key_count.first;
     auto &value = values_by_key.at(key);
+
+    if (map.type_.IsAvgTy() && top && values_by_key.size() > top &&
+        i++ < (values_by_key.size() - top))
+      continue;
+
     out_ << map.name_ << map.key_.argument_value_list_str(bpftrace, key) << ": ";
 
     int64_t count = (int64_t)value.at(0);
@@ -295,7 +304,7 @@ void TextOutput::map_stats(BPFtrace &bpftrace, IMap &map,
     if (map.type_.IsStatsTy())
       out_ << "count " << count << ", average " <<  average << ", total " << total << std::endl;
     else
-      out_ << average << std::endl;
+      out_ << average / div << std::endl;
   }
 
   out_ << std::endl;
@@ -308,7 +317,7 @@ void TextOutput::value(BPFtrace &bpftrace,
   if (ty.type == Type::tuple)
     out_ << tuple_to_str(bpftrace, ty, value);
   else
-    out_ << bpftrace.map_value_to_str(ty, value, false, 1);
+    out_ << bpftrace.map_value_to_str(ty, value, false, 1, *this);
 
   out_ << std::endl;
 }
@@ -338,32 +347,40 @@ std::string TextOutput::tuple_to_str(BPFtrace &bpftrace,
                                      const std::vector<uint8_t> &value) const
 {
   bool first = true;
-  size_t offset = 0;
   std::string ret;
 
   ret += '(';
 
-  for (const SizedType &elemtype : ty.tuple_elems)
+  for (const auto &elem : ty.GetFields())
   {
+    auto &elemtype = elem.type;
+    auto offset = elem.offset;
+
     if (first)
       first = false;
     else
       ret += ", ";
 
     std::vector<uint8_t> elem_value(value.begin() + offset,
-                                    value.begin() + offset + elemtype.size);
+                                    value.begin() + offset +
+                                        elemtype.GetSize());
 
     if (elemtype.type == Type::tuple)
       ret += tuple_to_str(bpftrace, elemtype, elem_value);
     else
-      ret += bpftrace.map_value_to_str(elemtype, elem_value, false, 1);
+      ret += bpftrace.map_value_to_str(elemtype, elem_value, false, 1, *this);
 
-    offset += elemtype.size;
+    offset += elemtype.GetSize();
   }
 
   ret += ')';
 
   return ret;
+}
+
+std::string TextOutput::struct_field_def_to_str(const std::string &field) const
+{
+  return "." + field + " = ";
 }
 
 std::string JsonOutput::json_escape(const std::string &str) const
@@ -410,6 +427,10 @@ void JsonOutput::map(BPFtrace &bpftrace, IMap &map, uint32_t top, uint32_t div,
   if (values_by_key.empty())
     return;
 
+  if (map.type_.IsTupleWithStruct())
+    LOG(WARNING) << "JSON format for structs inside tuples is unsupported, may "
+                    "cause ill-formatted JSON";
+
   out_ << "{\"type\": \"" << MessageType::map << "\", \"data\": {";
   out_ << "\"" << json_escape(map.name_) << "\": ";
   if (map.key_.size() > 0) // check if this map has keys
@@ -440,7 +461,7 @@ void JsonOutput::map(BPFtrace &bpftrace, IMap &map, uint32_t top, uint32_t div,
     {
       out_ << "\""
            << json_escape(bpftrace.map_value_to_str(
-                  map.type_, value, map.is_per_cpu_type(), div))
+                  map.type_, value, map.is_per_cpu_type(), div, *this))
            << "\"";
     }
     else if (map.type_.type == Type::tuple)
@@ -449,7 +470,7 @@ void JsonOutput::map(BPFtrace &bpftrace, IMap &map, uint32_t top, uint32_t div,
     }
     else {
       out_ << bpftrace.map_value_to_str(
-          map.type_, value, map.is_per_cpu_type(), div);
+          map.type_, value, map.is_per_cpu_type(), div, *this);
     }
 
     i++;
@@ -547,11 +568,8 @@ void JsonOutput::map_hist(BPFtrace &bpftrace, IMap &map, uint32_t top, uint32_t 
     auto &key = key_count.first;
     auto &value = values_by_key.at(key);
 
-    if (top)
-    {
-      if (j++ < (values_by_key.size() - top))
-        continue;
-    }
+    if (top && values_by_key.size() > top && j++ < (values_by_key.size() - top))
+      continue;
 
     std::vector<std::string> args = map.key_.argument_value_list(bpftrace, key);
     if (i > 0)
@@ -573,9 +591,14 @@ void JsonOutput::map_hist(BPFtrace &bpftrace, IMap &map, uint32_t top, uint32_t 
   out_ << "}}" << std::endl;
 }
 
-void JsonOutput::map_stats(BPFtrace &bpftrace, IMap &map,
-                           const std::map<std::vector<uint8_t>, std::vector<int64_t>> &values_by_key,
-                           const std::vector<std::pair<std::vector<uint8_t>, int64_t>> &total_counts_by_key) const
+void JsonOutput::map_stats(
+    BPFtrace &bpftrace,
+    IMap &map,
+    uint32_t top,
+    uint32_t div,
+    const std::map<std::vector<uint8_t>, std::vector<int64_t>> &values_by_key,
+    const std::vector<std::pair<std::vector<uint8_t>, int64_t>>
+        &total_counts_by_key) const
 {
   if (total_counts_by_key.empty())
     return;
@@ -586,10 +609,15 @@ void JsonOutput::map_stats(BPFtrace &bpftrace, IMap &map,
     out_ << "{";
 
   uint32_t i = 0;
+  uint32_t j = 0;
   for (auto &key_count : total_counts_by_key)
   {
     auto &key = key_count.first;
     auto &value = values_by_key.at(key);
+
+    if (map.type_.IsAvgTy() && top && values_by_key.size() > top &&
+        j++ < (values_by_key.size() - top))
+      continue;
 
     std::vector<std::string> args = map.key_.argument_value_list(bpftrace, key);
     if (i > 0)
@@ -608,7 +636,7 @@ void JsonOutput::map_stats(BPFtrace &bpftrace, IMap &map,
     if (map.type_.IsStatsTy())
       out_ << "{\"count\": " << count << ", \"average\": " <<  average << ", \"total\": " << total << "}";
     else
-      out_ << average;
+      out_ << average / div;
 
     i++;
   }
@@ -622,11 +650,16 @@ void JsonOutput::value(BPFtrace &bpftrace,
                        const SizedType &ty,
                        const std::vector<uint8_t> &value) const
 {
+  if (ty.IsTupleWithStruct())
+    LOG(WARNING) << "JSON format for structs inside tuples is unsupported, may "
+                    "cause ill-formatted JSON";
+
   out_ << "{\"type\": \"" << MessageType::value << "\", \"data\": ";
 
   if (is_quoted_type(ty))
   {
-    out_ << "\"" << json_escape(bpftrace.map_value_to_str(ty, value, false, 1))
+    out_ << "\""
+         << json_escape(bpftrace.map_value_to_str(ty, value, false, 1, *this))
          << "\"";
   }
   else if (ty.type == Type::tuple)
@@ -635,7 +668,7 @@ void JsonOutput::value(BPFtrace &bpftrace,
   }
   else
   {
-    out_ << bpftrace.map_value_to_str(ty, value, false, 1);
+    out_ << bpftrace.map_value_to_str(ty, value, false, 1, *this);
   }
 
   out_ << "}" << std::endl;
@@ -667,20 +700,23 @@ std::string JsonOutput::tuple_to_str(BPFtrace &bpftrace,
                                      const std::vector<uint8_t> &value) const
 {
   bool first = true;
-  size_t offset = 0;
   std::string ret;
 
   ret += '[';
 
-  for (const SizedType &elemtype : ty.tuple_elems)
+  for (const auto &elem : ty.GetFields())
   {
+    auto &elemtype = elem.type;
+    auto offset = elem.offset;
+
     if (first)
       first = false;
     else
       ret += ',';
 
     std::vector<uint8_t> elem_value(value.begin() + offset,
-                                    value.begin() + offset + elemtype.size);
+                                    value.begin() + offset +
+                                        elemtype.GetSize());
 
     if (elemtype.type == Type::tuple)
       ret += tuple_to_str(bpftrace, elemtype, elem_value);
@@ -690,18 +726,21 @@ std::string JsonOutput::tuple_to_str(BPFtrace &bpftrace,
         ret += '"';
 
       ret += json_escape(
-          bpftrace.map_value_to_str(elemtype, elem_value, false, 1));
+          bpftrace.map_value_to_str(elemtype, elem_value, false, 1, *this));
 
       if (is_quoted_type(elemtype))
         ret += '"';
     }
-
-    offset += elemtype.size;
   }
 
   ret += ']';
 
   return ret;
+}
+
+std::string JsonOutput::struct_field_def_to_str(const std::string &field) const
+{
+  return "\"" + field + "\": ";
 }
 
 } // namespace bpftrace

@@ -1,41 +1,212 @@
 #include "ast.h"
+#include "log.h"
 #include "parser.tab.hh"
+#include "visitors.h"
 #include <iostream>
 
 namespace bpftrace {
 namespace ast {
 
-Node::Node() : loc(location())
+#define MAKE_ACCEPT(Ty)                                                        \
+  void Ty::accept(Visitor &v)                                                  \
+  {                                                                            \
+    v.visit(*this);                                                            \
+  };
+
+MAKE_ACCEPT(Integer)
+MAKE_ACCEPT(String)
+MAKE_ACCEPT(StackMode)
+MAKE_ACCEPT(Builtin)
+MAKE_ACCEPT(Identifier)
+MAKE_ACCEPT(PositionalParameter)
+MAKE_ACCEPT(Call)
+MAKE_ACCEPT(Map)
+MAKE_ACCEPT(Variable)
+MAKE_ACCEPT(Binop)
+MAKE_ACCEPT(Unop)
+MAKE_ACCEPT(Ternary)
+MAKE_ACCEPT(FieldAccess)
+MAKE_ACCEPT(ArrayAccess)
+MAKE_ACCEPT(Cast)
+MAKE_ACCEPT(Tuple)
+MAKE_ACCEPT(ExprStatement)
+MAKE_ACCEPT(AssignMapStatement)
+MAKE_ACCEPT(AssignVarStatement)
+MAKE_ACCEPT(Predicate)
+MAKE_ACCEPT(AttachPoint)
+MAKE_ACCEPT(If)
+MAKE_ACCEPT(Unroll)
+MAKE_ACCEPT(While)
+MAKE_ACCEPT(Jump)
+MAKE_ACCEPT(Probe)
+MAKE_ACCEPT(Program)
+
+#undef MAKE_ACCEPT
+
+Call::~Call()
 {
+  if (vargs)
+    for (Expression *expr : *vargs)
+      delete expr;
+
+  delete vargs;
+  vargs = nullptr;
+}
+Map::~Map()
+{
+  if (vargs)
+    for (Expression *expr : *vargs)
+      delete expr;
+
+  delete vargs;
+  vargs = nullptr;
+}
+Binop::~Binop()
+{
+  delete left;
+  delete right;
+  left = nullptr;
+  right = nullptr;
 }
 
-Node::Node(location loc) : loc(loc)
+Unop::~Unop()
 {
+  delete expr;
+  expr = nullptr;
 }
 
-Expression::Expression() : Node()
+FieldAccess::~FieldAccess()
 {
+  delete expr;
+  expr = nullptr;
 }
 
-Expression::Expression(location loc) : Node(loc)
+ArrayAccess::~ArrayAccess()
 {
+  delete expr;
+  delete indexpr;
+  expr = nullptr;
+  indexpr = nullptr;
 }
 
-Integer::Integer(long n) : n(n)
+Cast::~Cast()
 {
-  is_literal = true;
+  delete expr;
+  expr = nullptr;
+}
+
+Tuple::~Tuple()
+{
+  for (Expression *expr : *elems)
+    delete expr;
+  delete elems;
+}
+
+ExprStatement::~ExprStatement()
+{
+  delete expr;
+  expr = nullptr;
+}
+
+AssignMapStatement::~AssignMapStatement()
+{
+  // In a compound assignment, the expression owns the map so
+  // we shouldn't free
+  if (!compound)
+    delete map;
+  delete expr;
+  map = nullptr;
+  expr = nullptr;
+}
+
+AssignVarStatement::~AssignVarStatement()
+{
+  // In a compound assignment, the expression owns the map so
+  // we shouldn't free
+  if (!compound)
+    delete var;
+  delete expr;
+  var = nullptr;
+  expr = nullptr;
+}
+
+If::~If()
+{
+  delete cond;
+  cond = nullptr;
+
+  if (stmts)
+    for (Statement *s : *stmts)
+      delete s;
+  delete stmts;
+  stmts = nullptr;
+
+  if (else_stmts)
+    for (Statement *s : *else_stmts)
+      delete s;
+  delete else_stmts;
+  else_stmts = nullptr;
+}
+
+Unroll::~Unroll()
+{
+  if (stmts)
+    for (Statement *s : *stmts)
+      delete s;
+  delete stmts;
+  stmts = nullptr;
+}
+Predicate::~Predicate()
+{
+  delete expr;
+  expr = nullptr;
+}
+Ternary::~Ternary()
+{
+  delete cond;
+  delete left;
+  delete right;
+  cond = nullptr;
+  left = nullptr;
+  right = nullptr;
+}
+
+While::~While()
+{
+  delete cond;
+  for (auto *stmt : *stmts)
+    delete stmt;
+  delete stmts;
+}
+
+Probe::~Probe()
+{
+  if (attach_points)
+    for (AttachPoint *ap : *attach_points)
+      delete ap;
+  delete attach_points;
+  attach_points = nullptr;
+
+  delete pred;
+  pred = nullptr;
+
+  if (stmts)
+    for (Statement *s : *stmts)
+      delete s;
+  delete stmts;
+  stmts = nullptr;
+}
+
+Program::~Program()
+{
+  if (probes)
+    for (Probe *p : *probes)
+      delete p;
+  delete probes;
+  probes = nullptr;
 }
 
 Integer::Integer(long n, location loc) : Expression(loc), n(n)
-{
-  is_literal = true;
-}
-
-void Integer::accept(Visitor &v) {
-  v.visit(*this);
-}
-
-String::String(const std::string &str) : str(str)
 {
   is_literal = true;
 }
@@ -45,14 +216,6 @@ String::String(const std::string &str, location loc) : Expression(loc), str(str)
   is_literal = true;
 }
 
-void String::accept(Visitor &v) {
-  v.visit(*this);
-}
-
-StackMode::StackMode(const std::string &mode) : mode(mode)
-{
-  is_literal = true;
-}
 
 StackMode::StackMode(const std::string &mode, location loc)
     : Expression(loc), mode(mode)
@@ -60,41 +223,18 @@ StackMode::StackMode(const std::string &mode, location loc)
   is_literal = true;
 }
 
-void StackMode::accept(Visitor &v) {
-  v.visit(*this);
-}
-
-Builtin::Builtin(const std::string &ident) : ident(is_deprecated(ident))
-{
-}
 
 Builtin::Builtin(const std::string &ident, location loc)
     : Expression(loc), ident(is_deprecated(ident))
 {
 }
 
-void Builtin::accept(Visitor &v) {
-  v.visit(*this);
-}
-
-Identifier::Identifier(const std::string &ident) : ident(ident)
-{
-}
 
 Identifier::Identifier(const std::string &ident, location loc)
     : Expression(loc), ident(ident)
 {
 }
 
-void Identifier::accept(Visitor &v) {
-  v.visit(*this);
-}
-
-PositionalParameter::PositionalParameter(PositionalParameterType ptype, long n)
-    : ptype(ptype), n(n)
-{
-  is_literal = true;
-}
 
 PositionalParameter::PositionalParameter(PositionalParameterType ptype,
                                          long n,
@@ -104,21 +244,9 @@ PositionalParameter::PositionalParameter(PositionalParameterType ptype,
   is_literal = true;
 }
 
-void PositionalParameter::accept(Visitor &v) {
-  v.visit(*this);
-}
-
-Call::Call(const std::string &func) : func(is_deprecated(func)), vargs(nullptr)
-{
-}
 
 Call::Call(const std::string &func, location loc)
     : Expression(loc), func(is_deprecated(func)), vargs(nullptr)
-{
-}
-
-Call::Call(const std::string &func, ExpressionList *vargs)
-    : func(is_deprecated(func)), vargs(vargs)
 {
 }
 
@@ -127,18 +255,8 @@ Call::Call(const std::string &func, ExpressionList *vargs, location loc)
 {
 }
 
-void Call::accept(Visitor &v) {
-  v.visit(*this);
-}
-
 Map::Map(const std::string &ident, location loc)
     : Expression(loc), ident(ident), vargs(nullptr)
-{
-  is_map = true;
-}
-
-Map::Map(const std::string &ident, ExpressionList *vargs)
-    : ident(ident), vargs(vargs)
 {
   is_map = true;
 }
@@ -153,23 +271,10 @@ Map::Map(const std::string &ident, ExpressionList *vargs, location loc)
   }
 }
 
-void Map::accept(Visitor &v) {
-  v.visit(*this);
-}
-
-Variable::Variable(const std::string &ident) : ident(ident)
-{
-  is_variable = true;
-}
-
 Variable::Variable(const std::string &ident, location loc)
     : Expression(loc), ident(ident)
 {
   is_variable = true;
-}
-
-void Variable::accept(Visitor &v) {
-  v.visit(*this);
 }
 
 Binop::Binop(Expression *left, int op, Expression *right, location loc)
@@ -177,9 +282,6 @@ Binop::Binop(Expression *left, int op, Expression *right, location loc)
 {
 }
 
-void Binop::accept(Visitor &v) {
-  v.visit(*this);
-}
 
 Unop::Unop(int op, Expression *expr, location loc)
     : Expression(loc), expr(expr), op(op), is_post_op(false)
@@ -191,14 +293,6 @@ Unop::Unop(int op, Expression *expr, bool is_post_op, location loc)
 {
 }
 
-void Unop::accept(Visitor &v) {
-  v.visit(*this);
-}
-
-Ternary::Ternary(Expression *cond, Expression *left, Expression *right)
-    : cond(cond), left(left), right(right)
-{
-}
 
 Ternary::Ternary(Expression *cond,
                  Expression *left,
@@ -208,14 +302,6 @@ Ternary::Ternary(Expression *cond,
 {
 }
 
-void Ternary::accept(Visitor &v) {
-  v.visit(*this);
-}
-
-FieldAccess::FieldAccess(Expression *expr, const std::string &field)
-    : expr(expr), field(field)
-{
-}
 
 FieldAccess::FieldAccess(Expression *expr,
                          const std::string &field,
@@ -229,116 +315,66 @@ FieldAccess::FieldAccess(Expression *expr, ssize_t index, location loc)
 {
 }
 
-void FieldAccess::accept(Visitor &v) {
-  v.visit(*this);
-}
-
-ArrayAccess::ArrayAccess(Expression *expr, Expression *indexpr)
-    : expr(expr), indexpr(indexpr)
-{
-}
 
 ArrayAccess::ArrayAccess(Expression *expr, Expression *indexpr, location loc)
     : Expression(loc), expr(expr), indexpr(indexpr)
 {
 }
 
-void ArrayAccess::accept(Visitor &v) {
-  v.visit(*this);
-}
-
-Cast::Cast(const std::string &type, bool is_pointer, Expression *expr)
-    : cast_type(type), is_pointer(is_pointer), expr(expr)
-{
-}
 
 Cast::Cast(const std::string &type,
            bool is_pointer,
+           bool is_double_pointer,
            Expression *expr,
            location loc)
-    : Expression(loc), cast_type(type), is_pointer(is_pointer), expr(expr)
+    : Expression(loc),
+      cast_type(type),
+      is_pointer(is_pointer),
+      is_double_pointer(is_double_pointer),
+      expr(expr)
 {
 }
 
-void Cast::accept(Visitor &v) {
-  v.visit(*this);
-}
 
 Tuple::Tuple(ExpressionList *elems, location loc)
     : Expression(loc), elems(elems)
 {
 }
 
-void Tuple::accept(Visitor &v)
-{
-  v.visit(*this);
-}
-
-Statement::Statement(location loc) : Node(loc)
-{
-}
-
-ExprStatement::ExprStatement(Expression *expr) : expr(expr)
-{
-}
 
 ExprStatement::ExprStatement(Expression *expr, location loc)
     : Statement(loc), expr(expr)
 {
 }
 
-void ExprStatement::accept(Visitor &v) {
-  v.visit(*this);
-}
-
-AssignMapStatement::AssignMapStatement(Map *map, Expression *expr, location loc)
-    : Statement(loc), map(map), expr(expr)
+AssignMapStatement::AssignMapStatement(Map *map,
+                                       Expression *expr,
+                                       bool compound,
+                                       location loc)
+    : Statement(loc), map(map), expr(expr), compound(compound)
 {
   expr->map = map;
 };
 
-void AssignMapStatement::accept(Visitor &v) {
-  v.visit(*this);
-}
-
-AssignVarStatement::AssignVarStatement(Variable *var, Expression *expr)
-    : var(var), expr(expr)
-{
-  expr->var = var;
-}
-
 AssignVarStatement::AssignVarStatement(Variable *var,
                                        Expression *expr,
+                                       bool compound,
                                        location loc)
-    : Statement(loc), var(var), expr(expr)
+    : Statement(loc), var(var), expr(expr), compound(compound)
 {
   expr->var = var;
-}
-
-void AssignVarStatement::accept(Visitor &v) {
-  v.visit(*this);
-}
-
-Predicate::Predicate(Expression *expr) : expr(expr)
-{
 }
 
 Predicate::Predicate(Expression *expr, location loc) : Node(loc), expr(expr)
 {
 }
 
-void Predicate::accept(Visitor &v) {
-  v.visit(*this);
-}
 
 AttachPoint::AttachPoint(const std::string &raw_input, location loc)
     : Node(loc), raw_input(raw_input)
 {
 }
 
-void AttachPoint::accept(Visitor &v) {
-  v.visit(*this);
-}
 
 If::If(Expression *cond, StatementList *stmts) : cond(cond), stmts(stmts)
 {
@@ -349,17 +385,10 @@ If::If(Expression *cond, StatementList *stmts, StatementList *else_stmts)
 {
 }
 
-void If::accept(Visitor &v) {
-  v.visit(*this);
-}
 
 Unroll::Unroll(Expression *expr, StatementList *stmts, location loc)
     : Statement(loc), expr(expr), stmts(stmts)
 {
-}
-
-void Unroll::accept(Visitor &v) {
-  v.visit(*this);
 }
 
 Probe::Probe(AttachPointList *attach_points,
@@ -369,27 +398,10 @@ Probe::Probe(AttachPointList *attach_points,
 {
 }
 
-void While::accept(Visitor &v)
-{
-  v.visit(*this);
-}
-
-void Jump::accept(Visitor &v)
-{
-  v.visit(*this);
-}
-
-void Probe::accept(Visitor &v) {
-  v.visit(*this);
-}
 
 Program::Program(const std::string &c_definitions, ProbeList *probes)
     : c_definitions(c_definitions), probes(probes)
 {
-}
-
-void Program::accept(Visitor &v) {
-  v.visit(*this);
 }
 
 std::string opstr(Jump &jump)
@@ -402,9 +414,9 @@ std::string opstr(Jump &jump)
       return "break";
     case bpftrace::Parser::token::CONTINUE:
       return "continue";
-    default:
-      throw std::runtime_error("Unknown jump");
   }
+
+  return {}; // unreached
 }
 
 std::string opstr(Binop &binop)
@@ -428,10 +440,9 @@ std::string opstr(Binop &binop)
     case bpftrace::Parser::token::BAND:  return "&";
     case bpftrace::Parser::token::BOR:   return "|";
     case bpftrace::Parser::token::BXOR:  return "^";
-    default:
-      std::cerr << "unknown binary operator" << std::endl;
-      abort();
   }
+
+  return {}; // unreached
 }
 
 std::string opstr(Unop &unop)
@@ -443,17 +454,17 @@ std::string opstr(Unop &unop)
     case bpftrace::Parser::token::MUL: return "dereference";
     case bpftrace::Parser::token::INCREMENT: return "++";
     case bpftrace::Parser::token::DECREMENT: return "--";
-    default:
-      std::cerr << "unknown unary operator" << std::endl;
-      abort();
   }
+
+  return {}; // unreached
 }
 
-std::string AttachPoint::name(const std::string &attach_point) const
+std::string AttachPoint::name(const std::string &attach_target,
+                              const std::string &attach_point) const
 {
   std::string n = provider;
-  if (target != "")
-    n += ":" + target;
+  if (attach_target != "")
+    n += ":" + attach_target;
   if (ns != "")
     n += ":" + ns;
   if (attach_point != "")
@@ -473,12 +484,19 @@ std::string AttachPoint::name(const std::string &attach_point) const
   return n;
 }
 
-int AttachPoint::index(std::string name) {
-  if (index_.count(name) == 0) return 0;
-  return index_[name];
+std::string AttachPoint::name(const std::string &attach_point) const
+{
+  return name(target, attach_point);
 }
 
-void AttachPoint::set_index(std::string name, int index) {
+int AttachPoint::index(const std::string &name) const
+{
+  if (index_.count(name) == 0) return 0;
+  return index_.at(name);
+}
+
+void AttachPoint::set_index(const std::string &name, int index)
+{
   index_[name] = index;
 }
 
@@ -508,13 +526,99 @@ std::string Probe::name() const
   return n;
 }
 
-int Probe::index() {
+int Probe::index() const
+{
   return index_;
 }
 
 void Probe::set_index(int index) {
   index_ = index;
 }
+
+Expression::Expression(const Expression &other) : Node(other)
+{
+  type = other.type;
+  is_literal = other.is_literal;
+  is_variable = other.is_variable;
+  is_map = other.is_map;
+}
+
+Call::Call(const Call &other) : Expression(other)
+{
+  func = other.func;
+}
+
+Binop::Binop(const Binop &other) : Expression(other)
+{
+  op = other.op;
+}
+
+Unop::Unop(const Unop &other) : Expression(other)
+{
+  op = other.op;
+  is_post_op = other.is_post_op;
+}
+
+Map::Map(const Map &other) : Expression(other)
+{
+  ident = other.ident;
+  skip_key_validation = other.skip_key_validation;
+}
+
+FieldAccess::FieldAccess(const FieldAccess &other)
+    : Expression(other), expr(nullptr)
+{
+  field = other.field;
+  index = other.index;
+}
+
+Unroll::Unroll(const Unroll &other) : Statement(other)
+{
+  var = other.var;
+}
+
+Program::Program(const Program &other) : Node(other)
+{
+  c_definitions = other.c_definitions;
+}
+
+Cast::Cast(const Cast &other) : Expression(other)
+{
+  cast_type = other.cast_type;
+  is_pointer = other.is_pointer;
+  is_double_pointer = other.is_double_pointer;
+}
+
+Probe::Probe(const Probe &other) : Node(other)
+{
+  need_expansion = other.need_expansion;
+  tp_args_structs_level = other.tp_args_structs_level;
+  index_ = other.index_;
+}
+
+While::While(const While &other) : Statement(other)
+{
+}
+
+Tuple::Tuple(const Tuple &other) : Expression(other)
+{
+}
+
+If::If(const If &other) : Statement(other)
+{
+}
+
+AssignVarStatement::AssignVarStatement(const AssignVarStatement &other)
+    : Statement(other)
+{
+  compound = other.compound;
+};
+
+AssignMapStatement::AssignMapStatement(const AssignMapStatement &other)
+    : Statement(other)
+{
+  compound = other.compound;
+};
 
 } // namespace ast
 } // namespace bpftrace

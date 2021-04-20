@@ -4,35 +4,41 @@
 #include <sstream>
 #include <unordered_set>
 
-#include "ast.h"
 #include "bpffeature.h"
 #include "bpftrace.h"
 #include "map.h"
 #include "types.h"
+#include "visitors.h"
 
 namespace bpftrace {
 namespace ast {
 
-class SemanticAnalyser : public Visitor {
+class SemanticAnalyser : public ASTVisitor
+{
 public:
   explicit SemanticAnalyser(Node *root,
                             BPFtrace &bpftrace,
-                            BPFfeature &feature,
                             std::ostream &out = std::cerr,
-                            bool has_child = true)
+                            bool has_child = true,
+                            bool listing = false)
       : root_(root),
         bpftrace_(bpftrace),
-        feature_(feature),
         out_(out),
+        listing_(listing),
         has_child_(has_child)
+  {
+  }
+
+  explicit SemanticAnalyser(Node *root, BPFtrace &bpftrace, bool has_child)
+      : SemanticAnalyser(root, bpftrace, std::cerr, has_child)
   {
   }
 
   explicit SemanticAnalyser(Node *root,
                             BPFtrace &bpftrace,
-                            BPFfeature &feature,
-                            bool has_child)
-      : SemanticAnalyser(root, bpftrace, feature, std::cerr, has_child)
+                            bool has_child,
+                            bool listing)
+      : SemanticAnalyser(root, bpftrace, std::cerr, has_child, listing)
   {
   }
 
@@ -63,35 +69,44 @@ public:
   void visit(AttachPoint &ap) override;
   void visit(Probe &probe) override;
   void visit(Program &program) override;
+  int create_maps(bool debug);
 
   int analyse();
-  int create_maps(bool debug=false);
 
 private:
-  Node *root_;
+  Node *root_ = nullptr;
   BPFtrace &bpftrace_;
-  BPFfeature &feature_;
   std::ostream &out_;
   std::ostringstream err_;
   int pass_;
   const int num_passes_ = 10;
+  bool listing_;
 
   bool is_final_pass() const;
 
   bool check_assignment(const Call &call, bool want_map, bool want_var, bool want_map_key);
   bool check_nargs(const Call &call, size_t expected_nargs);
   bool check_varargs(const Call &call, size_t min_nargs, size_t max_nargs);
-  bool check_arg(const Call &call, Type type, int arg_num, bool want_literal=false);
+  bool check_arg(const Call &call,
+                 Type type,
+                 int arg_num,
+                 bool want_literal = false,
+                 bool fail = true);
   bool check_symbol(const Call &call, int arg_num);
+  bool check_available(const Call &call, const AttachPoint &ap);
 
   void check_stack_call(Call &call, bool kernel);
-  void error(const std::string &msg, const location &loc);
-  void warning(const std::string &msg, const location &loc);
 
   void assign_map_type(const Map &map, const SizedType &type);
+  void update_assign_map_type(const Map &map,
+                              SizedType &type,
+                              const SizedType &new_type);
 
   void builtin_args_tracepoint(AttachPoint *attach_point, Builtin &builtin);
   ProbeType single_provider_type(void);
+  template <typename T>
+  int create_maps_impl(void);
+  AddrSpace find_addrspace(ProbeType pt);
 
   bool in_loop(void)
   {
@@ -100,19 +115,28 @@ private:
   void accept_statements(StatementList *stmts);
 
   Probe *probe_;
+
+  // Holds the function currently being visited by this SemanticAnalyser.
   std::string func_;
+  // Holds the function argument index currently being visited by this
+  // SemanticAnalyser.
+  int func_arg_idx_ = -1;
+
   std::map<std::string, SizedType> variable_val_;
   std::map<std::string, SizedType> map_val_;
   std::map<std::string, MapKey> map_key_;
   std::map<std::string, ExpressionList> map_args_;
   std::map<std::string, SizedType> ap_args_;
   std::unordered_set<StackType> needs_stackid_maps_;
+
   uint32_t loop_depth_ = 0;
   bool needs_join_map_ = false;
   bool needs_elapsed_map_ = false;
+  bool needs_data_map_ = false;
   bool has_begin_probe_ = false;
   bool has_end_probe_ = false;
   bool has_child_ = false;
+  bool has_pos_param_ = false;
 };
 
 } // namespace ast
