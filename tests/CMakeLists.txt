@@ -20,7 +20,7 @@ if(${LLVM_VERSION} VERSION_LESS 11.0.0)
   set(CODEGEN_SRC ${CMAKE_BINARY_DIR}/tests/codegen_includes.cpp)
 else()
   set(CODEGEN_SRC "")
-  message("Disabled codegen test for LLVM >= 11")
+  message(STATUS "Disabled codegen test for LLVM >= 11")
 endif()
 
 add_executable(bpftrace_test
@@ -65,47 +65,43 @@ if(STATIC_LINKING)
   endif()
 endif(STATIC_LINKING)
 
-find_package(Threads REQUIRED)
-
-# Ninja build system needs the byproducts set explicilty so it can
-# check for missing dependencies.
-# https://cmake.org/pipermail/cmake/2015-April/060234.html
-set(gtest_byproducts
-  <BINARY_DIR>/googlemock/gtest/libgtest.a
-  <BINARY_DIR>/googlemock/gtest/libgtest_main.a
-  <BINARY_DIR>/googlemock/libgmock.a
-)
-include(ExternalProject)
-if (OFFLINE_BUILDS)
+# Still need to support vendored gtest/gmock b/c old ubuntu versions (< focal)
+# only provide gtest/gmock sources -- no precompiled binaries
+if(VENDOR_GTEST)
+  # Ninja build system needs the byproducts set explicilty so it can
+  # check for missing dependencies.
+  # https://cmake.org/pipermail/cmake/2015-April/060234.html
+  set(gtest_byproducts
+    <BINARY_DIR>/googlemock/gtest/libgtest.a
+    <BINARY_DIR>/googlemock/gtest/libgtest_main.a
+    <BINARY_DIR>/googlemock/libgmock.a
+  )
+  include(ExternalProject)
   ExternalProject_Add(gtest-git
     GIT_REPOSITORY https://github.com/google/googletest.git
     GIT_TAG release-1.8.1
     STEP_TARGETS build update
     EXCLUDE_FROM_ALL 1
-    UPDATE_DISCONNECTED 1
     BUILD_BYPRODUCTS ${gtest_byproducts}
-    )
+  )
+  add_dependencies(bpftrace_test gtest-git-build)
+  ExternalProject_Get_Property(gtest-git source_dir binary_dir)
+  target_include_directories(bpftrace_test PUBLIC ${source_dir}/googletest/include)
+  target_include_directories(bpftrace_test PUBLIC ${source_dir}/googlemock/include)
+  target_link_libraries(bpftrace_test ${binary_dir}/googlemock/gtest/libgtest.a)
+  target_link_libraries(bpftrace_test ${binary_dir}/googlemock/gtest/libgtest_main.a)
+  target_link_libraries(bpftrace_test ${binary_dir}/googlemock/libgmock.a)
 else()
-  ExternalProject_Add(gtest-git
-    GIT_REPOSITORY https://github.com/google/googletest.git
-    GIT_TAG release-1.8.1
-    STEP_TARGETS build update
-    EXCLUDE_FROM_ALL 1
-    BUILD_BYPRODUCTS ${gtest_byproducts}
-    )
-endif()
-add_dependencies(bpftrace_test gtest-git-build)
-ExternalProject_Get_Property(gtest-git source_dir binary_dir)
-target_include_directories(bpftrace_test PUBLIC ${source_dir}/googletest/include)
-target_include_directories(bpftrace_test PUBLIC ${source_dir}/googlemock/include)
-target_link_libraries(bpftrace_test ${binary_dir}/googlemock/gtest/libgtest.a)
-target_link_libraries(bpftrace_test ${binary_dir}/googlemock/gtest/libgtest_main.a)
-target_link_libraries(bpftrace_test ${binary_dir}/googlemock/libgmock.a)
+  find_package(GTest REQUIRED)
+  find_package(GMock REQUIRED)
+  include_directories(SYSTEM ${GTEST_INCLUDE_DIRS} ${GMOCK_INCLUDE_DIRS})
+  target_link_libraries(bpftrace_test ${GTEST_BOTH_LIBRARIES} ${GMOCK_LIBRARIES})
+endif(VENDOR_GTEST)
+add_test(NAME bpftrace_test COMMAND bpftrace_test)
 if(NOT STATIC_LINKING)
+  find_package(Threads REQUIRED)
   target_link_libraries(bpftrace_test ${CMAKE_THREAD_LIBS_INIT})
 endif(NOT STATIC_LINKING)
-
-add_test(NAME bpftrace_test COMMAND bpftrace_test)
 
 # Compile all testprograms, one per .c file for runtime testing
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/testprogs/)
