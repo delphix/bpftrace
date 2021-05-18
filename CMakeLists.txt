@@ -1,20 +1,21 @@
-cmake_minimum_required(VERSION 3.8)
+cmake_minimum_required(VERSION 3.13.0)
 project(bpftrace)
 
 # bpftrace version number components.
 set(bpftrace_VERSION_MAJOR 0)
 set(bpftrace_VERSION_MINOR 12)
-set(bpftrace_VERSION_PATCH 0)
+set(bpftrace_VERSION_PATCH 1)
 
 include(GNUInstallDirs)
 
 set(WARNINGS_AS_ERRORS OFF CACHE BOOL "Build with -Werror")
 set(STATIC_LINKING OFF CACHE BOOL "Build bpftrace as a statically linked executable")
 set(STATIC_LIBC OFF CACHE BOOL "Attempt to embed libc, only known to work with musl. Has issues with dlopen.")
-set(EMBED_LLVM OFF CACHE BOOL "Build LLVM static libs as an ExternalProject and link to these instead of system libs.")
-set(EMBED_CLANG OFF CACHE BOOL "Build Clang static libs as an ExternalProject and link to these instead of system libs.")
-set(EMBED_LIBCLANG_ONLY OFF CACHE BOOL "Build only libclang.a, and link to system libraries statically")
-set(LLVM_VERSION "8" CACHE STRING "Embedded LLVM/Clang version to build and link against.")
+
+set(EMBED_USE_LLVM OFF CACHE BOOL "Use a prebuilt embedded LLVM, speeds up the build process")
+set(EMBED_BUILD_LLVM OFF CACHE BOOL "Build Clang&LLVM static libs as an ExternalProject and link to these instead of system libs.")
+set(EMBED_LLVM_VERSION "8" CACHE STRING "Embedded LLVM/Clang version to build and link against.")
+
 set(BUILD_ASAN OFF CACHE BOOL "Build bpftrace with -fsanitize=address")
 set(ENABLE_MAN ON CACHE BOOL "Build man pages")
 set(BUILD_TESTING ON CACHE BOOL "Build test suite")
@@ -26,7 +27,15 @@ set(FUZZ_TARGET "codegen" CACHE STRING "Fuzzing target")
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
-if(EMBED_LLVM OR EMBED_CLANG OR STATIC_LIBC)
+if(EMBED_BUILD_LLVM)
+  set(EMBED_USE_LLVM ON)
+endif()
+
+if(EMBED_USE_LLVM AND NOT EMBED_BUILD_LLVM)
+  set(EMBED_LLVM_PATH "/usr/local/lib")
+endif()
+
+if(EMBED_USE_LLVM OR STATIC_LIBC)
   set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed)
   include(embed_helpers)
   if (NOT STATIC_LINKING)
@@ -36,10 +45,6 @@ if(EMBED_LLVM OR EMBED_CLANG OR STATIC_LIBC)
   elseif(STATIC_LIBC)
     message(WARNING "static libc is known to cause problems, consider STATIC_LIBC=OFF. Proceed at your own risk") #iovisor/bpftrace/issues/266
   endif()
-endif()
-
-if(EMBED_LIBCLANG_ONLY AND NOT EMBED_CLANG)
-    message(FATAL_ERROR "Cannot set EMBED_LIBCLANG_ONLY without also setting EMBED_CLANG")
 endif()
 
 set (CMAKE_CXX_STANDARD 17)
@@ -65,21 +70,12 @@ endif()
 include(CTest)
 
 if(STATIC_LINKING)
-  if(STATIC_LIBC)
-    set(CMAKE_EXE_LINKER_FLAGS "-static")
-  elseif(EMBED_LLVM OR EMBED_CLANG)
-    set(EMBEDDED_LINK_FLAGS "-static-libgcc -static-libstdc++ -Wl,--start-group")
-    set(EMBEDDED_LINK_FLAGS "${EMBEDDED_LINK_FLAGS} -Wl,-Bdynamic -lrt")
-    set(EMBEDDED_LINK_FLAGS "${EMBEDDED_LINK_FLAGS} -Wl,-Bdynamic -lpthread")
-    set(EMBEDDED_LINK_FLAGS "${EMBEDDED_LINK_FLAGS} -Wl,-Bdynamic -ldl -lm")
-    set(EMBEDDED_LINK_FLAGS "${EMBEDDED_LINK_FLAGS} -Wl,-Bstatic -lz")
-  endif(STATIC_LIBC)
   set(CMAKE_FIND_LIBRARY_SUFFIXES ".a")
   set(CMAKE_LINK_SEARCH_START_STATIC TRUE)
   set(CMAKE_LINK_SEARCH_END_STATIC TRUE)
 endif(STATIC_LINKING)
 
-set(FIND_LIBRARY_USE_LIB64_PATHS TRUE)
+set_property( GLOBAL PROPERTY FIND_LIBRARY_USE_LIB64_PATHS TRUE )
 
 include_directories(SYSTEM ${KERNEL_INCLUDE_DIRS})
 
@@ -142,7 +138,7 @@ endif()
 include(CheckIncludeFile)
 check_include_file("sys/sdt.h" HAVE_SYSTEMTAP_SYS_SDT_H)
 
-if (EMBED_LLVM)
+if (EMBED_USE_LLVM)
   include(embed_llvm)
 else()
   # Some users have multiple versions of llvm installed and would like to specify
@@ -153,7 +149,7 @@ else()
     find_package(LLVM REQUIRED)
   endif()
 
-  if(${LLVM_VERSION_MAJOR} VERSION_LESS 6)
+  if((${LLVM_VERSION_MAJOR} VERSION_LESS 6) OR (${LLVM_VERSION_MAJOR} VERSION_GREATER 12))
     message(SEND_ERROR "Unsupported LLVM version found: ${LLVM_INCLUDE_DIRS}")
     message(SEND_ERROR "Specify an LLVM major version using LLVM_REQUESTED_VERSION=<major version>")
   endif()
@@ -175,7 +171,7 @@ else()
   add_definitions(-DLLVM_ORC_V1)
 endif()
 
-if(EMBED_CLANG)
+if(EMBED_USE_LLVM)
   include(embed_clang)
 else()
   find_package(Clang REQUIRED)

@@ -1361,127 +1361,6 @@ int BPFtrace::zero_map(IMap &map)
   return 0;
 }
 
-std::string BPFtrace::map_value_to_str(const SizedType &stype,
-                                       std::vector<uint8_t> value,
-                                       bool is_per_cpu,
-                                       uint32_t div,
-                                       const Output &output)
-{
-  uint32_t nvalues = is_per_cpu ? ncpus_ : 1;
-  if (stype.IsKstackTy())
-    return get_stack(
-        read_data<uint64_t>(value.data()), false, stype.stack_type, 8);
-  else if (stype.IsUstackTy())
-    return get_stack(
-        read_data<uint64_t>(value.data()), true, stype.stack_type, 8);
-  else if (stype.IsKsymTy())
-    return resolve_ksym(read_data<uintptr_t>(value.data()));
-  else if (stype.IsUsymTy())
-    return resolve_usym(read_data<uintptr_t>(value.data()),
-                        read_data<uintptr_t>(value.data() + 8));
-  else if (stype.IsInetTy())
-    return resolve_inet(read_data<uint64_t>(value.data()),
-                        (uint8_t *)(value.data() + 8));
-  else if (stype.IsUsernameTy())
-    return resolve_uid(read_data<uint64_t>(value.data()));
-  else if (stype.IsBufferTy())
-    return resolve_buf(reinterpret_cast<char *>(value.data() + 1),
-                       *reinterpret_cast<uint8_t *>(value.data()));
-  else if (stype.IsStringTy())
-  {
-    auto p = reinterpret_cast<const char *>(value.data());
-    return std::string(p, strnlen(p, stype.GetSize()));
-  }
-  else if (stype.IsArrayTy())
-  {
-    size_t elem_size = stype.GetElementTy()->GetSize();
-    std::vector<std::string> elems;
-    for (size_t i = 0; i < stype.GetNumElements(); i++)
-    {
-      std::vector<uint8_t> elem_data(value.begin() + i * elem_size,
-                                     value.begin() + (i + 1) * elem_size);
-      elems.push_back(map_value_to_str(
-          *stype.GetElementTy(), elem_data, is_per_cpu, div, output));
-    }
-
-    return "[" + str_join(elems, ",") + "]";
-  }
-  else if (stype.IsRecordTy())
-  {
-    auto &struct_type = structs_[stype.GetName()];
-    std::vector<std::string> elems;
-    for (auto &field : struct_type.fields)
-    {
-      std::vector<uint8_t> elem_data(value.begin() + field.second.offset,
-                                     value.begin() + field.second.offset +
-                                         field.second.type.GetSize());
-      elems.push_back(
-          output.struct_field_def_to_str(field.first) +
-          map_value_to_str(
-              field.second.type, elem_data, is_per_cpu, div, output));
-    }
-    return "{ " + str_join(elems, ", ") + " }";
-  }
-  else if (stype.IsCountTy())
-    return std::to_string(reduce_value<uint64_t>(value, nvalues) / div);
-  else if (stype.IsIntTy())
-  {
-    auto sign = stype.IsSigned();
-    switch (stype.GetIntBitWidth())
-    {
-      // clang-format off
-      case 64:
-        if (sign)
-          return std::to_string(
-            reduce_value<int64_t>(value, nvalues) / (int64_t)div);
-        return std::to_string(reduce_value<uint64_t>(value, nvalues) / div);
-      case 32:
-        if (sign)
-          return std::to_string(
-            reduce_value<int32_t>(value, nvalues) / (int32_t)div);
-        return std::to_string(reduce_value<uint32_t>(value, nvalues) / div);
-      case 16:
-        if (sign)
-          return std::to_string(
-            reduce_value<int16_t>(value, nvalues) / (int16_t)div);
-        return std::to_string(reduce_value<uint16_t>(value, nvalues) / div);
-      case 8:
-        if (sign)
-          return std::to_string(
-            reduce_value<int8_t>(value, nvalues) / (int8_t)div);
-        return std::to_string(reduce_value<uint8_t>(value, nvalues) / div);
-        // clang-format on
-      default:
-        LOG(FATAL) << "map_value_to_str: Invalid int bitwidth: "
-                   << stype.GetIntBitWidth() << "provided";
-        return {};
-    }
-    // lgtm[cpp/missing-return]
-  }
-  else if (stype.IsSumTy() || stype.IsIntTy())
-  {
-    if (stype.IsSigned())
-      return std::to_string(reduce_value<int64_t>(value, nvalues) / div);
-
-    return std::to_string(reduce_value<uint64_t>(value, nvalues) / div);
-  }
-  else if (stype.IsMinTy())
-    return std::to_string(min_value(value, nvalues) / div);
-  else if (stype.IsMaxTy())
-    return std::to_string(max_value(value, nvalues) / div);
-  else if (stype.IsProbeTy())
-    return resolve_probe(read_data<uint64_t>(value.data()));
-  else if (stype.IsTimestampTy())
-    return resolve_timestamp(
-        reinterpret_cast<AsyncEvent::Strftime *>(value.data())->strftime_id,
-        reinterpret_cast<AsyncEvent::Strftime *>(value.data())
-            ->nsecs_since_boot);
-  else if (stype.IsMacAddressTy())
-    return resolve_mac_address(value.data());
-  else
-    return std::to_string(read_data<int64_t>(value.data()) / div);
-}
-
 int BPFtrace::print_map(IMap &map, uint32_t top, uint32_t div)
 {
   if (map.type_.IsHistTy() || map.type_.IsLhistTy())
@@ -1723,29 +1602,6 @@ int BPFtrace::print_map_stats(IMap &map, uint32_t top, uint32_t div)
   return 0;
 }
 
-template <typename T>
-T BPFtrace::reduce_value(const std::vector<uint8_t> &value, int nvalues)
-{
-  T sum = 0;
-  for (int i=0; i<nvalues; i++)
-  {
-    sum += read_data<T>(value.data() + i * sizeof(T));
-  }
-  return sum;
-}
-
-uint64_t BPFtrace::max_value(const std::vector<uint8_t> &value, int nvalues)
-{
-  uint64_t val, max = 0;
-  for (int i=0; i<nvalues; i++)
-  {
-    val = read_data<uint64_t>(value.data() + i * sizeof(uint64_t));
-    if (val > max)
-      max = val;
-  }
-  return max;
-}
-
 std::optional<std::string> BPFtrace::get_watchpoint_binary_path() const
 {
   if (child_)
@@ -1762,32 +1618,6 @@ std::optional<std::string> BPFtrace::get_watchpoint_binary_path() const
   {
     return std::nullopt;
   }
-}
-
-int64_t BPFtrace::min_value(const std::vector<uint8_t> &value, int nvalues)
-{
-  int64_t val, max = 0, retval;
-  for (int i=0; i<nvalues; i++)
-  {
-    val = read_data<int64_t>(value.data() + i * sizeof(int64_t));
-    if (val > max)
-      max = val;
-  }
-
-  /*
-   * This is a hack really until the code generation for the min() function
-   * is sorted out. The way it is currently implemented doesn't allow >
-   * 32 bit quantities and also means we have to do gymnastics with the return
-   * value owing to the way it is stored (i.e., 0xffffffff - val).
-   */
-  if (max == 0) /* If we have applied the zero() function */
-    retval = max;
-  else if ((0xffffffff - max) <= 0) /* A negative 32 bit value */
-    retval =  0 - (max - 0xffffffff);
-  else
-    retval =  0xffffffff - max; /* A positive 32 bit value */
-
-  return retval;
 }
 
 std::vector<uint8_t> BPFtrace::find_empty_key(IMap &map, size_t size) const
@@ -2310,6 +2140,16 @@ std::string BPFtrace::get_string_literal(const ast::Expression *expr) const
 
   LOG(ERROR) << "Expected string literal, got " << expr->type;
   return "";
+}
+
+bool BPFtrace::is_traceable_func(const std::string &func_name) const
+{
+#ifdef FUZZ
+  (void)func_name;
+  return true;
+#else
+  return traceable_funcs_.find(func_name) != traceable_funcs_.end();
+#endif
 }
 
 } // namespace bpftrace

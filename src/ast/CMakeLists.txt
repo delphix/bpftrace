@@ -25,6 +25,7 @@ add_dependencies(ast parser)
 
 if (STATIC_LINKING)
   set(clang_libs
+      libclang.a
       clangAST
       clangAnalysis
       clangBasic
@@ -40,20 +41,20 @@ if (STATIC_LINKING)
       clangSerialization
       clangToolingCore)
 
-  if(EMBED_CLANG)
-    list(APPEND clang_libs clangToolingInclusions)
-    if(EMBED_LIBCLANG_ONLY)
-      unlink_transitive_dependency("${CLANG_EXPORTED_TARGETS}" "LLVM")
-    endif()
-    target_link_libraries(ast ${CLANG_EMBEDDED_CMAKE_TARGETS})
-  else()
-    list(INSERT clang_libs 0 libclang.a)
-  endif()
+  set(llvm_lib_names
+      bpfcodegen
+      ipo
+      irreader
+      mcjit
+      option
+      orcjit
+      ${LLVM_TARGETS_TO_BUILD})
 
-  if(EMBED_LLVM)
-    target_link_libraries(ast ${LLVM_EMBEDDED_CMAKE_TARGETS})
+
+  if(EMBED_USE_LLVM)
+    target_link_libraries(ast "-Wl,--start-group" ${CLANG_EMBEDDED_CMAKE_TARGETS} ${LLVM_EMBEDDED_CMAKE_TARGETS} "-Wl,--end-group")
   else()
-    llvm_map_components_to_libnames(llvm_libs bpfcodegen ipo irreader mcjit option orcjit ${LLVM_TARGETS_TO_BUILD})
+    llvm_map_components_to_libnames(llvm_libs ${llvm_lib_names})
     target_link_libraries(ast ${clang_libs})
     target_link_libraries(ast ${llvm_libs})
   endif()
@@ -61,6 +62,7 @@ if (STATIC_LINKING)
   if(STATIC_LIBC)
     unlink_transitive_dependency("${CLANG_EXPORTED_TARGETS}" "LLVM")
   endif()
+
 else()
   find_library(found_LLVM LLVM HINTS ${LLVM_LIBRARY_DIRS})
   if(found_LLVM)

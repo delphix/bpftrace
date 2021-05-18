@@ -45,6 +45,7 @@ add_executable(${BPFTRACE}
   ${MAIN_SRC}
 )
 
+install(TARGETS ${BPFTRACE} DESTINATION ${CMAKE_INSTALL_BINDIR})
 target_link_libraries(${BPFTRACE} libbpftrace)
 
 if (BUILD_FUZZ)
@@ -68,132 +69,7 @@ if (BUILD_FUZZ)
   endif()
 endif()
 
-if(HAVE_NAME_TO_HANDLE_AT)
-  target_compile_definitions(libbpftrace PRIVATE HAVE_NAME_TO_HANDLE_AT=1)
-endif(HAVE_NAME_TO_HANDLE_AT)
-if(HAVE_BCC_PROG_LOAD)
-  target_compile_definitions(libbpftrace PRIVATE HAVE_BCC_PROG_LOAD)
-endif(HAVE_BCC_PROG_LOAD)
-if(HAVE_BCC_CREATE_MAP)
-  target_compile_definitions(libbpftrace PRIVATE HAVE_BCC_CREATE_MAP)
-endif(HAVE_BCC_CREATE_MAP)
-if(HAVE_BCC_ELF_FOREACH_SYM)
-  target_compile_definitions(libbpftrace PRIVATE HAVE_BCC_ELF_FOREACH_SYM)
-endif(HAVE_BCC_ELF_FOREACH_SYM)
-if(HAVE_BCC_USDT_ADDSEM)
-  target_compile_definitions(libbpftrace PRIVATE HAVE_BCC_USDT_ADDSEM)
-endif(HAVE_BCC_USDT_ADDSEM)
-if (LIBBPF_BTF_DUMP_FOUND)
-  target_compile_definitions(libbpftrace PRIVATE HAVE_LIBBPF_BTF_DUMP)
-  target_include_directories(libbpftrace PUBLIC ${LIBBPF_INCLUDE_DIRS})
-  target_link_libraries(libbpftrace ${LIBBPF_LIBRARIES})
-  if (HAVE_LIBBPF_BTF_DUMP_EMIT_TYPE_DECL)
-    target_compile_definitions(libbpftrace PRIVATE HAVE_LIBBPF_BTF_DUMP_EMIT_TYPE_DECL)
-  endif()
-endif(LIBBPF_BTF_DUMP_FOUND)
-if (LIBBPF_FOUND)
-  target_compile_definitions(libbpftrace PRIVATE HAVE_LIBBPF)
-endif(LIBBPF_FOUND)
-
-if (HAVE_LIBBPF_MAP_BATCH)
-  target_compile_definitions(libbpftrace PRIVATE HAVE_LIBBPF_MAP_BATCH)
-endif()
-
-if (HAVE_LIBBPF_LINK_CREATE)
-  target_compile_definitions(libbpftrace PRIVATE HAVE_LIBBPF_LINK_CREATE)
-endif()
-
-if (HAVE_BCC_PROG_LOAD_XATTR)
-  target_compile_definitions(libbpftrace PRIVATE HAVE_BCC_PROG_LOAD_XATTR)
-endif()
-
-if (HAVE_LIBBPF_LINK_CREATE OR HAVE_BCC_PROG_LOAD_XATTR)
-  target_compile_definitions(libbpftrace PRIVATE HAVE_LIBBPF_BPF_H)
-endif()
-
-if (HAVE_BCC_KFUNC)
-  target_compile_definitions(libbpftrace PRIVATE HAVE_BCC_KFUNC)
-endif(HAVE_BCC_KFUNC)
-if(HAVE_BFD_DISASM)
-  target_compile_definitions(libbpftrace PRIVATE HAVE_BFD_DISASM)
-  if(LIBBFD_DISASM_FOUR_ARGS_SIGNATURE)
-    target_compile_definitions(libbpftrace PRIVATE LIBBFD_DISASM_FOUR_ARGS_SIGNATURE)
-  endif(LIBBFD_DISASM_FOUR_ARGS_SIGNATURE)
-  if(STATIC_LINKING)
-    add_library(LIBBFD STATIC IMPORTED)
-    set_property(TARGET LIBBFD PROPERTY IMPORTED_LOCATION ${LIBBFD_LIBRARIES})
-    target_link_libraries(libbpftrace LIBBFD)
-    add_library(LIBOPCODES STATIC IMPORTED)
-    set_property(TARGET LIBOPCODES PROPERTY IMPORTED_LOCATION ${LIBOPCODES_LIBRARIES})
-    target_link_libraries(libbpftrace LIBOPCODES)
-    add_library(LIBIBERTY STATIC IMPORTED)
-    set_property(TARGET LIBIBERTY PROPERTY IMPORTED_LOCATION ${LIBIBERTY_LIBRARIES})
-    target_link_libraries(libbpftrace LIBIBERTY)
-  else()
-    target_link_libraries(libbpftrace ${LIBBFD_LIBRARIES})
-    target_link_libraries(libbpftrace ${LIBOPCODES_LIBRARIES})
-  endif(STATIC_LINKING)
-endif(HAVE_BFD_DISASM)
-if(LIBBCC_ATTACH_KPROBE_SIX_ARGS_SIGNATURE)
-  target_compile_definitions(libbpftrace PRIVATE LIBBCC_ATTACH_KPROBE_SIX_ARGS_SIGNATURE)
-endif(LIBBCC_ATTACH_KPROBE_SIX_ARGS_SIGNATURE)
-if(LIBBCC_ATTACH_UPROBE_SEVEN_ARGS_SIGNATURE)
-  target_compile_definitions(libbpftrace PRIVATE LIBBCC_ATTACH_UPROBE_SEVEN_ARGS_SIGNATURE)
-endif(LIBBCC_ATTACH_UPROBE_SEVEN_ARGS_SIGNATURE)
-
-if (ALLOW_UNSAFE_PROBE)
-  target_compile_definitions(libbpftrace PRIVATE HAVE_UNSAFE_PROBE)
-endif(ALLOW_UNSAFE_PROBE)
-
-target_link_libraries(libbpftrace arch ast parser resources)
-
-target_link_libraries(libbpftrace ${LIBBCC_LIBRARIES})
-if(STATIC_LINKING)
-  # These are not part of the static libbcc so have to be added separate
-  target_link_libraries(libbpftrace ${LIBBCC_BPF_LIBRARY_STATIC})
-  target_link_libraries(libbpftrace ${LIBBPF_LIBRARIES})
-  target_link_libraries(libbpftrace ${LIBBCC_LOADER_LIBRARY_STATIC})
-
-  add_library(LIBELF STATIC IMPORTED)
-  set_property(TARGET LIBELF PROPERTY IMPORTED_LOCATION ${LIBELF_LIBRARIES})
-  target_link_libraries(libbpftrace LIBELF)
-
-  if(NOT STATIC_LIBC)
-    set_target_properties(${BPFTRACE} PROPERTIES LINK_FLAGS "${EMBEDDED_LINK_FLAGS}")
-  endif()
-else()
-  target_link_libraries(libbpftrace ${LIBELF_LIBRARIES})
-endif(STATIC_LINKING)
-
-# Support for std::filesystem
-# GCC version <9 and Clang (all versions) require -lstdc++fs
-if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang" OR ${CMAKE_CXX_COMPILER_VERSION} VERSION_LESS "9")
-  target_link_libraries(libbpftrace "stdc++fs")
-endif()
-
-if (BUILD_ASAN)
-  if(${CMAKE_VERSION} VERSION_LESS "3.13.0")
-    # target_link_options is supported in CMake 3.13 and newer
-    message("Please use CMake 3.13 or newer to enable ASAN")
-  endif()
-  target_compile_options(${BPFTRACE} PUBLIC "-fsanitize=address")
-  target_link_options(${BPFTRACE} PUBLIC "-fsanitize=address")
-endif()
-
-if (USE_LIBFUZZER)
-  if(${CMAKE_VERSION} VERSION_LESS "3.13.0")
-    message("Please use CMake 3.13 or newer to use libfuzzer")
-  endif()
-  if (BUILD_ASAN)
-    target_compile_options(${BPFTRACE} PUBLIC "-fsanitize=fuzzer,address")
-    target_link_options(${BPFTRACE} PUBLIC "-fsanitize=fuzzer")
-  else()
-      target_compile_options(${BPFTRACE} PUBLIC "-fsanitize=fuzzer")
-      target_link_options(${BPFTRACE} PUBLIC "-fsanitize=fuzzer,address")
-  endif()
-endif()
-
-install(TARGETS ${BPFTRACE} DESTINATION ${CMAKE_INSTALL_BINDIR})
+# compile definitions
 
 set(KERNEL_HEADERS_DIR "" CACHE PATH "Hard-code kernel headers directory")
 if (KERNEL_HEADERS_DIR)
@@ -217,6 +93,153 @@ if(NOT "${retcode}" STREQUAL "0")
 endif()
 
 add_definitions("-DBPFTRACE_VERSION=\"${BPFTRACE_VERSION}\"")
+
+
+
+if (ALLOW_UNSAFE_PROBE)
+  target_compile_definitions(libbpftrace PRIVATE HAVE_UNSAFE_PROBE)
+endif(ALLOW_UNSAFE_PROBE)
+
+if(HAVE_NAME_TO_HANDLE_AT)
+  target_compile_definitions(libbpftrace PRIVATE HAVE_NAME_TO_HANDLE_AT=1)
+endif(HAVE_NAME_TO_HANDLE_AT)
+
+if(HAVE_BCC_PROG_LOAD)
+  target_compile_definitions(libbpftrace PRIVATE HAVE_BCC_PROG_LOAD)
+endif(HAVE_BCC_PROG_LOAD)
+
+if(HAVE_BCC_CREATE_MAP)
+  target_compile_definitions(libbpftrace PRIVATE HAVE_BCC_CREATE_MAP)
+endif(HAVE_BCC_CREATE_MAP)
+
+if(HAVE_BCC_ELF_FOREACH_SYM)
+  target_compile_definitions(libbpftrace PRIVATE HAVE_BCC_ELF_FOREACH_SYM)
+endif(HAVE_BCC_ELF_FOREACH_SYM)
+
+if(HAVE_BCC_USDT_ADDSEM)
+  target_compile_definitions(libbpftrace PRIVATE HAVE_BCC_USDT_ADDSEM)
+endif(HAVE_BCC_USDT_ADDSEM)
+
+if(LIBBCC_ATTACH_KPROBE_SIX_ARGS_SIGNATURE)
+  target_compile_definitions(libbpftrace PRIVATE LIBBCC_ATTACH_KPROBE_SIX_ARGS_SIGNATURE)
+endif(LIBBCC_ATTACH_KPROBE_SIX_ARGS_SIGNATURE)
+
+if(LIBBCC_ATTACH_UPROBE_SEVEN_ARGS_SIGNATURE)
+  target_compile_definitions(libbpftrace PRIVATE LIBBCC_ATTACH_UPROBE_SEVEN_ARGS_SIGNATURE)
+endif(LIBBCC_ATTACH_UPROBE_SEVEN_ARGS_SIGNATURE)
+
+if (HAVE_BCC_KFUNC)
+  target_compile_definitions(libbpftrace PRIVATE HAVE_BCC_KFUNC)
+endif(HAVE_BCC_KFUNC)
+
+if (HAVE_LIBBPF_LINK_CREATE OR HAVE_BCC_PROG_LOAD_XATTR)
+  target_compile_definitions(libbpftrace PRIVATE HAVE_LIBBPF_BPF_H)
+endif()
+
+if (LIBBPF_FOUND)
+  target_compile_definitions(libbpftrace PRIVATE HAVE_LIBBPF)
+endif(LIBBPF_FOUND)
+
+if (HAVE_LIBBPF_MAP_BATCH)
+  target_compile_definitions(libbpftrace PRIVATE HAVE_LIBBPF_MAP_BATCH)
+endif()
+
+if (HAVE_LIBBPF_LINK_CREATE)
+  target_compile_definitions(libbpftrace PRIVATE HAVE_LIBBPF_LINK_CREATE)
+endif()
+
+if (HAVE_BCC_PROG_LOAD_XATTR)
+  target_compile_definitions(libbpftrace PRIVATE HAVE_BCC_PROG_LOAD_XATTR)
+endif()
+
+if(HAVE_BFD_DISASM)
+  target_compile_definitions(libbpftrace PRIVATE HAVE_BFD_DISASM)
+  if(LIBBFD_DISASM_FOUR_ARGS_SIGNATURE)
+    target_compile_definitions(libbpftrace PRIVATE LIBBFD_DISASM_FOUR_ARGS_SIGNATURE)
+  endif(LIBBFD_DISASM_FOUR_ARGS_SIGNATURE)
+endif(HAVE_BFD_DISASM)
+
+if (LIBBPF_BTF_DUMP_FOUND)
+  target_compile_definitions(libbpftrace PRIVATE HAVE_LIBBPF_BTF_DUMP)
+  if (HAVE_LIBBPF_BTF_DUMP_EMIT_TYPE_DECL)
+    target_compile_definitions(libbpftrace PRIVATE HAVE_LIBBPF_BTF_DUMP_EMIT_TYPE_DECL)
+  endif()
+endif(LIBBPF_BTF_DUMP_FOUND)
+
+# Linking
+if(STATIC_LINKING)
+  if(STATIC_LIBC)
+    target_link_options(${BPFTRACE} BEFORE PRIVATE "-static")
+  else()
+    target_link_options(${BPFTRACE} BEFORE PRIVATE "-static-libgcc" "-static-libstdc++")
+  endif(STATIC_LIBC)
+endif(STATIC_LINKING)
+
+
+target_link_libraries(libbpftrace parser resources ast arch)
+
+if (LIBBPF_BTF_DUMP_FOUND)
+  target_include_directories(libbpftrace PUBLIC ${LIBBPF_INCLUDE_DIRS})
+  target_link_libraries(libbpftrace ${LIBBPF_LIBRARIES})
+endif(LIBBPF_BTF_DUMP_FOUND)
+
+if(HAVE_BFD_DISASM)
+  if(STATIC_LINKING)
+    add_library(LIBBFD STATIC IMPORTED)
+    set_property(TARGET LIBBFD PROPERTY IMPORTED_LOCATION ${LIBBFD_LIBRARIES})
+    target_link_libraries(libbpftrace LIBBFD)
+    add_library(LIBOPCODES STATIC IMPORTED)
+    set_property(TARGET LIBOPCODES PROPERTY IMPORTED_LOCATION ${LIBOPCODES_LIBRARIES})
+    target_link_libraries(libbpftrace LIBOPCODES)
+    add_library(LIBIBERTY STATIC IMPORTED)
+    set_property(TARGET LIBIBERTY PROPERTY IMPORTED_LOCATION ${LIBIBERTY_LIBRARIES})
+    target_link_libraries(libbpftrace LIBIBERTY)
+  else()
+    target_link_libraries(libbpftrace ${LIBBFD_LIBRARIES})
+    target_link_libraries(libbpftrace ${LIBOPCODES_LIBRARIES})
+  endif(STATIC_LINKING)
+endif(HAVE_BFD_DISASM)
+
+target_link_libraries(libbpftrace ${LIBBCC_LIBRARIES})
+
+if(STATIC_LINKING)
+  # These are not part of the static libbcc so have to be added separate
+  target_link_libraries(libbpftrace ${LIBBCC_BPF_LIBRARY_STATIC})
+  target_link_libraries(libbpftrace ${LIBBPF_LIBRARIES})
+  target_link_libraries(libbpftrace ${LIBBCC_LOADER_LIBRARY_STATIC})
+
+  add_library(LIBELF STATIC IMPORTED)
+  set_property(TARGET LIBELF PROPERTY IMPORTED_LOCATION ${LIBELF_LIBRARIES})
+  target_link_libraries(libbpftrace LIBELF)
+else()
+  target_link_libraries(libbpftrace ${LIBELF_LIBRARIES})
+endif(STATIC_LINKING)
+
+# Support for std::filesystem
+# GCC version <9 and Clang (all versions) require -lstdc++fs
+if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang" OR ${CMAKE_CXX_COMPILER_VERSION} VERSION_LESS "9")
+  target_link_libraries(libbpftrace "stdc++fs")
+endif()
+
+if (BUILD_ASAN)
+  target_compile_options(${BPFTRACE} PUBLIC "-fsanitize=address")
+  target_link_options(${BPFTRACE} PUBLIC "-fsanitize=address")
+endif()
+
+if (USE_LIBFUZZER)
+  if (BUILD_ASAN)
+    target_compile_options(${BPFTRACE} PUBLIC "-fsanitize=fuzzer,address")
+    target_link_options(${BPFTRACE} PUBLIC "-fsanitize=fuzzer")
+  else()
+    target_compile_options(${BPFTRACE} PUBLIC "-fsanitize=fuzzer")
+    target_link_options(${BPFTRACE} PUBLIC "-fsanitize=fuzzer,address")
+  endif()
+endif()
+
+if (STATIC_LINKING)
+  target_link_libraries(libbpftrace "-Wl,-Bdynamic" "-lrt" "-lpthread" "-ldl" "-lm")
+  target_link_libraries(libbpftrace "-Wl,-Bstatic" "-lz")
+endif()
 
 unset(MAIN_SRC)
 unset(BPFTRACE)

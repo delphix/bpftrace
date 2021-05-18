@@ -135,7 +135,7 @@ IRBuilderBPF::IRBuilderBPF(LLVMContext &context,
       &module_);
 }
 
-AllocaInst *IRBuilderBPF::CreateAllocaBPF(llvm::Type *ty, llvm::Value *arraysize, const std::string &name)
+void IRBuilderBPF::hoist(const std::function<void()> &functor)
 {
   Function *parent = GetInsertBlock()->getParent();
   BasicBlock &entry_block = parent->getEntryBlock();
@@ -145,8 +145,19 @@ AllocaInst *IRBuilderBPF::CreateAllocaBPF(llvm::Type *ty, llvm::Value *arraysize
     SetInsertPoint(&entry_block);
   else
     SetInsertPoint(&entry_block.front());
-  AllocaInst *alloca = CreateAlloca(ty, arraysize, name);
+
+  functor();
   restoreIP(ip);
+}
+
+AllocaInst *IRBuilderBPF::CreateAllocaBPF(llvm::Type *ty,
+                                          llvm::Value *arraysize,
+                                          const std::string &name)
+{
+  AllocaInst *alloca;
+  hoist([this, ty, arraysize, &name, &alloca]() {
+    alloca = CreateAlloca(ty, arraysize, name);
+  });
 
   CreateLifetimeStart(alloca);
   return alloca;
@@ -165,30 +176,20 @@ AllocaInst *IRBuilderBPF::CreateAllocaBPF(const SizedType &stype, const std::str
 
 AllocaInst *IRBuilderBPF::CreateAllocaBPFInit(const SizedType &stype, const std::string &name)
 {
-  Function *parent = GetInsertBlock()->getParent();
-  BasicBlock &entry_block = parent->getEntryBlock();
-
-  auto ip = saveIP();
-  if (entry_block.empty())
-    SetInsertPoint(&entry_block);
-  else
-    SetInsertPoint(&entry_block.front());
-
-  llvm::Type *ty = GetType(stype);
-  AllocaInst *alloca = CreateAllocaBPF(ty, nullptr, name);
-
-  if (needMemcpy(stype))
-  {
-    CREATE_MEMSET(alloca, getInt8(0), stype.GetSize(), 1);
-  }
-  else
-  {
-    CreateStore(ConstantInt::get(ty, 0), alloca);
-  }
-
-  restoreIP(ip);
-
-  CreateLifetimeStart(alloca);
+  AllocaInst *alloca;
+  hoist([this, &stype, &name, &alloca]() {
+    llvm::Type *ty = GetType(stype);
+    alloca = CreateAlloca(ty, nullptr, name);
+    CreateLifetimeStart(alloca);
+    if (needMemcpy(stype))
+    {
+      CREATE_MEMSET(alloca, getInt8(0), stype.GetSize(), 1);
+    }
+    else
+    {
+      CreateStore(ConstantInt::get(ty, 0), alloca);
+    }
+  });
   return alloca;
 }
 
@@ -315,7 +316,7 @@ CallInst *IRBuilderBPF::CreateBpfPseudoCallValue(Map &map)
   return CreateBpfPseudoCallValue(mapfd);
 }
 
-CallInst *IRBuilderBPF::createMapLookup(int mapfd, AllocaInst *key)
+CallInst *IRBuilderBPF::createMapLookup(int mapfd, Value *key)
 {
   Value *map_ptr = CreateBpfPseudoCallFd(mapfd);
   // void *map_lookup_elem(struct bpf_map * map, void * key)
@@ -345,7 +346,7 @@ CallInst *IRBuilderBPF::CreateGetJoinMap(Value *ctx, const location &loc)
 
 Value *IRBuilderBPF::CreateMapLookupElem(Value *ctx,
                                          Map &map,
-                                         AllocaInst *key,
+                                         Value *key,
                                          const location &loc)
 {
   assert(ctx && ctx->getType() == getInt8PtrTy());
@@ -355,7 +356,7 @@ Value *IRBuilderBPF::CreateMapLookupElem(Value *ctx,
 
 Value *IRBuilderBPF::CreateMapLookupElem(Value *ctx,
                                          int mapfd,
-                                         AllocaInst *key,
+                                         Value *key,
                                          SizedType &type,
                                          const location &loc)
 {
@@ -407,7 +408,7 @@ Value *IRBuilderBPF::CreateMapLookupElem(Value *ctx,
 
 void IRBuilderBPF::CreateMapUpdateElem(Value *ctx,
                                        Map &map,
-                                       AllocaInst *key,
+                                       Value *key,
                                        Value *val,
                                        const location &loc)
 {
@@ -438,7 +439,7 @@ void IRBuilderBPF::CreateMapUpdateElem(Value *ctx,
 
 void IRBuilderBPF::CreateMapDeleteElem(Value *ctx,
                                        Map &map,
-                                       AllocaInst *key,
+                                       Value *key,
                                        const location &loc)
 {
   assert(ctx && ctx->getType() == getInt8PtrTy());
