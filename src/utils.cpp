@@ -759,6 +759,9 @@ std::string hex_format_buffer(const char *buf, size_t size)
 
 std::unordered_set<std::string> get_traceable_funcs()
 {
+#ifdef FUZZ
+  return {};
+#else
   // Try to get the list of functions from BPFTRACE_AVAILABLE_FUNCTIONS_TEST env
   const char *path = std::getenv("BPFTRACE_AVAILABLE_FUNCTIONS_TEST");
 
@@ -782,6 +785,7 @@ std::unordered_set<std::string> get_traceable_funcs()
   while (std::getline(available_funs, line))
     result.insert(line);
   return result;
+#endif
 }
 
 uint64_t parse_exponent(const char *str)
@@ -935,6 +939,44 @@ std::optional<std::string> abs_path(const std::string &rel_path)
   {
     return rel_path;
   }
+}
+
+int64_t min_value(const std::vector<uint8_t> &value, int nvalues)
+{
+  int64_t val, max = 0, retval;
+  for (int i = 0; i < nvalues; i++)
+  {
+    val = read_data<int64_t>(value.data() + i * sizeof(int64_t));
+    if (val > max)
+      max = val;
+  }
+
+  /*
+   * This is a hack really until the code generation for the min() function
+   * is sorted out. The way it is currently implemented doesn't allow >
+   * 32 bit quantities and also means we have to do gymnastics with the return
+   * value owing to the way it is stored (i.e., 0xffffffff - val).
+   */
+  if (max == 0) /* If we have applied the zero() function */
+    retval = max;
+  else if ((0xffffffff - max) <= 0) /* A negative 32 bit value */
+    retval = 0 - (max - 0xffffffff);
+  else
+    retval = 0xffffffff - max; /* A positive 32 bit value */
+
+  return retval;
+}
+
+uint64_t max_value(const std::vector<uint8_t> &value, int nvalues)
+{
+  uint64_t val, max = 0;
+  for (int i = 0; i < nvalues; i++)
+  {
+    val = read_data<uint64_t>(value.data() + i * sizeof(uint64_t));
+    if (val > max)
+      max = val;
+  }
+  return max;
 }
 
 } // namespace bpftrace
