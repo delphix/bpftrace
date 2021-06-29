@@ -1,12 +1,13 @@
+#include "ast/field_analyser.h"
+#include "ast/resource_analyser.h"
+#include "ast/semantic_analyser.h"
 #include "bpforc.h"
 #include "bpftrace.h"
 #include "clang_parser.h"
 #include "codegen_llvm.h"
 #include "driver.h"
 #include "fake_map.h"
-#include "field_analyser.h"
 #include "mocks.h"
-#include "semantic_analyser.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 
@@ -22,7 +23,6 @@ void gen_bytecode(const std::string &input, std::stringstream &out)
 {
   auto bpftrace = get_mock_bpftrace();
   Driver driver(*bpftrace);
-  FakeMap::next_mapfd_ = 1;
 
   ASSERT_EQ(driver.parse_str(input), 0);
 
@@ -36,7 +36,11 @@ void gen_bytecode(const std::string &input, std::stringstream &out)
   bpftrace->feature_ = std::make_unique<MockBPFfeature>(true);
   ast::SemanticAnalyser semantics(driver.root_, *bpftrace);
   ASSERT_EQ(semantics.analyse(), 0);
-  ASSERT_EQ(semantics.create_maps(true), 0);
+
+  ast::ResourceAnalyser resource_analyser(driver.root_);
+  auto resources = resource_analyser.analyse();
+  ASSERT_EQ(resources.create_maps(*bpftrace, true), 0);
+  bpftrace->resources = resources;
 
   ast::CodegenLLVM codegen(driver.root_, *bpftrace);
   codegen.generate_ir();
@@ -67,6 +71,7 @@ TEST(probe, short_name)
 }
 
 #ifdef HAVE_LIBBPF_BTF_DUMP
+#ifdef HAVE_BCC_KFUNC
 
 #include "btf_common.h"
 
@@ -82,6 +87,7 @@ TEST_F(probe_btf, short_name)
   compare_bytecode("iter:task_file { 1 }", "it:task_file { 1 }");
 }
 
+#endif // HAVE_BCC_KFUNC
 #endif // HAVE_LIBBPF_BTF_DUMP
 
 } // namespace probe

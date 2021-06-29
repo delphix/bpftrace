@@ -16,11 +16,11 @@ add_custom_command(OUTPUT ${CMAKE_BINARY_DIR}/tests/codegen_includes.cpp
     -P ${CMAKE_SOURCE_DIR}/tests/codegen/generate_codegen_includes.cmake
   DEPENDS ${CODEGEN_SOURCES})
 
-if(${LLVM_VERSION} VERSION_LESS 11.0.0)
+if(${LLVM_VERSION_MAJOR} VERSION_EQUAL 12)
   set(CODEGEN_SRC ${CMAKE_BINARY_DIR}/tests/codegen_includes.cpp)
 else()
   set(CODEGEN_SRC "")
-  message(STATUS "Disabled codegen test for LLVM >= 11")
+  message(STATUS "Disabled codegen test for LLVM != 12")
 endif()
 
 add_executable(bpftrace_test
@@ -32,6 +32,7 @@ add_executable(bpftrace_test
   main.cpp
   mocks.cpp
   parser.cpp
+  portability_analyser.cpp
   procmon.cpp
   probe.cpp
   semantic_analyser.cpp
@@ -56,9 +57,16 @@ elseif(CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
   target_compile_definitions(bpftrace_test PRIVATE ARCH_X86_64)
 endif()
 
+target_compile_definitions(bpftrace_test PRIVATE ${BPFTRACE_FLAGS})
+
+if(BUILD_ASAN)
+  target_compile_options(bpftrace_test PUBLIC "-fsanitize=address")
+  target_link_options(bpftrace_test PUBLIC "-fsanitize=address")
+endif()
+
 if(STATIC_LINKING)
-  if(EMBED_LLVM OR EMBED_CLANG)
-    set_target_properties(bpftrace_test PROPERTIES LINK_FLAGS "${EMBEDDED_LINK_FLAGS}")
+  if(EMBED_USE_LLVM)
+    target_link_options(bpftrace_test BEFORE PRIVATE "-static-libgcc" "-static-libstdc++")
   endif()
   if(STATIC_LIBC)
     set_target_properties(bpftrace_test PROPERTIES LINK_FLAGS "-static")
@@ -79,7 +87,7 @@ if(VENDOR_GTEST)
   include(ExternalProject)
   ExternalProject_Add(gtest-git
     GIT_REPOSITORY https://github.com/google/googletest.git
-    GIT_TAG release-1.8.1
+    GIT_TAG release-1.10.0
     STEP_TARGETS build update
     EXCLUDE_FROM_ALL 1
     BUILD_BYPRODUCTS ${gtest_byproducts}
@@ -88,10 +96,13 @@ if(VENDOR_GTEST)
   ExternalProject_Get_Property(gtest-git source_dir binary_dir)
   target_include_directories(bpftrace_test PUBLIC ${source_dir}/googletest/include)
   target_include_directories(bpftrace_test PUBLIC ${source_dir}/googlemock/include)
-  target_link_libraries(bpftrace_test ${binary_dir}/googlemock/gtest/libgtest.a)
-  target_link_libraries(bpftrace_test ${binary_dir}/googlemock/gtest/libgtest_main.a)
-  target_link_libraries(bpftrace_test ${binary_dir}/googlemock/libgmock.a)
+  target_link_libraries(bpftrace_test ${binary_dir}/lib/libgtest.a)
+  target_link_libraries(bpftrace_test ${binary_dir}/lib/libgtest_main.a)
+  target_link_libraries(bpftrace_test ${binary_dir}/lib/libgmock.a)
 else()
+  # bpftrace tests require (at minimum) the vendored version (see above).
+  # There's no great way to enforce a minimum version from cmake -- the cmake
+  # modules don't respect minimum requested version.
   find_package(GTest REQUIRED)
   find_package(GMock REQUIRED)
   include_directories(SYSTEM ${GTEST_INCLUDE_DIRS} ${GMOCK_INCLUDE_DIRS})
@@ -177,13 +188,13 @@ add_custom_target(tools-parsing-test COMMAND ./tools-parsing-test.sh)
 add_test(NAME tools-parsing-test COMMAND ./tools-parsing-test.sh)
 
 if(ENABLE_TEST_VALIDATE_CODEGEN)
-  if((${LLVM_VERSION} VERSION_GREATER 6.99.0) AND (${LLVM_VERSION} VERSION_LESS 8.0.0))
+  if(${LLVM_VERSION_MAJOR} VERSION_EQUAL 12)
     message(STATUS "Adding codegen-validator test")
     configure_file(codegen-validator.sh codegen-validator.sh COPYONLY)
     add_custom_target(codegen-validator COMMAND ./codegen-validator.sh)
     add_test(NAME codegen-validator COMMAND ./codegen-validator.sh ${CMAKE_SOURCE_DIR})
   else()
-    message(STATUS "Not building with LLVM 7, skipping codegen-validator test")
+    message(STATUS "Not building with LLVM 12, skipping codegen-validator test")
   endif()
 else()
   message(STATUS "codegen-validator test disabled")

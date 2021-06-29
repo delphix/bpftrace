@@ -162,6 +162,8 @@ bool symbol_has_cpp_mangled_signature(const std::string &sym_name);
 pid_t parse_pid(const std::string &str);
 std::string hex_format_buffer(const char *buf, size_t size);
 std::optional<std::string> abs_path(const std::string &rel_path);
+bool symbol_has_module(const std::string &symbol);
+std::string strip_symbol_module(const std::string &symbol);
 
 // Generate object file section name for a given probe
 inline std::string get_section_name_for_probe(
@@ -223,4 +225,18 @@ T read_data(const void *src)
 
 uint64_t parse_exponent(const char *str);
 uint32_t kernel_version(int attempt);
+
+template <typename T>
+T reduce_value(const std::vector<uint8_t> &value, int nvalues)
+{
+  T sum = 0;
+  for (int i = 0; i < nvalues; i++)
+  {
+    sum += read_data<T>(value.data() + i * sizeof(T));
+  }
+  return sum;
+}
+int64_t min_value(const std::vector<uint8_t> &value, int nvalues);
+uint64_t max_value(const std::vector<uint8_t> &value, int nvalues);
+
 } // namespace bpftrace

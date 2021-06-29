@@ -9,10 +9,20 @@ and this project adheres to
 ## Unreleased
 
 #### Added
+- Warn if attaching a kprobe to a non-traceable function
+  - [#1835](https://github.com/iovisor/bpftrace/pull/1835)
 
 #### Changed
 - Disallow accessing common tracepoint fields
   - [#1810](https://github.com/iovisor/bpftrace/pull/1810)
+- Improve JSON printing (nested structs)
+  - [#1778](https://github.com/iovisor/bpftrace/pull/1778)
+- Return 1 from tracepoint probes
+  - [#1857](https://github.com/iovisor/bpftrace/pull/1857)
+- Preserve original order of struct types
+  - [#1850](https://github.com/iovisor/bpftrace/pull/1850)
+- Forbid casting from/to struct types
+  - [#1873](https://github.com/iovisor/bpftrace/pull/1873)
 
 #### Deprecated
 
@@ -25,10 +35,20 @@ and this project adheres to
   - [#1776](https://github.com/iovisor/bpftrace/pull/1776)
 - Reduce frequency of lost stack traces
   - [#1812](https://github.com/iovisor/bpftrace/pull/1812)
+- Make kaddr() report failure for unknown kernel symbols
+  - [#1836](https://github.com/iovisor/bpftrace/pull/1836)
+- Fix false non-traceable function warnings
+  - [#1866](https://github.com/iovisor/bpftrace/pull/1866)
+- Fix memory leak in clang parser
+  - [#1878](https://github.com/iovisor/bpftrace/pull/1878)
 
 #### Tools
 
 #### Documentation
+
+## [0.12.1] 2021-04-16
+
+Incorrect --info output bug fix release
 
 ## [0.12.0] 2021-04-01
 

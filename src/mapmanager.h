@@ -3,6 +3,7 @@
 #include "imap.h"
 #include <map>
 #include <memory>
+#include <optional>
 #include <unordered_map>
 
 namespace bpftrace {
@@ -15,11 +16,11 @@ class MapManager
 {
 public:
   MapManager() = default;
+  MapManager &operator=(MapManager &&) = default;
 
   MapManager(const MapManager &) = delete;
   MapManager &operator=(const MapManager &) = delete;
   MapManager(MapManager &&) = delete;
-  MapManager &operator=(MapManager &&) = delete;
 
   /**
      Store and lookup named maps
@@ -86,10 +87,12 @@ public:
   };
 
 private:
+  // `maps_by_id_` holds *all* maps
   std::vector<std::unique_ptr<IMap>> maps_by_id_;
+
   std::unordered_map<std::string, IMap *> maps_by_name_;
-  std::unordered_map<Type, std::unique_ptr<IMap>> maps_by_type_;
-  std::unordered_map<StackType, std::unique_ptr<IMap>> stackid_maps_;
+  std::unordered_map<Type, IMap *> maps_by_type_;
+  std::unordered_map<StackType, IMap *> stackid_maps_;
 };
 
 std::string to_string(MapManager::Type t);

@@ -9,7 +9,7 @@
 #include <utility>
 #include <vector>
 
-#include "ast.h"
+#include "ast/ast.h"
 #include "attached_probe.h"
 #include "bpffeature.h"
 #include "bpforc.h"
@@ -21,6 +21,7 @@
 #include "printf.h"
 #include "probe_matcher.h"
 #include "procmon.h"
+#include "required_resources.h"
 #include "struct.h"
 #include "types.h"
 #include "utils.h"
@@ -83,19 +84,15 @@ private:
   std::string msg_;
 };
 
-struct HelperErrorInfo
-{
-  int func_id;
-  location loc;
-};
-
 class BPFtrace
 {
 public:
   BPFtrace(std::unique_ptr<Output> o = std::make_unique<TextOutput>(std::cout))
-      : out_(std::move(o)),
+      : traceable_funcs_(get_traceable_funcs()),
+        out_(std::move(o)),
         feature_(std::make_unique<BPFfeature>()),
         probe_matcher_(std::make_unique<ProbeMatcher>(this)),
+        btf_(this),
         ncpus_(get_possible_cpus().size())
   {
   }
@@ -125,11 +122,6 @@ public:
                             struct symbol *sym,
                             const std::string &path) const;
   std::string resolve_mac_address(const uint8_t *mac_addr) const;
-  std::string map_value_to_str(const SizedType &stype,
-                               std::vector<uint8_t> value,
-                               bool is_per_cpu,
-                               uint32_t div,
-                               const Output &output);
   virtual std::string extract_func_symbols_from_path(const std::string &path) const;
   std::string resolve_probe(uint64_t probe_id) const;
   uint64_t resolve_cgroupid(const std::string &path) const;
@@ -141,6 +133,7 @@ public:
   bool is_aslr_enabled(int pid);
   std::string get_string_literal(const ast::Expression *expr) const;
   std::optional<std::string> get_watchpoint_binary_path() const;
+  virtual bool is_traceable_func(const std::string &func_name) const;
 
   std::vector<std::unique_ptr<AttachedProbe>> attached_probes_;
   std::vector<Probe> watchpoint_probes_;
@@ -149,22 +142,14 @@ public:
   // Global variable checking if an exit signal was received
   static volatile sig_atomic_t exitsig_recv;
 
+  RequiredResources resources;
   MapManager maps;
   std::unique_ptr<BpfOrc> bpforc_;
-  std::map<std::string, Struct> structs_;
+  StructManager structs;
   std::map<std::string, std::string> macros_;
   std::map<std::string, uint64_t> enums_;
-  std::vector<std::tuple<std::string, std::vector<Field>>> printf_args_;
-  std::vector<std::tuple<std::string, std::vector<Field>>> system_args_;
-  std::vector<std::tuple<std::string, std::vector<Field>>> seq_printf_args_;
-  std::vector<std::string> join_args_;
-  std::vector<std::string> time_args_;
-  std::vector<std::string> strftime_args_;
-  std::vector<std::tuple<std::string, std::vector<Field>>> cat_args_;
-  std::vector<SizedType> non_map_print_args_;
-  std::unordered_map<int64_t, struct HelperErrorInfo> helper_error_info_;
+  std::unordered_set<std::string> traceable_funcs_;
 
-  std::vector<std::string> probe_ids_;
   unsigned int join_argnum_ = 16;
   unsigned int join_argsize_ = 1024;
   std::unique_ptr<Output> out_;
@@ -203,8 +188,8 @@ public:
   {
     return procmon_ ? procmon_->pid() : 0;
   }
-
-  std::vector<std::tuple<int, int>> seq_printf_ids_;
+  int ncpus_;
+  int online_cpus_;
 
   std::vector<Probe> probes_;
   std::vector<Probe> special_probes_;
@@ -214,8 +199,6 @@ private:
                         void (*trigger)(void));
   void* ksyms_{nullptr};
   std::map<std::string, std::pair<int, void *>> exe_sym_; // exe -> (pid, cache)
-  int ncpus_;
-  int online_cpus_;
   std::vector<std::string> params_;
 
   std::vector<std::unique_ptr<void, void (*)(void *)>> open_perf_buffers_;
@@ -229,10 +212,6 @@ private:
   void poll_perf_events(int epollfd, bool drain = false);
   int print_map_hist(IMap &map, uint32_t top, uint32_t div);
   int print_map_stats(IMap &map, uint32_t top, uint32_t div);
-  template <typename T>
-  static T reduce_value(const std::vector<uint8_t> &value, int nvalues);
-  static int64_t min_value(const std::vector<uint8_t> &value, int nvalues);
-  static uint64_t max_value(const std::vector<uint8_t> &value, int nvalues);
   static uint64_t read_address_from_output(std::string output);
   std::vector<uint8_t> find_empty_key(IMap &map, size_t size) const;
   bool has_iter_ = false;

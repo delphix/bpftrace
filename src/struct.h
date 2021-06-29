@@ -20,6 +20,7 @@ struct Bitfield
 
 struct Field
 {
+  std::string name;
   SizedType type;
   ssize_t offset;
 
@@ -35,25 +36,44 @@ struct Field
   bool is_data_loc = false;
 };
 
-using FieldsMap = std::map<std::string, Field>;
-using TupleFields = std::vector<Field>;
+using Fields = std::vector<Field>;
 
 struct Struct
 {
   int size; // in bytes
-  FieldsMap fields;
-};
-
-struct Tuple
-{
-  size_t size; // in bytes
-  int align;   // in bytes
+  int align = 1; // in bytes, used for tuples only
   bool padded = false;
-  TupleFields fields;
+  Fields fields;
 
-  static std::unique_ptr<Tuple> Create(std::vector<SizedType> fields);
+  explicit Struct(int size) : size(size)
+  {
+  }
+
+  bool HasField(const std::string &name) const;
+  const Field &GetField(const std::string &name) const;
+  void AddField(const std::string &field_name,
+                const SizedType &type,
+                ssize_t offset,
+                bool is_bitfield,
+                const Bitfield &bitfield,
+                bool is_data_loc);
+
+  static std::unique_ptr<Struct> CreateTuple(std::vector<SizedType> fields);
   void Dump(std::ostream &os);
 };
 
-std::ostream &operator<<(std::ostream &os, const TupleFields &t);
+std::ostream &operator<<(std::ostream &os, const Fields &t);
+
+class StructManager
+{
+public:
+  void Add(const std::string &name, size_t size);
+  std::shared_ptr<Struct> Lookup(const std::string &name) const;
+  std::shared_ptr<Struct> LookupOrAdd(const std::string &name, size_t size);
+  bool Has(const std::string &name) const;
+
+private:
+  std::map<std::string, std::shared_ptr<Struct>> struct_map_;
+};
+
 } // namespace bpftrace

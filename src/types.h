@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cassert>
+#include <map>
 #include <memory>
 #include <ostream>
 #include <sstream>
@@ -74,7 +75,8 @@ struct StackType
   }
 };
 
-struct Tuple;
+class BPFtrace;
+struct Struct;
 struct Field;
 
 class SizedType
@@ -109,15 +111,18 @@ private:
   AddrSpace as_ = AddrSpace::none;
   ssize_t size_bits_ = -1; // size in bits for integer types
 
-  std::shared_ptr<Tuple> tuple_fields; // tuple fields
+  std::shared_ptr<Struct> inner_struct_; // inner struct for records and tuples
 
 public:
   /**
-     Tuple accessors
+     Tuple/struct accessors
   */
   std::vector<Field> &GetFields() const;
+  bool HasField(const std::string &name) const;
+  const Field &GetField(const std::string &name) const;
   Field &GetField(ssize_t n) const;
   ssize_t GetFieldCount() const;
+  const Struct *GetStruct() const;
 
   /**
      Required alignment for this type
@@ -325,8 +330,6 @@ public:
     return type == Type::mac_address;
   };
 
-  bool IsTupleWithStruct(void) const;
-
   friend std::ostream &operator<<(std::ostream &, const SizedType &);
   friend std::ostream &operator<<(std::ostream &, Type);
 
@@ -336,7 +339,8 @@ public:
                                const SizedType &element_type);
 
   friend SizedType CreatePointer(const SizedType &pointee_type, AddrSpace as);
-  friend SizedType CreateRecord(size_t size, const std::string &name);
+  friend SizedType CreateRecord(const std::string &name,
+                                std::shared_ptr<Struct> record);
   friend SizedType CreateInteger(size_t bits, bool is_signed);
   friend SizedType CreateTuple(const std::vector<SizedType> &fields);
 };
@@ -360,11 +364,8 @@ SizedType CreateString(size_t size);
 SizedType CreateArray(size_t num_elements, const SizedType &element_type);
 SizedType CreatePointer(const SizedType &pointee_type,
                         AddrSpace as = AddrSpace::none);
-/**
-   size in bytes
- */
-SizedType CreateRecord(size_t size, const std::string &name);
 
+SizedType CreateRecord(const std::string &name, std::shared_ptr<Struct> record);
 SizedType CreateTuple(const std::vector<SizedType> &fields);
 
 SizedType CreateStackMode();

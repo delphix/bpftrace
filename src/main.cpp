@@ -12,7 +12,12 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "ast/field_analyser.h"
 #include "ast/node_counter.h"
+#include "ast/pass_manager.h"
+#include "ast/portability_analyser.h"
+#include "ast/resource_analyser.h"
+#include "ast/semantic_analyser.h"
 #include "bpffeature.h"
 #include "bpforc.h"
 #include "bpftrace.h"
@@ -21,15 +26,11 @@
 #include "clang_parser.h"
 #include "codegen_llvm.h"
 #include "driver.h"
-#include "field_analyser.h"
 #include "lockdown.h"
 #include "log.h"
 #include "output.h"
-#include "pass_manager.h"
-#include "printer.h"
 #include "probe_matcher.h"
 #include "procmon.h"
-#include "semantic_analyser.h"
 #include "tracepoint_format_parser.h"
 
 using namespace bpftrace;
@@ -41,11 +42,20 @@ enum class OutputBufferConfig {
   FULL,
   NONE,
 };
+
 enum class TestMode
 {
   UNSET = 0,
   SEMANTIC,
   CODEGEN,
+};
+
+enum class BuildMode
+{
+  // Compile script and run immediately
+  DYNAMIC = 0,
+  // Compile script into portable executable
+  AHEAD_OF_TIME,
 };
 } // namespace
 
@@ -396,12 +406,23 @@ static std::optional<struct timespec> get_boottime()
   return std::unique_ptr<ast::Node>(ast);
 }
 
-ast::PassManager CreatePM()
+ast::PassManager CreateDynamicPM()
 {
   ast::PassManager pm;
   pm.AddPass(ast::CreateSemanticPass());
   pm.AddPass(ast::CreateCounterPass());
-  pm.AddPass(ast::CreateMapCreatePass());
+  pm.AddPass(ast::CreateResourcePass());
+
+  return pm;
+}
+
+ast::PassManager CreateAotPM(std::string __attribute__((unused)))
+{
+  ast::PassManager pm;
+  pm.AddPass(ast::CreateSemanticPass());
+  pm.AddPass(ast::CreatePortabilityPass());
+  pm.AddPass(ast::CreateResourcePass());
+
   return pm;
 }
 
@@ -415,8 +436,10 @@ int main(int argc, char* argv[])
   bool usdt_file_activation = false;
   int helper_check_level = 0;
   TestMode test_mode = TestMode::UNSET;
-  std::string script, search, file_name, output_file, output_format, output_elf;
+  std::string script, search, file_name, output_file, output_format, output_elf,
+      aot;
   OutputBufferConfig obc = OutputBufferConfig::UNSET;
+  BuildMode build_mode = BuildMode::DYNAMIC;
   int c;
 
   const char* const short_options = "dbB:f:e:hlp:vqc:Vo:I:k";
@@ -431,6 +454,7 @@ int main(int argc, char* argv[])
     option{ "emit-elf", required_argument, nullptr, 2001 },
     option{ "no-warnings", no_argument, nullptr, 2002 },
     option{ "test", required_argument, nullptr, 2003 },
+    option{ "aot", required_argument, nullptr, 2004 },
     option{ nullptr, 0, nullptr, 0 }, // Must be last
   };
   std::vector<std::string> include_dirs;
@@ -461,6 +485,10 @@ int main(int argc, char* argv[])
           LOG(ERROR) << "USAGE: --test must be either 'semantic' or 'codegen'.";
           return 1;
         }
+        break;
+      case 2004: // --aot
+        aot = optarg;
+        build_mode = BuildMode::AHEAD_OF_TIME;
         break;
       case 'o':
         output_file = optarg;
@@ -758,7 +786,16 @@ int main(int argc, char* argv[])
     return 1;
 
   ast::PassContext ctx(bpftrace);
-  auto pm = CreatePM();
+  ast::PassManager pm;
+  switch (build_mode)
+  {
+    case BuildMode::DYNAMIC:
+      pm = CreateDynamicPM();
+      break;
+    case BuildMode::AHEAD_OF_TIME:
+      pm = CreateAotPM(aot);
+      break;
+  }
   ast_root = pm.Run(std::move(ast_root), ctx);
   if (!ast_root)
     return 1;
@@ -823,10 +860,8 @@ int main(int argc, char* argv[])
     return 1;
   }
 
-  if (bt_debug != DebugLevel::kNone)
-    return 0;
-
-  if (test_mode == TestMode::CODEGEN)
+  if (bt_debug != DebugLevel::kNone || test_mode == TestMode::CODEGEN ||
+      build_mode == BuildMode::AHEAD_OF_TIME)
     return 0;
 
   // Signal handler that lets us know an exit signal was received.

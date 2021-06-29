@@ -2,6 +2,7 @@
 #include <cassert>
 #include <iostream>
 
+#include "bpftrace.h"
 #include "log.h"
 #include "struct.h"
 #include "types.h"
@@ -355,10 +356,11 @@ SizedType CreatePointer(const SizedType &pointee_type, AddrSpace as)
   return ty;
 }
 
-SizedType CreateRecord(size_t size, const std::string &name)
+SizedType CreateRecord(const std::string &name, std::shared_ptr<Struct> record)
 {
-  auto ty = SizedType(Type::record, size);
+  auto ty = SizedType(Type::record, record ? record->size : 0);
   ty.name_ = name;
+  ty.inner_struct_ = record;
   return ty;
 }
 
@@ -449,8 +451,8 @@ SizedType CreateTimestamp()
 SizedType CreateTuple(const std::vector<SizedType> &fields)
 {
   auto s = SizedType(Type::tuple, 0);
-  s.tuple_fields = Tuple::Create(fields);
-  s.size_ = s.tuple_fields->size;
+  s.inner_struct_ = Struct::CreateTuple(fields);
+  s.size_ = s.inner_struct_->size;
   return s;
 }
 
@@ -468,28 +470,32 @@ bool SizedType::IsSigned(void) const
 
 std::vector<Field> &SizedType::GetFields() const
 {
-  assert(IsTupleTy());
-  return tuple_fields->fields;
+  assert(IsTupleTy() || IsRecordTy());
+  return inner_struct_->fields;
 }
 
 Field &SizedType::GetField(ssize_t n) const
 {
-  assert(IsTupleTy());
+  assert(IsTupleTy() || IsRecordTy());
   if (n >= GetFieldCount())
     throw std::runtime_error("Getfield(): out of bound");
-  return tuple_fields->fields[n];
+  return inner_struct_->fields[n];
 }
 
 ssize_t SizedType::GetFieldCount() const
 {
-  assert(IsTupleTy());
-  return tuple_fields->fields.size();
+  assert(IsTupleTy() || IsRecordTy());
+  return inner_struct_->fields.size();
 }
 
 void SizedType::DumpStructure(std::ostream &os)
 {
   assert(IsTupleTy());
-  return tuple_fields->Dump(os);
+  if (IsTupleTy())
+    os << "tuple";
+  else
+    os << "struct";
+  return inner_struct_->Dump(os);
 }
 
 ssize_t SizedType::GetAlignment() const
@@ -497,8 +503,8 @@ ssize_t SizedType::GetAlignment() const
   if (IsStringTy())
     return 1;
 
-  if (IsTupleTy())
-    return tuple_fields->align;
+  if (IsTupleTy() || IsRecordTy())
+    return inner_struct_->align;
 
   if (GetSize() <= 2)
     return GetSize();
@@ -510,15 +516,22 @@ ssize_t SizedType::GetAlignment() const
     return 8;
 }
 
-bool SizedType::IsTupleWithStruct(void) const
+bool SizedType::HasField(const std::string &name) const
 {
-  if (!IsTupleTy())
-    return false;
+  assert(IsRecordTy());
+  return inner_struct_->HasField(name);
+}
 
-  for (auto &field : tuple_fields->fields)
-    if (field.type.IsRecordTy())
-      return true;
-  return false;
+const Field &SizedType::GetField(const std::string &name) const
+{
+  assert(IsRecordTy());
+  return inner_struct_->GetField(name);
+}
+
+const Struct *SizedType::GetStruct() const
+{
+  assert(IsRecordTy());
+  return inner_struct_.get();
 }
 
 } // namespace bpftrace

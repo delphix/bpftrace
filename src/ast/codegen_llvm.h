@@ -3,6 +3,7 @@
 #include <iostream>
 #include <optional>
 #include <ostream>
+#include <tuple>
 
 #include "bpftrace.h"
 #include "irbuilderbpf.h"
@@ -54,7 +55,6 @@ public:
   void visit(AttachPoint &ap) override;
   void visit(Probe &probe) override;
   void visit(Program &program) override;
-  AllocaInst *getMapKey(Map &map);
   AllocaInst *getHistMapKey(Map &map, Value *log2);
   int         getNextIndexForProbe(const std::string &probe_name);
   Value      *createLogicalAnd(Binop &binop);
@@ -85,6 +85,11 @@ private:
       deleter_ = std::move(deleter);
     }
 
+    ScopedExprDeleter(const ScopedExprDeleter &other) = delete;
+    ScopedExprDeleter &operator=(const ScopedExprDeleter &other) = delete;
+    ScopedExprDeleter(ScopedExprDeleter &&other) = default;
+    ScopedExprDeleter &operator=(ScopedExprDeleter &&other) = default;
+
     ~ScopedExprDeleter()
     {
       if (deleter_)
@@ -110,6 +115,7 @@ private:
                      std::optional<int> usdt_location_index = std::nullopt);
 
   [[nodiscard]] ScopedExprDeleter accept(Node *node);
+  [[nodiscard]] std::tuple<Value *, ScopedExprDeleter> getMapKey(Map &map);
 
   void compareStructure(SizedType &our_type, llvm::Type *llvm_type);
 
@@ -122,6 +128,11 @@ private:
   void kstack_ustack(const std::string &ident,
                      StackType stack_type,
                      const location &loc);
+
+  // Create return instruction
+  //
+  // If null, return value will depend on current attach point
+  void createRet(Value *value = nullptr);
 
   // Every time we see a watchpoint that specifies a function + arg pair, we
   // generate a special "setup" probe that:
@@ -140,13 +151,13 @@ private:
 
   void readDatastructElemFromStack(Value *src_data,
                                    Value *index,
-                                   SizedType &data_type,
-                                   SizedType &elem_type,
+                                   const SizedType &data_type,
+                                   const SizedType &elem_type,
                                    ScopedExprDeleter &scoped_del);
   void probereadDatastructElem(Value *src_data,
                                Value *offset,
-                               SizedType &data_type,
-                               SizedType &elem_type,
+                               const SizedType &data_type,
+                               const SizedType &elem_type,
                                ScopedExprDeleter &scoped_del,
                                location loc,
                                const std::string &temp_name);
