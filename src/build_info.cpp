@@ -12,15 +12,6 @@ std::string BuildInfo::report()
       << "  version: " << BPFTRACE_VERSION << std::endl
       << "  LLVM: " << LLVM_VERSION_MAJOR << "." << LLVM_VERSION_MINOR << "."
       << LLVM_VERSION_PATCH << std::endl
-#ifdef LLVM_ORC_V2
-      << "  ORC: v2" << std::endl
-#endif
-      << "  foreach_sym: "
-#ifdef HAVE_BCC_ELF_FOREACH_SYM
-      << "yes" << std::endl
-#else
-      << "no" << std::endl
-#endif
       << "  unsafe uprobe: "
 #ifdef HAVE_UNSAFE_UPROBE
       << "yes" << std::endl;
@@ -33,38 +24,8 @@ std::string BuildInfo::report()
 #else
       << "no" << std::endl;
 #endif
-  buf << "  bpf_attach_kfunc: "
-#ifdef HAVE_BCC_KFUNC
-      << "yes" << std::endl;
-#else
-      << "no" << std::endl;
-#endif
-  buf << "  bcc_usdt_addsem: "
-#ifdef HAVE_BCC_USDT_ADDSEM
-      << "yes" << std::endl;
-#else
-      << "no" << std::endl;
-#endif
-  buf << "  bcc bpf_attach_uprobe refcount: "
-#ifdef LIBBCC_ATTACH_UPROBE_SEVEN_ARGS_SIGNATURE
-      << "yes" << std::endl;
-#else
-      << "no" << std::endl;
-#endif
-  buf << "  libbpf: "
-#ifdef HAVE_LIBBPF
-      << "yes" << std::endl;
-#else
-      << "no" << std::endl;
-#endif
-  buf << "  libbpf btf dump: "
-#ifdef HAVE_LIBBPF_BTF_DUMP
-      << "yes" << std::endl;
-#else
-      << "no" << std::endl;
-#endif
-  buf << "  libbpf btf dump type decl: "
-#ifdef HAVE_LIBBPF_BTF_DUMP_EMIT_TYPE_DECL
+  buf << "  libdw (DWARF support): "
+#ifdef HAVE_LIBDW
       << "yes" << std::endl;
 #else
       << "no" << std::endl;

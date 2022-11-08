@@ -1,4 +1,4 @@
-#include "attachpoint_parser.h"
+#include "ast/attachpoint_parser.h"
 
 #include <algorithm>
 #include <exception>
@@ -6,12 +6,39 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
-
+#include <bcc/bcc_proc.h>
+#include "ast/int_parser.h"
 #include "log.h"
 #include "types.h"
 
 namespace bpftrace {
 namespace ast {
+
+std::optional<uint64_t> AttachPointParser::stoull(const std::string &str)
+{
+  try
+  {
+    return int_parser::to_uint(str, 0);
+  }
+  catch (const std::exception &e)
+  {
+    errs_ << e.what();
+    return std::nullopt;
+  }
+}
+
+std::optional<int64_t> AttachPointParser::stoll(const std::string &str)
+{
+  try
+  {
+    return int_parser::to_uint(str, 0);
+  }
+  catch (const std::exception &e)
+  {
+    errs_ << e.what();
+    return std::nullopt;
+  }
+}
 
 AttachPointParser::AttachPointParser(Program *root,
                                      BPFtrace &bpftrace,
@@ -55,6 +82,19 @@ int AttachPointParser::parse()
         }
       }
     }
+
+    auto new_end = std::remove_if(probe->attach_points->begin(),
+                                  probe->attach_points->end(),
+                                  [](const AttachPoint *ap) {
+                                    return ap->provider.empty();
+                                  });
+    probe->attach_points->erase(new_end, probe->attach_points->end());
+
+    if (probe->attach_points->empty())
+    {
+      LOG(ERROR, probe->loc, sink_) << "No attach points for probe";
+      failed++;
+    }
   }
 
   return failed;
@@ -72,6 +112,13 @@ AttachPointParser::State AttachPointParser::parse_attachpoint(AttachPoint &ap)
   {
     errs_ << "Invalid attachpoint definition" << std::endl;
     return INVALID;
+  }
+
+  if (parts_.front().empty())
+  {
+    // Do not fail on empty attach point, could be just a trailing comma
+    ap_->provider = "";
+    return OK;
   }
 
   std::set<std::string> probe_types;
@@ -129,6 +176,11 @@ AttachPointParser::State AttachPointParser::parse_attachpoint(AttachPoint &ap)
 
   switch (probetype(ap.provider))
   {
+    case ProbeType::invalid:
+      LOG(FATAL) << "Invalid probe type made it to attachpoint parser";
+      return INVALID;
+    case ProbeType::special:
+      return special_parser();
     case ProbeType::kprobe:
       return kprobe_parser();
     case ProbeType::kretprobe:
@@ -158,9 +210,6 @@ AttachPointParser::State AttachPointParser::parse_attachpoint(AttachPoint &ap)
       return kfunc_parser();
     case ProbeType::iter:
       return iter_parser();
-    default:
-      errs_ << "Unrecognized probe type: " << ap_->provider << std::endl;
-      return INVALID;
   }
 
   return OK;
@@ -193,7 +242,7 @@ AttachPointParser::State AttachPointParser::lex_attachpoint(
     }
     else if (!in_quotes && raw[idx] == '$')
     {
-      // There's an assumption that the positional paramter is well
+      // There's an assumption that the positional parameter is well
       // formed. ie we are not expecting a bare `$` or `$nonint`. The
       // bison parser should have guaranteed this.
       size_t i = idx + 1;
@@ -235,6 +284,22 @@ AttachPointParser::State AttachPointParser::lex_attachpoint(
   return State::OK;
 }
 
+AttachPointParser::State AttachPointParser::special_parser()
+{
+  // Can only have reached here if provider is `BEGIN` or `END`
+  assert(ap_->provider == "BEGIN" || ap_->provider == "END");
+
+  if (parts_.size() == 2 && parts_[1] == "*")
+    parts_.pop_back();
+  if (parts_.size() != 1)
+  {
+    errs_ << ap_->provider << " probe type requires 0 arguments" << std::endl;
+    return INVALID;
+  }
+
+  return OK;
+}
+
 AttachPointParser::State AttachPointParser::kprobe_parser(bool allow_offset)
 {
   if (parts_.size() != 2)
@@ -271,22 +336,13 @@ AttachPointParser::State AttachPointParser::kprobe_parser(bool allow_offset)
 
     ap_->func = offset_parts[0];
 
-    try
+    auto res = stoll(offset_parts[1]);
+    if (res)
     {
-      std::size_t idx;
-      ap_->func_offset = std::stoll(offset_parts[1], &idx, 0);
-
-      if (idx != offset_parts[1].size())
-      {
-        errs_ << "Found trailing non-numeric characters: " << offset_parts[1]
-              << std::endl;
-        return INVALID;
-      }
+      ap_->func_offset = *res;
     }
-    catch (const std::exception &ex)
+    else
     {
-      errs_ << "Failed to parse '" << offset_parts[1] << "': " << ex.what()
-            << std::endl;
       return INVALID;
     }
   }
@@ -310,26 +366,12 @@ AttachPointParser::State AttachPointParser::kretprobe_parser()
 AttachPointParser::State AttachPointParser::uprobe_parser(bool allow_offset,
                                                           bool allow_abs_addr)
 {
-  // Handle special probes implemented as uprobes
-  if (ap_->provider == "BEGIN" || ap_->provider == "END")
-  {
-    if (parts_.size() == 2 && parts_[1] == "*")
-      parts_.pop_back();
-    if (parts_.size() != 1)
-    {
-      errs_ << ap_->provider << " probe type requires 0 arguments" << std::endl;
-      return INVALID;
-    }
-
-    return OK;
-  }
-
-  // Now handle regular uprobes
   if (parts_.size() == 2 && bpftrace_.pid() > 0)
   {
     // For PID, the target may be skipped
     parts_.push_back(parts_[1]);
-    parts_[1] = "";
+    auto target = get_pid_exe(bpftrace_.pid());
+    parts_[1] = path_for_pid_mountns(bpftrace_.pid(), target);
   }
   if (parts_.size() != 3)
   {
@@ -340,13 +382,24 @@ AttachPointParser::State AttachPointParser::uprobe_parser(bool allow_offset,
     return INVALID;
   }
 
-  if (bpftrace_.pid() > 0)
+  ap_->target = "";
+
+  if (!has_wildcard(parts_[1]) && parts_[1].find("lib") == 0)
   {
-    ap_->target = get_pid_exe(bpftrace_.pid());
-    ap_->target = path_for_pid_mountns(bpftrace_.pid(), ap_->target);
+    // Automatic resolution of shared library paths.
+    // If the target has form "libXXX" then we use BCC to find the correct path
+    // to the given library as it may differ across systems.
+    auto libname = parts_[1].substr(3);
+    const char *lib_path = bcc_procutils_which_so(libname.c_str(),
+                                                  bpftrace_.pid());
+    if (lib_path)
+      ap_->target = lib_path;
   }
-  else
+
+  if (ap_->target.empty())
+  {
     ap_->target = parts_[1];
+  }
 
   // Handle uprobe:/lib/asdf:func+0x100 case
   auto plus_count = std::count(parts_[2].cbegin(), parts_[2].cend(), '+');
@@ -373,22 +426,13 @@ AttachPointParser::State AttachPointParser::uprobe_parser(bool allow_offset,
 
     ap_->func = offset_parts[0];
 
-    try
+    auto res = stoll(offset_parts[1]);
+    if (res)
     {
-      std::size_t idx;
-      ap_->func_offset = std::stoll(offset_parts[1], &idx, 0);
-
-      if (idx != offset_parts[1].size())
-      {
-        errs_ << "Found trailing non-numeric characters: " << offset_parts[1]
-              << std::endl;
-        return INVALID;
-      }
+      ap_->func_offset = *res;
     }
-    catch (const std::exception &ex)
+    else
     {
-      errs_ << "Failed to parse '" << offset_parts[1] << "': " << ex.what()
-            << std::endl;
       return INVALID;
     }
   }
@@ -397,22 +441,19 @@ AttachPointParser::State AttachPointParser::uprobe_parser(bool allow_offset,
   {
     if (allow_abs_addr)
     {
-      // First try to parse as addr. If that fails, go with symbol name.
-      try
+      auto res = stoll(parts_[2]);
+      if (res)
       {
-        std::size_t idx;
-        ap_->address = std::stoll(parts_[2], &idx, 0);
-
-        // If there are trailing non-numeric characters, we treat the argument
-        // as a string symbol. This exception will immediately be caught.
-        if (idx != parts_[2].size())
+        if (has_wildcard(ap_->target))
         {
-          ap_->address = 0;
-          throw std::runtime_error("use string version");
+          errs_ << "Cannot use wildcards with absolute address" << std::endl;
+          return INVALID;
         }
+        ap_->address = *res;
       }
-      catch (const std::exception &ex)
+      else
       {
+        ap_->address = 0;
         ap_->func = parts_[2];
       }
     }
@@ -510,24 +551,11 @@ AttachPointParser::State AttachPointParser::profile_parser()
 
   ap_->target = parts_[1];
 
-  try
-  {
-    std::size_t idx;
-    ap_->freq = std::stoi(parts_[2], &idx, 0);
-
-    if (idx != parts_[2].size())
-    {
-      errs_ << "Found trailing non-numeric characters: " << parts_[2]
-            << std::endl;
-      return INVALID;
-    }
-  }
-  catch (const std::exception &ex)
-  {
-    errs_ << "Failed to parse '" << parts_[2] << "': " << ex.what()
-          << std::endl;
+  auto res = stoull(parts_[2]);
+  if (res)
+    ap_->freq = *res;
+  else
     return INVALID;
-  }
 
   return OK;
 }
@@ -541,25 +569,11 @@ AttachPointParser::State AttachPointParser::interval_parser()
   }
 
   ap_->target = parts_[1];
-
-  try
-  {
-    std::size_t idx;
-    ap_->freq = std::stoi(parts_[2], &idx, 0);
-
-    if (idx != parts_[2].size())
-    {
-      errs_ << "Found trailing non-numeric characters: " << parts_[2]
-            << std::endl;
-      return INVALID;
-    }
-  }
-  catch (const std::exception &ex)
-  {
-    errs_ << "Failed to parse '" << parts_[2] << "': " << ex.what()
-          << std::endl;
+  auto res = stoull(parts_[2]);
+  if (res)
+    ap_->freq = *res;
+  else
     return INVALID;
-  }
 
   return OK;
 }
@@ -580,24 +594,11 @@ AttachPointParser::State AttachPointParser::software_parser()
 
   if (parts_.size() == 3 && parts_[2] != "*")
   {
-    try
-    {
-      std::size_t idx;
-      ap_->freq = std::stoi(parts_[2], &idx, 0);
-
-      if (idx != parts_[2].size())
-      {
-        errs_ << "Found trailing non-numeric characters: " << parts_[2]
-              << std::endl;
-        return INVALID;
-      }
-    }
-    catch (const std::exception &ex)
-    {
-      errs_ << "Failed to parse '" << parts_[2] << "': " << ex.what()
-            << std::endl;
+    auto res = stoull(parts_[2]);
+    if (res)
+      ap_->freq = *res;
+    else
       return INVALID;
-    }
   }
 
   return OK;
@@ -619,50 +620,16 @@ AttachPointParser::State AttachPointParser::hardware_parser()
 
   if (parts_.size() == 3 && parts_[2] != "*")
   {
-    try
-    {
-      std::size_t idx;
-      ap_->freq = std::stoi(parts_[2], &idx, 0);
-
-      if (idx != parts_[2].size())
-      {
-        errs_ << "Found trailing non-numeric characters: " << parts_[2]
-              << std::endl;
-        return INVALID;
-      }
-    }
-    catch (const std::exception &ex)
-    {
-      errs_ << "Failed to parse '" << parts_[2] << "': " << ex.what()
-            << std::endl;
+    auto res = stoull(parts_[2]);
+    if (res)
+      ap_->freq = *res;
+    else
       return INVALID;
-    }
   }
 
   return OK;
 }
 
-std::optional<uint64_t> AttachPointParser::stoull(const std::string &str)
-{
-  try
-  {
-    std::size_t idx;
-    uint64_t ret = std::stoull(str, &idx, 0);
-
-    if (idx != str.size())
-    {
-      errs_ << "Found trailing non-numeric characters: " << str << std::endl;
-      return std::nullopt;
-    }
-
-    return ret;
-  }
-  catch (const std::exception &ex)
-  {
-    errs_ << "Failed to parse '" << str << "': " << ex.what() << std::endl;
-    return std::nullopt;
-  }
-}
 
 AttachPointParser::State AttachPointParser::watchpoint_parser(bool async)
 {

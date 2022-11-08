@@ -1,4 +1,4 @@
-if(NOT EMBED_LLVM)
+if(NOT EMBED_USE_LLVM)
   return()
 endif()
 include(embed_helpers)
@@ -19,30 +19,18 @@ else()
   set(EMBEDDED_BUILD_TYPE ${CMAKE_BUILD_TYPE})
 endif()
 
-if(${LLVM_VERSION} VERSION_GREATER_EQUAL "9")
-  set(LLVM_FULL_VERSION "9.0.1")
-  set(LLVM_VERSION_MAJOR "9")
+if(${EMBED_LLVM_VERSION} VERSION_EQUAL "12")
+  set(LLVM_FULL_VERSION "12.0.0")
+  set(LLVM_VERSION ${LLVM_FULL_VERSION})
+  set(LLVM_VERSION_MAJOR "12")
   set(LLVM_VERSION_MINOR "0")
-  set(LLVM_VERSION_PATCH "1")
-  set(LLVM_DOWNLOAD_URL "https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_FULL_VERSION}/llvm-${LLVM_FULL_VERSION}.src.tar.xz")
-  set(LLVM_URL_CHECKSUM "SHA256=00a1ee1f389f81e9979f3a640a01c431b3021de0d42278f6508391a2f0b81c9a")
-elseif(${LLVM_VERSION} VERSION_GREATER_EQUAL "8")
-  set(LLVM_FULL_VERSION "8.0.1")
-  set(LLVM_VERSION_MAJOR "8")
-  set(LLVM_VERSION_MINOR "0")
-  set(LLVM_VERSION_PATCH "1")
-  set(LLVM_DOWNLOAD_URL "https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_FULL_VERSION}/llvm-${LLVM_FULL_VERSION}.src.tar.xz")
-  set(LLVM_URL_CHECKSUM "SHA256=44787a6d02f7140f145e2250d56c9f849334e11f9ae379827510ed72f12b75e7")
-elseif(${LLVM_VERSION} VERSION_GREATER_EQUAL "7")
-  set(LLVM_FULL_VERSION "7.1.0")
-  set(LLVM_VERSION_MAJOR "7")
-  set(LLVM_VERSION_MINOR "1")
   set(LLVM_VERSION_PATCH "0")
-  set(LLVM_DOWNLOAD_URL "https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_FULL_VERSION}/llvm-${LLVM_FULL_VERSION}.src.tar.xz")
-  set(LLVM_URL_CHECKSUM "SHA256=1bcc9b285074ded87b88faaedddb88e6b5d6c331dfcfb57d7f3393dd622b3764")
+  set(LLVM_URL_CHECKSUM "SHA256=49dc47c8697a1a0abd4ee51629a696d7bfe803662f2a7252a3b16fc75f3a8b50")
 else()
-  message(FATAL_ERROR "No supported LLVM version has been specified with LLVM_VERSION (LLVM_VERSION=${LLVM_VERSION}), aborting")
+  message(FATAL_ERROR "No supported LLVM version has been specified with LLVM_VERSION (${EMBED_LLVM_VERSION}), aborting")
 endif()
+
+set(LLVM_DOWNLOAD_URL "https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_FULL_VERSION}/llvm-${LLVM_FULL_VERSION}.src.tar.xz")
 
 # Default to building almost all targets, + BPF specific ones
 set(LLVM_LIBRARY_TARGETS
@@ -54,7 +42,6 @@ set(LLVM_LIBRARY_TARGETS
     LLVMBitReader
     LLVMBitWriter
     LLVMBPFAsmParser
-    LLVMBPFAsmPrinter
     LLVMBPFCodeGen
     LLVMBPFDesc
     LLVMBPFDisassembler
@@ -91,7 +78,6 @@ set(LLVM_LIBRARY_TARGETS
     LLVMObject
     LLVMObjectYAML
     LLVMOption
-    LLVMOptRemarks
     LLVMOrcJIT
     LLVMPasses
     LLVMProfileData
@@ -108,6 +94,26 @@ set(LLVM_LIBRARY_TARGETS
     LLVMXRay
     LLVMSupport
     )
+
+
+if(${EMBED_LLVM_VERSION} VERSION_EQUAL "12")
+  set(LLVM_LIBRARY_TARGETS ${LLVM_LIBRARY_TARGETS}
+    LLVMBitstreamReader
+    LLVMCFGuard
+    LLVMDWARFLinker
+    LLVMDebugInfoGSYM
+    LLVMExtensions
+    LLVMFileCheck
+    LLVMFrontendOpenACC
+    LLVMFrontendOpenMP
+    LLVMHelloNew
+    LLVMInterfaceStub
+    LLVMJITLink
+    LLVMOrcShared
+    LLVMOrcTargetProcess
+    LLVMRemarks
+    )
+endif()
 
 # These build flags are based off of Alpine, Debian and Gentoo packages
 # optimized for compatibility and reducing build targets
@@ -141,23 +147,30 @@ set(LLVM_CONFIGURE_FLAGS
     -DLLVM_APPEND_VC_REV=OFF
     )
 
-set(LLVM_TARGET_LIBS "")
-foreach(llvm_target IN LISTS LLVM_LIBRARY_TARGETS)
-  list(APPEND LLVM_TARGET_LIBS "<INSTALL_DIR>/lib/lib${llvm_target}.a")
-endforeach(llvm_target)
 
-ExternalProject_Add(embedded_llvm
-  URL "${LLVM_DOWNLOAD_URL}"
-  URL_HASH "${LLVM_URL_CHECKSUM}"
-  CMAKE_ARGS "${LLVM_CONFIGURE_FLAGS}"
-  BUILD_BYPRODUCTS ${LLVM_TARGET_LIBS}
-  UPDATE_DISCONNECTED 1
-  DOWNLOAD_NO_PROGRESS 1
-)
+if(EMBED_BUILD_LLVM)
+  set(LLVM_TARGET_LIBS "")
+  foreach(llvm_target IN LISTS LLVM_LIBRARY_TARGETS)
+    list(APPEND LLVM_TARGET_LIBS "<INSTALL_DIR>/lib/lib${llvm_target}.a")
+  endforeach(llvm_target)
 
-# Set up build targets and map to embedded paths
-ExternalProject_Get_Property(embedded_llvm INSTALL_DIR)
-set(EMBEDDED_LLVM_INSTALL_DIR ${INSTALL_DIR})
+  ExternalProject_Add(embedded_llvm
+    URL "${LLVM_DOWNLOAD_URL}"
+    URL_HASH "${LLVM_URL_CHECKSUM}"
+    CMAKE_ARGS "${LLVM_CONFIGURE_FLAGS}"
+    BUILD_BYPRODUCTS ${LLVM_TARGET_LIBS}
+    UPDATE_DISCONNECTED 1
+    DOWNLOAD_NO_PROGRESS 1
+  )
+
+  # Set up build targets and map to embedded paths
+  ExternalProject_Get_Property(embedded_llvm INSTALL_DIR)
+  set(EMBEDDED_LLVM_INSTALL_DIR "${INSTALL_DIR}")
+else()
+  set(EMBEDDED_LLVM_INSTALL_DIR "${EMBED_LLVM_PATH}")
+endif()
+
+
 set(LLVM_EMBEDDED_CMAKE_TARGETS "")
 
 include_directories(SYSTEM ${EMBEDDED_LLVM_INSTALL_DIR}/include)
@@ -165,6 +178,12 @@ include_directories(SYSTEM ${EMBEDDED_LLVM_INSTALL_DIR}/include)
 foreach(llvm_target IN LISTS LLVM_LIBRARY_TARGETS)
   list(APPEND LLVM_EMBEDDED_CMAKE_TARGETS ${llvm_target})
   add_library(${llvm_target} STATIC IMPORTED)
-  set_property(TARGET ${llvm_target} PROPERTY IMPORTED_LOCATION ${EMBEDDED_LLVM_INSTALL_DIR}/lib/lib${llvm_target}.a)
-  add_dependencies(${llvm_target} embedded_llvm)
+  set_property(
+    TARGET ${llvm_target}
+    PROPERTY
+      IMPORTED_LOCATION "${EMBEDDED_LLVM_INSTALL_DIR}/lib${llvm_target}.a"
+  )
+  if(EMBED_BUILD_LLVM)
+    add_dependencies(${llvm_target} embedded_llvm)
+  endif()
 endforeach(llvm_target)

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "ast.h"
+#include "ast/ast.h"
 
 #include <set>
 #include <sstream>
@@ -8,11 +8,6 @@
 #include <linux/perf_event.h>
 
 namespace bpftrace {
-
-const std::string kprobe_path =
-    "/sys/kernel/debug/tracing/available_filter_functions";
-const std::string tp_avail_path = "/sys/kernel/debug/tracing/available_events";
-const std::string tp_path = "/sys/kernel/debug/tracing/events";
 
 struct ProbeListItem
 {
@@ -117,5 +112,6 @@ private:
       const std::set<std::string> &tracepoints);
 
   FuncParamLists get_iters_params(const std::set<std::string> &iters);
+  FuncParamLists get_uprobe_params(const std::set<std::string> &uprobes);
 };
 } // namespace bpftrace

@@ -21,26 +21,17 @@ endif (LIBELF_LIBRARIES AND LIBELF_INCLUDE_DIRS)
 find_path (LIBELF_INCLUDE_DIRS
   NAMES
     libelf.h
+  PATH_SUFFIXES
+    libelf
   PATHS
-    /usr/include
-    /usr/include/libelf
-    /usr/local/include
-    /usr/local/include/libelf
-    /opt/local/include
-    /opt/local/include/libelf
-    /sw/include
-    /sw/include/libelf
     ENV CPATH)
 
 find_library (LIBELF_LIBRARIES
   NAMES
     elf
+  PATH_SUFFIXES
+    libelf
   PATHS
-    /usr/lib
-    /usr/local/lib
-    /opt/local/lib
-    /usr/lib/x86_64-linux-gnu/
-    /sw/lib
     ENV LIBRARY_PATH
     ENV LD_LIBRARY_PATH)
 
@@ -52,15 +43,4 @@ FIND_PACKAGE_HANDLE_STANDARD_ARGS(LibElf "Please install the libelf development 
   LIBELF_LIBRARIES
   LIBELF_INCLUDE_DIRS)
 
-SET(CMAKE_REQUIRED_LIBRARIES elf)
-INCLUDE(CheckCXXSourceCompiles)
-CHECK_CXX_SOURCE_COMPILES("#include <libelf.h>
-int main() {
-  Elf *e = (Elf*)0;
-  size_t sz;
-  elf_getshdrstrndx(e, &sz);
-  return 0;
-}" ELF_GETSHDRSTRNDX)
-SET(CMAKE_REQUIRED_LIBRARIES)
-
-mark_as_advanced(LIBELF_INCLUDE_DIRS LIBELF_LIBRARIES ELF_GETSHDRSTRNDX)
+mark_as_advanced(LIBELF_INCLUDE_DIRS LIBELF_LIBRARIES)

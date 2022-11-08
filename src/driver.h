@@ -3,13 +3,10 @@
 #include <fstream>
 #include <memory>
 
-#include "ast.h"
+#include "ast/ast.h"
 #include "bpftrace.h"
-#include "parser.tab.hh"
 
 typedef void* yyscan_t;
-#define YY_DECL bpftrace::Parser::symbol_type yylex(bpftrace::Driver &driver, yyscan_t yyscanner)
-YY_DECL;
 
 namespace bpftrace {
 
@@ -17,7 +14,6 @@ class Driver
 {
 public:
   explicit Driver(BPFtrace &bpftrace, std::ostream &o = std::cerr);
-  ~Driver();
 
   int parse();
   int parse_str(std::string script);
@@ -25,7 +21,12 @@ public:
   void error(std::ostream &, const location &, const std::string &);
   void error(const location &l, const std::string &m);
   void error(const std::string &m);
-  ast::Program *root_ = nullptr;
+  std::unique_ptr<ast::Program> root;
+
+  void debug()
+  {
+    debug_ = true;
+  };
 
   BPFtrace &bpftrace_;
 
@@ -34,6 +35,7 @@ public:
 private:
   std::ostream &out_;
   bool failed_ = false;
+  bool debug_ = false;
 };
 
 } // namespace bpftrace

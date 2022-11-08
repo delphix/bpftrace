@@ -1,8 +1,9 @@
 #pragma once
 
+#include <regex>
 #include <sstream>
 
-#include "ast.h"
+#include "ast/ast.h"
 #include "printf_format_types.h"
 #include "types.h"
 
@@ -24,9 +25,6 @@ const std::regex format_specifier_re(generate_pattern_string());
 
 struct Field;
 
-std::string verify_format_string(const std::string& fmt,
-                                 std::vector<Field> args);
-
 class IPrintable
 {
 public:
@@ -42,6 +40,21 @@ public:
 
 private:
   std::string value_;
+};
+
+class PrintableBuffer : public virtual IPrintable
+{
+public:
+  PrintableBuffer(char* buffer, size_t size)
+      : value_(std::vector<char>(buffer, buffer + size))
+  {
+  }
+  int print(char* buf, size_t size, const char* fmt) override;
+  void keep_ascii(bool value);
+
+private:
+  std::vector<char> value_;
+  bool keep_ascii_ = true;
 };
 
 class PrintableCString : public virtual IPrintable

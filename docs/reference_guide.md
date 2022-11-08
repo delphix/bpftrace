@@ -5,7 +5,7 @@ For a reference summary, see the [README.md](../README.md) for the sections on
 
 This is a work in progress. If something is missing, check the bpftrace source to see if these docs are
 just out of date. And if you find something, please file an issue or pull request to update these docs.
-Also, please keep these docs as terse as possible to maintain it's brevity (inspired by the 6-page awk
+Also, please keep these docs as terse as possible to maintain their brevity (inspired by the 6-page awk
 summary from page 106 of [v7vol2b.pdf](https://9p.io/7thEdMan/bswv7.html)). Leave longer examples and
 discussion to other files in /docs, the /tools/\*\_examples.txt files, or blog posts and other articles.
 
@@ -27,17 +27,18 @@ discussion to other files in /docs, the /tools/\*\_examples.txt files, or blog p
     - [1. `{...}`: Action Blocks](#1--action-blocks)
     - [2. `/.../`: Filtering](#2--filtering)
     - [3. `//`, `/*`: Comments](#3---comments)
-    - [4. `->`: C Struct Navigation](#4---c-struct-navigation)
-    - [5. `struct`: Struct Declaration](#5-struct-struct-declaration)
-    - [6. `? :`: ternary operators](#6---ternary-operators)
-    - [7. `if () {...} else {...}`: if-else statements](#7-if---else--if-else-statements)
-    - [8. `unroll () {...}`: unroll](#8-unroll---unroll)
-    - [9. `++ and --`: increment operators](#9--and----increment-operators)
-    - [10. `[]`: Array access](#10--array-access)
-    - [11. Integer casts](#11-integer-casts)
-    - [12. Looping constructs](#12-looping-constructs)
-    - [13. `return`: Terminate Early](#13-return-terminate-early)
-    - [14. `( , )`: Tuples](#14----tuples)
+    - [4. Literals](#4-literals)
+    - [5. `->`: C Struct Navigation](#5---c-struct-navigation)
+    - [6. `struct`: Struct Declaration](#6-struct-struct-declaration)
+    - [7. `? :`: ternary operators](#7---ternary-operators)
+    - [8. `if () {...} else {...}`: if-else statements](#8-if---else--if-else-statements)
+    - [9. `unroll () {...}`: unroll](#9-unroll---unroll)
+    - [10. `++ and --`: increment operators](#10--and----increment-operators)
+    - [11. `[]`: Array access](#11--array-access)
+    - [12. Integer casts](#12-integer-casts)
+    - [13. Looping constructs](#13-looping-constructs)
+    - [14. `return`: Terminate Early](#14-return-terminate-early)
+    - [15. `( , )`: Tuples](#15----tuples)
 - [Probes](#probes)
     - [1. `kprobe`/`kretprobe`: Dynamic Tracing, Kernel-Level](#1-kprobekretprobe-dynamic-tracing-kernel-level)
     - [2. `kprobe`/`kretprobe`: Dynamic Tracing, Kernel-Level Arguments](#2-kprobekretprobe-dynamic-tracing-kernel-level-arguments)
@@ -95,6 +96,11 @@ discussion to other files in /docs, the /tools/\*\_examples.txt files, or blog p
     - [26. `uptr()`: Annotate userspace pointer](#26-uptr-annotate-userspace-pointer)
     - [27. `kptr()`: Annotate kernelspace pointer](#27-kptr-annotate-kernelspace-pointer)
     - [28. `macaddr()`: Convert MAC address data to text](#28-macaddr-convert-mac-address-data-to-text)
+    - [29. `cgroup_path()`: Convert cgroup id to cgroup path](#29-cgroup_path-convert-cgroup-id-to-cgroup-path)
+    - [30. `bswap`: Reverse byte order](#30-bswap-reverse-byte-order)
+    - [31. `skb_output`: Write `skb` 's data section into a PCAP file](#31-skb_output-write-skb-s-data-section-into-a-pcap-file)
+    - [32. `pton()`: Convert text IP address to byte array](#32-pton-convert-text-ip-address-to-byte-array)
+    - [33. `strerror`: Get error message for errno value](#33-strerror-get-error-message-for-errno-value)
 - [Map Functions](#map-functions)
     - [1. Builtins](#1-builtins-2)
     - [2. `count()`: Count](#2-count-count)
@@ -110,6 +116,7 @@ discussion to other files in /docs, the /tools/\*\_examples.txt files, or blog p
     - [1. `printf()`: Per-Event Output](#1-printf-per-event-output)
     - [2. `interval`: Interval Output](#2-interval-interval-output)
     - [3. `hist()`, `printf()`: Histogram Printing](#3-hist-print-histogram-printing)
+    - [4. `SIGUSR1`: On-Demand Output](#4-sigusr1-on-demand-output)
 - [BTF Support](#btf-support)
 - [Advanced Tools](#advanced-tools)
 - [Errors](#errors)
@@ -162,6 +169,7 @@ ENVIRONMENT:
     BPFTRACE_NO_CPP_DEMANGLE    [default: 0] disable C++ symbol demangling
     BPFTRACE_MAP_KEYS_MAX       [default: 4096] max keys in a map
     BPFTRACE_MAX_PROBES         [default: 512] max number of probes bpftrace can attach to
+    BPFTRACE_MAX_BPF_PROGS      [default: 512] max number of generated BPF programs
     BPFTRACE_CACHE_USER_SYMBOLS [default: auto] enable user symbol cache
     BPFTRACE_VMLINUX            [default: none] vmlinux path used for kernel symbol resolution
     BPFTRACE_BTF                [default: none] BTF file
@@ -401,13 +409,12 @@ The verifier log:
 processed 26 insns (limit 131072), stack depth 40
 
 Attaching tracepoint:syscalls:sys_enter_nanosleep
-Running...
 iscsid is sleeping.
 iscsid is sleeping.
 [...]
 ```
 
-This includes `The verifier log:` and then the log message from the in-kernel vertifier.
+This includes `The verifier log:` and then the log message from the in-kernel verifier.
 
 ## 7. Preprocessor Options
 
@@ -502,7 +509,7 @@ Default: 0 if ASLR is enabled on system and `-c` option is not given; otherwise 
 By default, bpftrace caches the results of symbols resolutions only when ASLR (Address Space Layout
 Randomization) is disabled. This is because the symbol addresses change with each execution with ASLR.
 However, disabling caching may incur some performance. Set this env variable to 1 to force bpftrace to
-cache. This is fine if only trace one program execution.
+cache. This is fine if only tracing one program execution.
 
 ### 9.6 `BPFTRACE_VMLINUX`
 
@@ -528,6 +535,14 @@ Number of pages to allocate per CPU for perf ring buffer. The value must be a po
 If you're getting a lot of dropped events bpftrace may not be processing events in the ring buffer
 fast enough. It may be useful to bump the value higher so more events can be queued up. The tradeoff
 is that bpftrace will use more memory.
+
+### 9.9 `BPFTRACE_MAX_BPF_PROGS`
+
+Default: 512
+
+This is the maximum number of BPF programs (functions) that bpftrace can generate.
+The main purpose of this limit is to prevent bpftrace from hanging since generating a lot of probes
+takes a lot of resources (and it should not happen often).
 
 ## 10. Clang Environment Variables
 
@@ -607,7 +622,26 @@ Syntax
 
 These can be used in bpftrace scripts to document your code.
 
-## 4. `->`: C Struct Navigation
+## 4. Literals
+
+ Integer, char and string literals are supported.
+ Integer literals are a sequence of digits with an optional underscore (`_`) as
+ field separator.
+ Scientific notation is also supported but only for integer values as BPF
+ doesn't support floating point.
+
+ ```
+ # bpftrace -e 'BEGIN { printf("%lu %lu %lu", 1000000, 1e6, 1_000_000)}'
+Attaching 1 probe...
+1000000 1000000 1000000
+ ```
+
+ Char literals are enclosed in single quotes, e.g. `'a'` and `'@'`.
+
+ String literals are enclosed in double quotes, e.g. `"a string"`.
+
+
+## 5. `->`: C Struct Navigation
 
 tracepoint example:
 
@@ -647,7 +681,7 @@ open path: retrans_time_ms
 This uses dynamic tracing of the `vfs_open()` kernel function, via the short script path.bt. Some kernel
 headers needed to be included to understand the `path` and `dentry` structs.
 
-## 5. `struct`: Struct Declaration
+## 6. `struct`: Struct Declaration
 
 Example:
 
@@ -664,7 +698,7 @@ You can define your own structs when needed. In some cases, kernel structs are n
 headers package, and are declared manually in bpftrace tools (or partial structs are: enough to reach the
 member to dereference).
 
-## 6. `? :`: ternary operators
+## 7. `? :`: ternary operators
 
 Examples:
 
@@ -683,7 +717,7 @@ Attaching 1 probe...
 Odd
 ```
 
-## 7. `if () {...} else {...}`: if-else statements
+## 8. `if () {...} else {...}`: if-else statements
 
 Example:
 
@@ -697,7 +731,7 @@ Attaching 1 probe...
 @reads: 80
 ```
 
-## 8. `unroll () {...}`: Unroll
+## 9. `unroll () {...}`: Unroll
 
 Example:
 
@@ -713,11 +747,11 @@ i: 5
 
 ```
 
-## 9. `++` and `--`: Increment operators
+## 10. `++` and `--`: Increment operators
 
 `++` and `--` can be used to conveniently increment or decrement counters in maps or variables.
 
-Note that maps will be implictly declared and initialized to 0 if not already
+Note that maps will be implicitly declared and initialized to 0 if not already
 declared or defined. Scratch variables must be initialized before using these
 operators.
 
@@ -750,7 +784,7 @@ Attaching 1 probe...
 @[kprobe:vfs_read]: 13369
 ```
 
-## 10. `[]`: Array Access
+## 11. `[]`: Array Access
 
 You may access one-dimensional constant arrays with the array access operator `[]`.
 
@@ -764,7 +798,7 @@ Attaching 1 probe...
 @x: 1
 ```
 
-## 11. Integer casts
+## 12. Integer casts
 
 Integers are internally represented as 64 bit signed. If you need another
 representation, you may cast to the following built in types:
@@ -789,7 +823,7 @@ Attaching 1 probe...
 ^C
 ```
 
-## 12. Looping Constructs
+## 13. Looping Constructs
 
 **Experimental**
 
@@ -803,12 +837,12 @@ bpftrace supports C style while loops:
 
 Loops can be short circuited by using the `continue` and `break` keywords.
 
-## 13. `return`: Terminate Early
+## 14. `return`: Terminate Early
 
 The `return` keyword is used to exit the current probe. This differs from
 `exit()` in that it doesn't exit bpftrace.
 
-## 14. `( , )`: Tuples
+## 15. `( , )`: Tuples
 
 N-tuples are supported, where N is any integer greater than 1.
 
@@ -995,7 +1029,7 @@ Syntax:
 
 ```
 uprobe:library_name:function_name[+offset]
-uprobe:library_name:address
+uprobe:library_name:offset
 uretprobe:library_name:function_name
 ```
 
@@ -1089,6 +1123,14 @@ Attaching 1 probe...
 WARNING: could not determine instruction boundary for uprobe:bin:4377 (binary appears stripped). Misaligned probes can lead to tracee crashes!
 ```
 
+When tracing libraries, it is sufficient to specify the library name instead of
+a full path. The path will be then automatically resolved using `/etc/ld.so.cache`.
+```
+# bpftrace -e 'uprobe:libc:malloc { printf("Allocated %d bytes\n", arg0); }'
+Allocated 4 bytes
+...
+```
+
 Examples in situ:
 [(uprobe) search /tools](https://github.com/iovisor/bpftrace/search?q=uprobe%3A+path%3Atools&type=Code)
 [(uretprobe) /tools](https://github.com/iovisor/bpftrace/search?q=uretprobe%3A+path%3Atools&type=Code)
@@ -1146,6 +1188,32 @@ readline: "uname -r"
 
 Back to the bash `readline()` example: after checking the source code, I saw that the return value was
 the string read. So I can use a `uretprobe` and the `retval` variable to see the read string.
+
+***
+
+If the traced binary has DWARF available, it is possible to access `uprobe` arguments by name.
+
+Syntax:
+```
+uprobe: args->NAME
+```
+
+The arguments can be accessed by dereferencing `args` and accessing the argument's `NAME`.
+
+The list of function's arguments can be retrieved using the verbose list option:
+```
+# bpftrace -lv 'uprobe:/bin/bash:rl_set_prompt'
+uprobe:/bin/bash:rl_set_prompt
+    const char* prompt
+```
+
+Example (requires debuginfo for `/bin/bash` installed):
+```
+# bpftrace -e 'uprobe:/bin/bash:rl_set_prompt { printf("prompt: %s\n", str(args->prompt)); }'
+Attaching 1 probe...
+prompt: [user@localhost ~]$
+^C
+```
 
 Examples in situ:
 [(uprobe) search /tools](https://github.com/iovisor/bpftrace/search?q=uprobe%3A+path%3Atools&type=Code)
@@ -1321,7 +1389,7 @@ profile:ms:rate
 profile:us:rate
 ```
 
-These operating using perf_events (a Linux kernel facility), which is also used by the `perf` command).
+These operate using perf_events (a Linux kernel facility, which is also used by the `perf` command).
 
 Examples:
 
@@ -1656,11 +1724,11 @@ iter:task_file[:pin]
 
 Kernel: 5.4
 
-These are eBPF iterator probes, that allows iteration over kernel objects.
+These are eBPF iterator probes, that allow iteration over kernel objects.
 
 Iterator probe can't be mixed with any other probe, not even other iterator.
 
-Each iterator probe provides set of fields that could be accessed with
+Each iterator probe provides set of fields that can be accessed with
 ctx pointer. User can display set of available fields for iterator via
 -lv options as described below.
 
@@ -1696,7 +1764,7 @@ bpftrace:1892 6:anon_inode:bpf-prog
 bpftrace:1892 7:anon_inode:bpf_iter
 ```
 
-You can get list of available functions via list option:
+You can get the list of available functions via list option:
 
 ```
 # bpftrace -l iter:*
@@ -1767,6 +1835,7 @@ NetworkManager:1155 /var/lib/sss/mc/passwd (deleted)
 - `gid` - Group ID
 - `nsecs` - Nanosecond timestamp
 - `elapsed` - Nanoseconds since bpftrace initialization
+- `numaid` - NUMA Node ID
 - `cpu` - Processor ID
 - `comm` - Process name
 - `kstack` - Kernel stack trace
@@ -2134,7 +2203,6 @@ Tracing block I/O sizes > 0 bytes
 - `time(char *fmt)` - Print formatted time
 - `join(char *arr[] [, char *delim])` - Print the array
 - `str(char *s [, int length])` - Returns the string pointed to by s
-- `buf(void *d [, int length])` - Returns a hex-formatted string of the data pointed to by d
 - `ksym(void *p)` - Resolve kernel address
 - `usym(void *p)` - Resolve user space address
 - `kaddr(char *name)` - Resolve kernel symbol name
@@ -2146,11 +2214,12 @@ Tracing block I/O sizes > 0 bytes
 - `kstack([StackMode mode, ][int level])` - Kernel stack trace
 - `ustack([StackMode mode, ][int level])` - User stack trace
 - `ntop([int af, ]int|char[4|16] addr)` - Convert IP address data to text
+- `pton(const string *addr)` - Convert text IP address to byte array
 - `cat(char *filename)` - Print file content
 - `signal(char[] signal | u32 signal)` - Send a signal to the current task
 - `strncmp(char *s1, char *s2, int length)` - Compare first n characters of two strings
 - `override(u64 rc)` - Override return value
-- `buf(void *d [, length])` - Hex-format a buffer
+- `buf(void *d [, int length])` - Returns a hex-formatted string of the data pointed to by d
 - `sizeof(...)` - Return size of a type or expression
 - `print(...)` - Print a non-map value with default formatting
 - `strftime(char *format, int nsecs)` - Return a formatted timestamp
@@ -2158,13 +2227,14 @@ Tracing block I/O sizes > 0 bytes
 - `uptr(void *p)` - Annotate as userspace pointer
 - `kptr(void *p)` - Annotate as kernelspace pointer
 - `macaddr(char[6] addr)` - Convert MAC address data
+- `bswap(uint[8|16|32|64] n)` - Reverse byte order
 
 Some of these are asynchronous: the kernel queues the event, but some time later (milliseconds) it is
 processed in user-space. The asynchronous actions are: `printf()`, `time()`, and `join()`. Both `ksym()`
 and `usym()`, as well as the variables `kstack` and `ustack`, record addresses synchronously, but then do
 symbol translation asynchronously.
 
-A selection of these are discussed in the following sections.
+A selection of these is discussed in the following sections.
 
 ## 2. `printf()`: Printing
 
@@ -2850,6 +2920,9 @@ length of the buffer cannot always be inferred, the `length` parameter may be pr
 limit the number of bytes that are read. By default, the maximum number of bytes is 64, but this can
 be tuned using the [`BPFTRACE_STRLEN`](#91-bpftrace_strlen) environment variable.
 
+Bytes with values >=32 and <=126 are printed using their ASCII character, other
+bytes are printed in hex form (e.g. `\x00`).
+
 For example, we can take the `buff` parameter (`void *`) of `sys_enter_sendto`, read the
 number of bytes specified by `len` (`size_t`), and format the bytes in hexadecimal so that
 they don't corrupt the terminal display. The resulting string can be provided as an argument to
@@ -2885,7 +2958,7 @@ Examples:
 Attaching 1 probe...
 8
 
-# bpftrace -e 'struct Foo { int x; char c; } BEGIN { printf("%d\n", sizeof(((struct Foo)0).c)); }'
+# bpftrace -e 'struct Foo { int x; char c; } BEGIN { printf("%d\n", sizeof(((struct Foo*)0)->c)); }'
 Attaching 1 probe...
 1
 
@@ -2939,6 +3012,12 @@ Use format specifier "%s" when printing the return value. Note that `strftime`
 does not actually return a string in bpf (kernel), the formatting happens in
 userspace.
 
+bpftrace also supports the following format string extensions:
+
+Specifier | Description
+---- | -----------
+`%f` | Microsecond as a decimal number, zero-padded on the left
+
 Examples:
 
 ```
@@ -2949,6 +3028,11 @@ Attaching 1 probe...
 13:11:24
 13:11:25
 13:11:26
+^C
+
+# bpftrace -e 'i:s:1 { printf("%s\n", strftime("%H:%M:%S:%f", nsecs)); }'
+Attaching 1 probe...
+15:22:24:104033
 ^C
 ```
 
@@ -3023,6 +3107,126 @@ Example:
 # bpftrace -e 'kprobe:arp_create { printf("SRC %s, DST %s\n", macaddr(sarg0), macaddr(sarg1)); }'
 SRC 18:C0:4D:08:2E:BB, DST 74:83:C2:7F:8C:FF
 ^C
+```
+
+## 29. `cgroup_path`: Convert cgroup id to cgroup path
+
+Syntax: `cgroup_path(int cgroupid, string filter)`
+
+Converts the given cgroup id into the corresponding cgroup path for each cgroup hierarchy the id
+appears in. Because the conversion is done in user space, the resulting object can only be used for
+printing.
+
+Optionally a string literal may be passed as the second argument to filter cgroup hierarchies to look
+in (interpreted as a wildcard expression).
+
+Example:
+
+```
+# bpftrace -e 'BEGIN { print(cgroup_path(5386)); }'
+Attaching 1 probe...
+unified:/user.slice/user-1000.slice/session-3.scope
+```
+
+## 30. `bswap`: Reverse byte order
+
+Syntax: `bswap(uint[8|16|32|64] n)`
+
+Reverses the order of the bytes in integer `n`. In case of 8 bit integers, `n` is returned without being modified.
+The return type is an unsigned integer of the same width as `n`.
+
+Example:
+
+```
+# bpftrace -e 'BEGIN { $i = (uint32)0x12345678; printf("Reversing byte order of 0x%x ==> 0x%x\n", $i, bswap($i)); }'
+Attaching 1 probe...
+Reversing byte order of 0x12345678 ==> 0x78563412
+```
+
+## 31. `skb_output`: Write `skb` 's data section into a PCAP file
+
+Syntax: `uint32 skboutput(const string path, struct sk_buff *skb, uint64 length, const uint64 offset)`
+
+Write sk_buff `skb` 's data section to a PCAP file in the `path`, starting from `offset` to `offset` + `length`.
+
+The PCAP file is encapsulated in RAW IP, so no ethernet header is included.
+The `data` section in the struct `skb` may contain ethernet header in some kernel contexts, you may set `offset` to 14 bytes to exclude ethernet header.
+
+Each packet's timestamp is determined by adding `nsecs` and boot time, the accuracy varies on different kernels, see `nsecs`.
+
+This function returns 0 on success, or a negative error in case of failure.
+
+Environment variable `BPFTRACE_PERF_RB_PAGES` should be increased in order to capture large packets, or else these packets will be dropped.
+
+Example:
+
+```
+# cat dump.bt
+kfunc:napi_gro_receive {
+$ret = skboutput("receive.pcap", args->skb, args->skb->len, 0);
+}
+
+kfunc:dev_queue_xmit {
+// setting offset to 14, to exclude ethernet header
+$ret = skboutput("output.pcap", args->skb, args->skb->len, 14);
+printf("skboutput returns %d\n", $ret);
+}
+
+# export BPFTRACE_PERF_RB_PAGES=1024
+# bpftrace dump.bt
+...
+
+# tcpdump -n -r ./receive.pcap  | head -3
+reading from file ./receive.pcap, link-type RAW (Raw IP)
+dropped privs to tcpdump
+10:23:44.674087 IP 22.128.74.231.63175 > 192.168.0.23.22: Flags [.], ack 3513221061, win 14009, options [nop,nop,TS val 721277750 ecr 3115333619], length 0
+10:23:45.823194 IP 100.101.2.146.53 > 192.168.0.23.46619: 17273 0/1/0 (130)
+10:23:45.823229 IP 100.101.2.146.53 > 192.168.0.23.46158: 45799 1/0/0 A 100.100.45.106 (60)
+```
+
+## 32. `pton()`: Convert text IP address to byte array
+
+Syntax: `pton(const string *addr)`
+
+This converts a text representation of an IPv4 or IPv6 address to byte array.
+`pton` infers the address family based on `.` or `:` in the given argument.
+`pton` comes in handy when we need to select packets with certain IP addresses.
+
+Examples:
+
+```
+# bpftrace -e 'tracepoint:tcp:tcp_retransmit_skb {
+  if (args->daddr_v6[0] == pton("::1")[0]) {
+    printf("first octet matched\n");
+  }
+}'
+Attaching 1 probe...
+first octet matched
+^C
+
+# bpftrace -e 'tracepoint:tcp:tcp_retransmit_skb {
+  if (args->daddr[0] == pton("127.0.0.1")[0]) {
+    printf("first octet matched\n");
+  }
+}'
+Attaching 1 probe...
+first octet matched
+^C
+```
+
+## 33. `strerror`: Get error message for errno code
+
+Syntax: `strerror(uint64 error)`
+
+Converts the given errno code to a string describing the error. The result can be only used for printing, since the conversion is done in userspace.
+
+Example:
+
+```
+# bpftrace -e '#include <errno.h>
+BEGIN { print(strerror(EPERM)); }'
+Attaching 1 probe...
+Operation not permitted
 ```
 
 # Map Functions
@@ -3244,7 +3448,7 @@ Attaching 1 probe...
 @bytes[sshd]: count 15, average 16384, total 245760
 ```
 
-This stats() function returns three statistics: the count of events, the average for the argument value,
+The stats() function returns three statistics: the count of events, the average for the argument value,
 and the total of the argument value. This is similar to using count(), avg(), and sum().
 
 ## 8. `hist()`: Log2 Histogram
@@ -3452,10 +3656,21 @@ Histograms can also be printed on-demand, using the `print()` function. Eg:
 [...]
 ```
 
+## 4. `SIGUSR1`: On-Demand Output
+
+Upon receiving a `SIGUSR1` signal, bpftrace will print all maps to the standard output.
+
+Example:
+```
+# bpftrace -e 'kretprobe:vfs_read { @bytes = hist(retval); }' &
+# kill -s USR1 $(pidof bpftrace)
+```
+
 # BTF Support
 
 If kernel has BTF, kernel types are automatically available and there is no need to include additional headers
-to use them.
+to use them. To allow users to detect this situation in scripts, the preprocessor macro `BPFTRACE_HAVE_BTF` 
+is defined if BTF is detected. See tools/ for examples of its usage.
 
 Requirements for using BTF:
 
@@ -3523,7 +3738,7 @@ to stay within the limit:
    unnecessary: use `pid` instead of `comm`. Use fewer map keys.
 1. Split your program over multiple probes.
 1. Check the status of the BPF stack limit in Linux (it may be increased in the future, maybe as a
-   tuneabe).
+   tuneable).
 1. (advanced): Run -d and examine the LLVM IR, and look for ways to optimize src/ast/codegen_llvm.cpp.
 
 ## 2. Kernel headers not found
@@ -3534,4 +3749,5 @@ bpftrace requires kernel headers for certain features, which are searched for by
 /lib/modules/$(uname -r)
 ```
 
-The default search directory can be overridden using the environment variable `BPFTRACE_KERNEL_SOURCE`.
+The default search directory can be overridden using the environment variable `BPFTRACE_KERNEL_SOURCE`, and
+also `BPFTRACE_KERNEL_BUILD` if it is out-of-tree Linux kernel build.

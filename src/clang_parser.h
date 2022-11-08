@@ -58,6 +58,9 @@ private:
   CXUnsavedFile get_btf_generated_header(BPFtrace &bpftrace);
   CXUnsavedFile get_empty_btf_generated_header();
 
+  std::string get_arch_include_path();
+  std::vector<std::string> system_include_paths();
+
   std::string input;
   std::vector<const char *> args;
   std::vector<CXUnsavedFile> input_files;
@@ -101,7 +104,7 @@ private:
 
   private:
     CXIndex index;
-    CXTranslationUnit translation_unit;
+    CXTranslationUnit translation_unit = nullptr;
     std::vector<std::string> error_msgs;
   };
 };

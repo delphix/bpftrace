@@ -3,6 +3,7 @@
 #include "bpftrace.h"
 #include "log.h"
 #include "probe_matcher.h"
+#include "tracefs.h"
 #include "types.h"
 #include "utils.h"
 #include <cstring>
@@ -15,7 +16,6 @@
 #include <sys/utsname.h>
 #include <unistd.h>
 
-#ifdef HAVE_LIBBPF_BTF_DUMP
 #include <linux/bpf.h>
 #include <linux/btf.h>
 #pragma GCC diagnostic push
@@ -24,7 +24,14 @@
 #pragma GCC diagnostic pop
 #include <bpf/libbpf.h>
 
+#include "bpftrace.h"
+
 namespace bpftrace {
+
+static __u32 type_cnt(const struct btf *btf)
+{
+  return btf__type_cnt(btf) - 1;
+}
 
 static unsigned char *get_data(const char *file, ssize_t *sizep)
 {
@@ -158,11 +165,6 @@ BTF::BTF(void) : btf(nullptr), state(NODATA)
   if (btf)
   {
     libbpf_set_print(libbpf_print);
-#ifdef FUZZ
-    traceable_funcs_ = {};
-#else
-    traceable_funcs_ = get_traceable_funcs();
-#endif
     state = OK;
   }
   else if (bt_debug != DebugLevel::kNone)
@@ -186,6 +188,13 @@ static void dump_printf(void *ctx, const char *fmt, va_list args)
 
   *ret += str;
   free(str);
+}
+
+static struct btf_dump *dump_new(const struct btf *btf,
+                                 btf_dump_printf_fn_t dump_printf,
+                                 void *ctx)
+{
+  return btf_dump__new(btf, dump_printf, ctx, nullptr);
 }
 
 static const char *btf_str(const struct btf *btf, __u32 off)
@@ -223,12 +232,11 @@ std::string BTF::c_def(const std::unordered_set<std::string> &set) const
     return std::string("");
 
   std::string ret = std::string("");
-  struct btf_dump_opts opts = { .ctx = &ret, };
   struct btf_dump *dump;
   char err_buf[256];
   int err;
 
-  dump = btf_dump__new(btf, nullptr, &opts, dump_printf);
+  dump = dump_new(btf, dump_printf, &ret);
   err = libbpf_get_error(dump);
   if (err)
   {
@@ -238,11 +246,14 @@ std::string BTF::c_def(const std::unordered_set<std::string> &set) const
   }
 
   std::unordered_set<std::string> myset(set);
-  __s32 id, max = (__s32) btf__get_nr_types(btf);
+  __s32 id, max = (__s32)type_cnt(btf);
 
   for (id = 1; id <= max && myset.size(); id++)
   {
     const struct btf_type *t = btf__type_by_id(btf, id);
+    if (!t)
+      continue;
+
     // Allow users to reference enum values by name to pull in entire enum defs
     if (btf_is_enum(t))
     {
@@ -286,6 +297,8 @@ std::string BTF::type_of(const std::string& name, const std::string& field)
     return std::string("");
 
   const struct btf_type *type = btf__type_by_id(btf, type_id);
+  if (!type)
+    return std::string("");
   return type_of(type, field);
 }
 
@@ -313,8 +326,10 @@ std::string BTF::type_of(const btf_type *type, const std::string &field)
     // anonymous struct/union
     if (m_name == "")
     {
-      const struct btf_type *type = btf__type_by_id(btf, m[i].type);
-      std::string type_name = type_of(type, field);
+      const struct btf_type *btf_type = btf__type_by_id(btf, m[i].type);
+      if (!btf_type)
+        return std::string("");
+      std::string type_name = type_of(btf_type, field);
       if (!type_name.empty())
         return type_name;
     }
@@ -334,6 +349,8 @@ std::string BTF::type_of(const btf_type *type, const std::string &field)
            BTF_INFO_KIND(f->info) == BTF_KIND_RESTRICT)
     {
       f = btf__type_by_id(btf, f->type);
+      if (!f)
+        return std::string("");
     }
 
     return full_type_str(btf, f);
@@ -367,7 +384,7 @@ static bool btf_type_is_modifier(const struct btf_type *t)
 
 const struct btf_type *BTF::btf_type_skip_modifiers(const struct btf_type *t)
 {
-  while (btf_type_is_modifier(t))
+  while (t && btf_type_is_modifier(t))
   {
     t = btf__type_by_id(btf, t->type);
   }
@@ -396,7 +413,11 @@ SizedType BTF::get_stype(__u32 id)
     const char *cast = btf_str(btf, t->name_off);
     assert(cast);
     std::string comp = btf_is_struct(t) ? "struct" : "union";
-    stype = CreateRecord(t->size, comp + " " + cast);
+    std::string name = comp + " " + cast;
+    // We're usually resolving types before running ClangParser, so the struct
+    // definitions are not yet pulled into the struct map. We initialize them
+    // now and fill them later.
+    stype = CreateRecord(name, bpftrace_->structs.LookupOrAdd(name, t->size));
   }
   else if (btf_is_ptr(t))
   {
@@ -414,12 +435,15 @@ int BTF::resolve_args(const std::string &func,
   if (!has_data())
     throw std::runtime_error("BTF data not available");
 
-  __s32 id, max = (__s32)btf__get_nr_types(btf);
+  __s32 id, max = (__s32)type_cnt(btf);
   std::string name = func;
 
   for (id = 1; id <= max; id++)
   {
     const struct btf_type *t = btf__type_by_id(btf, id);
+
+    if (!t)
+      continue;
 
     if (!btf_is_func(t))
       continue;
@@ -430,16 +454,17 @@ int BTF::resolve_args(const std::string &func,
       continue;
 
     t = btf__type_by_id(btf, t->type);
-    if (!btf_is_func_proto(t))
+    if (!t || !btf_is_func_proto(t))
     {
       throw std::runtime_error("not a function");
     }
 
-    if (!is_traceable_func(name))
+    if (bpftrace_ && !bpftrace_->is_traceable_func(name))
     {
-      if (traceable_funcs_.empty())
+      if (bpftrace_->traceable_funcs_.empty())
         throw std::runtime_error("could not read traceable functions from " +
-                                 kprobe_path + " (is debugfs mounted?)");
+                                 tracefs::available_filter_functions() +
+                                 " (is tracefs mounted?)");
       else
         throw std::runtime_error("function not traceable (probably it is "
                                  "inlined or marked as \"notrace\")");
@@ -464,16 +489,16 @@ int BTF::resolve_args(const std::string &func,
       }
 
       SizedType stype = get_stype(p->type);
-      stype.kfarg_idx = j;
-      stype.is_kfarg = true;
+      stype.funcarg_idx = j;
+      stype.is_funcarg = true;
       args.insert({ str, stype });
     }
 
     if (ret)
     {
       SizedType stype = get_stype(t->type);
-      stype.kfarg_idx = j;
-      stype.is_kfarg = true;
+      stype.funcarg_idx = j;
+      stype.is_funcarg = true;
       args.insert({ "$retval", stype });
     }
 
@@ -485,17 +510,14 @@ int BTF::resolve_args(const std::string &func,
 
 std::unique_ptr<std::istream> BTF::get_all_funcs() const
 {
-  __s32 id, max = (__s32)btf__get_nr_types(btf);
+  __s32 id, max = (__s32)type_cnt(btf);
   std::string type = std::string("");
-  struct btf_dump_opts opts = {
-    .ctx = &type,
-  };
   struct btf_dump *dump;
   std::string funcs;
   char err_buf[256];
   int err;
 
-  dump = btf_dump__new(btf, nullptr, &opts, dump_printf);
+  dump = dump_new(btf, dump_printf, &type);
   err = libbpf_get_error(dump);
   if (err)
   {
@@ -508,6 +530,9 @@ std::unique_ptr<std::istream> BTF::get_all_funcs() const
   {
     const struct btf_type *t = btf__type_by_id(btf, id);
 
+    if (!t)
+      continue;
+
     if (!btf_is_func(t))
       continue;
 
@@ -515,7 +540,7 @@ std::unique_ptr<std::istream> BTF::get_all_funcs() const
     std::string func_name = str;
 
     t = btf__type_by_id(btf, t->type);
-    if (!btf_is_func_proto(t))
+    if (!t || !btf_is_func_proto(t))
     {
       /* bad.. */
       if (!bt_verbose)
@@ -523,7 +548,7 @@ std::unique_ptr<std::istream> BTF::get_all_funcs() const
       break;
     }
 
-    if (!is_traceable_func(func_name))
+    if (bpftrace_ && !bpftrace_->is_traceable_func(func_name))
       continue;
 
     if (btf_vlen(t) > arch::max_arg() + 1)
@@ -543,17 +568,13 @@ std::unique_ptr<std::istream> BTF::get_all_funcs() const
 std::map<std::string, std::vector<std::string>> BTF::get_params(
     const std::set<std::string> &funcs) const
 {
-#ifdef HAVE_LIBBPF_BTF_DUMP_EMIT_TYPE_DECL
-  __s32 id, max = (__s32)btf__get_nr_types(btf);
+  __s32 id, max = (__s32)type_cnt(btf);
   std::string type = std::string("");
-  struct btf_dump_opts opts = {
-    .ctx = &type,
-  };
   struct btf_dump *dump;
   char err_buf[256];
   int err;
 
-  dump = btf_dump__new(btf, nullptr, &opts, dump_printf);
+  dump = dump_new(btf, dump_printf, &type);
   err = libbpf_get_error(dump);
   if (err)
   {
@@ -567,6 +588,9 @@ std::map<std::string, std::vector<std::string>> BTF::get_params(
   {
     const struct btf_type *t = btf__type_by_id(btf, id);
 
+    if (!t)
+      continue;
+
     if (!btf_is_func(t))
       continue;
 
@@ -577,6 +601,8 @@ std::map<std::string, std::vector<std::string>> BTF::get_params(
       continue;
 
     t = btf__type_by_id(btf, t->type);
+    if (!t)
+      continue;
 
     _Pragma("GCC diagnostic push")
         _Pragma("GCC diagnostic ignored \"-Wmissing-field-initializers\"")
@@ -628,26 +654,18 @@ std::map<std::string, std::vector<std::string>> BTF::get_params(
   btf_dump__free(dump);
 
   return params;
-#else
-  LOG(ERROR) << "Could not get kfunc arguments "
-                "(HAVE_LIBBPF_BTF_DUMP_EMIT_TYPE_DECL is not set)" return {};
-  return {};
-#endif
 }
 
 std::set<std::string> BTF::get_all_structs() const
 {
   std::set<std::string> struct_set;
-  __s32 id, max = (__s32)btf__get_nr_types(btf);
+  __s32 id, max = (__s32)type_cnt(btf);
   std::string types = std::string("");
-  struct btf_dump_opts opts = {
-    .ctx = &types,
-  };
   struct btf_dump *dump;
   char err_buf[256];
   int err;
 
-  dump = btf_dump__new(btf, nullptr, &opts, dump_printf);
+  dump = dump_new(btf, dump_printf, &types);
   err = libbpf_get_error(dump);
   if (err)
   {
@@ -660,7 +678,7 @@ std::set<std::string> BTF::get_all_structs() const
   {
     const struct btf_type *t = btf__type_by_id(btf, id);
 
-    if (!(btf_is_struct(t) || btf_is_union(t) || btf_is_enum(t)))
+    if (!t || !(btf_is_struct(t) || btf_is_union(t) || btf_is_enum(t)))
       continue;
 
     const std::string name = full_type_str(btf, t);
@@ -711,59 +729,9 @@ std::set<std::string> BTF::get_all_structs() const
   return struct_set;
 }
 
-bool BTF::is_traceable_func(const std::string &func_name) const
+int BTF::get_btf_id(const std::string &name) const
 {
-#ifdef FUZZ
-  (void)func_name;
-  return true;
-#else
-  return traceable_funcs_.find(func_name) != traceable_funcs_.end();
-#endif
+  return btf__find_by_name_kind(btf, name.c_str(), BTF_KIND_FUNC);
 }
 
 } // namespace bpftrace
-#else // HAVE_LIBBPF_BTF_DUMP
-
-namespace bpftrace {
-
-BTF::BTF() { }
-
-BTF::~BTF() { }
-
-std::string BTF::c_def(const std::unordered_set<std::string>& set
-                       __attribute__((__unused__))) const
-{
-  return std::string("");
-}
-
-std::string BTF::type_of(const std::string& name __attribute__((__unused__)),
-                         const std::string& field __attribute__((__unused__))) {
-  return std::string("");
-}
-
-int BTF::resolve_args(const std::string &func __attribute__((__unused__)),
-                      std::map<std::string, SizedType>& args
-                      __attribute__((__unused__)),
-                      bool ret __attribute__((__unused__)))
-{
-  return -1;
-}
-
-std::set<std::string> BTF::get_all_structs() const
-{
-  return {};
-}
-
-std::unique_ptr<std::istream> BTF::get_all_funcs() const
-{
-  return nullptr;
-}
-
-std::map<std::string, std::vector<std::string>> BTF::get_params(
-    const std::set<std::string>& funcs __attribute__((__unused__))) const
-{
-  return {};
-}
-} // namespace bpftrace
-
-#endif // HAVE_LIBBPF_BTF_DUMP

@@ -36,11 +36,11 @@ class MockBPFtrace : public BPFtrace
 public:
   std::vector<Probe> get_probes()
   {
-    return probes_;
+    return resources.probes;
   }
   std::vector<Probe> get_special_probes()
   {
-    return special_probes_;
+    return resources.special_probes;
   }
 
   int resolve_uname(const std::string &name,
@@ -67,10 +67,21 @@ public:
     return 0;
   }
 
+  bool is_traceable_func(
+      const std::string &__attribute__((unused))) const override
+  {
+    return true;
+  }
+
   void set_mock_probe_matcher(std::unique_ptr<MockProbeMatcher> probe_matcher)
   {
     probe_matcher_ = std::move(probe_matcher);
     mock_probe_matcher = dynamic_cast<MockProbeMatcher *>(probe_matcher_.get());
+  }
+
+  bool has_kprobe_multi(void)
+  {
+    return feature_->has_kprobe_multi();
   }
 
   MockProbeMatcher *mock_probe_matcher;
@@ -94,6 +105,9 @@ public:
     has_probe_read_kernel_ = std::make_optional<bool>(has_features);
     has_features_ = has_features;
     has_d_path_ = std::make_optional<bool>(has_features);
+    has_ktime_get_boot_ns_ = std::make_optional<bool>(has_features);
+    has_kprobe_multi_ = std::make_optional<bool>(has_features);
+    has_skb_output_ = std::make_optional<bool>(has_features);
   };
   bool has_features_;
 };

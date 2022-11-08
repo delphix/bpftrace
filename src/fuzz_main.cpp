@@ -16,16 +16,15 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "ast/callback_visitor.h"
-#include "bpforc.h"
+#include "ast/passes/callback_visitor.h"
+#include "ast/passes/codegen_llvm.h"
+#include "ast/passes/field_analyser.h"
+#include "ast/passes/semantic_analyser.h"
 #include "bpftrace.h"
 #include "clang_parser.h"
-#include "codegen_llvm.h"
 #include "driver.h"
-#include "field_analyser.h"
 #include "log.h"
 #include "output.h"
-#include "semantic_analyser.h"
 #include "tracepoint_format_parser.h"
 
 #define DEFAULT_NODE_MAX 200
@@ -114,18 +113,18 @@ int fuzz_main(const char* data, size_t sz)
   uint64_t node_count = 0;
   ast::CallbackVisitor counter(
       [&](ast::Node* node __attribute__((unused))) { node_count += 1; });
-  driver.root_->accept(counter);
+  driver.root->accept(counter);
   if (node_count > node_max)
     return 1;
 
   // Field Analyzer
-  ast::FieldAnalyser fields(driver.root_, bpftrace, devnull);
+  ast::FieldAnalyser fields(driver.root.get(), bpftrace, devnull);
   err = fields.analyse();
   if (err)
     return err;
 
   // Tracepoint parser
-  if (TracepointFormatParser::parse(driver.root_, bpftrace) == false)
+  if (TracepointFormatParser::parse(driver.root.get(), bpftrace) == false)
     return 1;
 
   // ClangParser
@@ -135,7 +134,7 @@ int fuzz_main(const char* data, size_t sz)
     struct utsname utsname;
     uname(&utsname);
     std::string ksrc, kobj;
-    auto kdirs = get_kernel_dirs(utsname, !bpftrace.features_->has_btf());
+    auto kdirs = get_kernel_dirs(utsname, !bpftrace.feature_->has_btf());
     ksrc = std::get<0>(kdirs);
     kobj = std::get<1>(kdirs);
 
@@ -144,14 +143,14 @@ int fuzz_main(const char* data, size_t sz)
   }
   extra_flags.push_back("-include");
   extra_flags.push_back(CLANG_WORKAROUNDS_H);
-  if (!clang.parse(driver.root_, bpftrace, extra_flags))
+  if (!clang.parse(driver.root.get(), bpftrace, extra_flags))
     return 1;
   err = driver.parse();
   if (err)
     return err;
 
   // Semantic Analyzer
-  ast::SemanticAnalyser semantics(driver.root_, bpftrace, devnull, false);
+  ast::SemanticAnalyser semantics(driver.root.get(), bpftrace, devnull, false);
   err = semantics.analyse();
   if (err)
     return err;
@@ -166,13 +165,13 @@ int fuzz_main(const char* data, size_t sz)
     return err;
 
   // Codegen
-  ast::CodegenLLVM llvm(driver.root_, bpftrace);
-  std::unique_ptr<BpfOrc> bpforc;
+  ast::CodegenLLVM llvm(driver.root.get(), bpftrace);
+  BpfBytecode bytecode;
   try
   {
     llvm.generate_ir();
     llvm.optimize();
-    bpforc = llvm.emit();
+    bytecode = llvm.emit();
   }
   catch (const std::system_error& ex)
   {

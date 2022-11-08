@@ -13,9 +13,9 @@ cd ..
 pushd docker
 docker build                  \
   --network host              \
-  --build-arg LLVM_VERSION=8  \
-  -t bpftrace-builder-bionic  \
-  -f Dockerfile.bionic        \
+  --build-arg LLVM_VERSION=12 \
+  -t bpftrace-builder-focal   \
+  -f Dockerfile.focal         \
   .
 popd
 
@@ -27,4 +27,6 @@ docker run                                \
   -v $(pwd):$(pwd)                        \
   -e BPFTRACE_UPDATE_TESTS=1              \
   -e TEST_ARGS="--gtest_filter=codegen.*" \
-  bpftrace-builder-bionic "$(pwd)/build-codegen-update" Debug "$@"
+  -e VENDOR_GTEST="ON"                    \
+  -e BUILD_LIBBPF="ON"                    \
+  bpftrace-builder-focal "$(pwd)/build-codegen-update" Debug "$@"

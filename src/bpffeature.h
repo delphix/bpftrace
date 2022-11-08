@@ -1,12 +1,13 @@
 #pragma once
 
-#include <bcc/libbpf.h>
+#include "btf.h"
 #include <memory>
 #include <optional>
 #include <string>
 
+#include <linux/bpf.h>
+
 namespace libbpf {
-#undef __BPF_FUNC_MAPPER
 #include "libbpf/bpf.h"
 } // namespace libbpf
 
@@ -37,7 +38,7 @@ public:                                                                        \
     return *(has_##name##_);                                                   \
   }
 
-#define __DEFINE_PROG_TEST(var, progtype, name)                                \
+#define __DEFINE_PROG_TEST(var, progtype, name, attach_type)                   \
 protected:                                                                     \
   std::optional<bool> prog_##var##_;                                           \
                                                                                \
@@ -46,14 +47,15 @@ public:                                                                        \
   {                                                                            \
     if (!prog_##var##_.has_value())                                            \
       prog_##var##_ = std::make_optional<bool>(                                \
-          detect_prog_type((progtype), (name)));                               \
+          detect_prog_type((progtype), (name), (attach_type)));                \
     return *(prog_##var##_);                                                   \
   }
 
-#define DEFINE_PROG_TEST(var, progtype) __DEFINE_PROG_TEST(var, progtype, NULL)
+#define DEFINE_PROG_TEST(var, progtype)                                        \
+  __DEFINE_PROG_TEST(var, progtype, NULL, std::nullopt)
 
-#define DEFINE_PROG_TEST_FUNC(var, progtype, name)                             \
-  __DEFINE_PROG_TEST(var, progtype, name)
+#define DEFINE_PROG_TEST_FUNC(var, progtype, name, attach_type)                \
+  __DEFINE_PROG_TEST(var, progtype, name, attach_type)
 
 class BPFfeature
 {
@@ -77,6 +79,10 @@ public:
   bool has_map_batch();
   bool has_d_path();
   bool has_uprobe_refcnt();
+  bool has_kprobe_multi();
+  bool has_kfunc();
+  bool has_skb_output();
+  bool has_raw_tp_special();
 
   std::string report(void);
 
@@ -99,13 +105,18 @@ public:
   DEFINE_PROG_TEST(kprobe, libbpf::BPF_PROG_TYPE_KPROBE);
   DEFINE_PROG_TEST(tracepoint, libbpf::BPF_PROG_TYPE_TRACEPOINT);
   DEFINE_PROG_TEST(perf_event, libbpf::BPF_PROG_TYPE_PERF_EVENT);
-  DEFINE_PROG_TEST(kfunc, libbpf::BPF_PROG_TYPE_TRACING);
+  DEFINE_PROG_TEST_FUNC(kfunc,
+                        libbpf::BPF_PROG_TYPE_TRACING,
+                        "sched_fork",
+                        libbpf::BPF_TRACE_FENTRY);
   DEFINE_PROG_TEST_FUNC(iter_task,
                         libbpf::BPF_PROG_TYPE_TRACING,
-                        "bpf_iter__task");
+                        "bpf_iter_task",
+                        libbpf::BPF_TRACE_ITER);
   DEFINE_PROG_TEST_FUNC(iter_task_file,
                         libbpf::BPF_PROG_TYPE_TRACING,
-                        "bpf_iter__task_file");
+                        "bpf_iter_task_file",
+                        libbpf::BPF_TRACE_ITER);
 
 protected:
   std::optional<bool> has_loop_;
@@ -113,12 +124,27 @@ protected:
   std::optional<int> insns_limit_;
   std::optional<bool> has_map_batch_;
   std::optional<bool> has_uprobe_refcnt_;
+  std::optional<bool> has_kprobe_multi_;
+  std::optional<bool> has_skb_output_;
+  std::optional<bool> has_raw_tp_special_;
 
 private:
-  bool detect_map(enum libbpf::bpf_map_type map_type);
-  bool detect_helper(enum libbpf::bpf_func_id func_id,
-                     enum libbpf::bpf_prog_type prog_type);
-  bool detect_prog_type(enum libbpf::bpf_prog_type prog_type, const char* name);
+  bool detect_map(libbpf::bpf_map_type map_type);
+  bool detect_helper(libbpf::bpf_func_id func_id,
+                     libbpf::bpf_prog_type prog_type);
+  bool detect_prog_type(libbpf::bpf_prog_type prog_type,
+                        const char* name,
+                        std::optional<libbpf::bpf_attach_type> attach_type);
+
+  bool try_load(
+      libbpf::bpf_prog_type prog_type,
+      struct bpf_insn* insns,
+      size_t len,
+      const char* name = nullptr,
+      std::optional<libbpf::bpf_attach_type> attach_type = std::nullopt,
+      int* outfd = nullptr);
+
+  BTF btf_;
 };
 
 #undef DEFINE_PROG_TEST

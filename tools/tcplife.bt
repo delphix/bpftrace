@@ -13,10 +13,14 @@
  * 17-Apr-2019  Brendan Gregg   Created this.
  */
 
+#ifndef BPFTRACE_HAVE_BTF
 #include <net/tcp_states.h>
 #include <net/sock.h>
 #include <linux/socket.h>
 #include <linux/tcp.h>
+#else
+#include <sys/socket.h>
+#endif
 
 BEGIN
 {
@@ -58,7 +62,7 @@ kprobe:tcp_set_state
 		$delta_ms = (nsecs - @birth[$sk]) / 1e6;
 		$lport = $sk->__sk_common.skc_num;
 		$dport = $sk->__sk_common.skc_dport;
-		$dport = ($dport >> 8) | (($dport << 8) & 0xff00);
+		$dport = bswap($dport);
 		$tp = (struct tcp_sock *)$sk;
 		$pid = @skpid[$sk];
 		$comm = @skcomm[$sk];

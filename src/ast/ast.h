@@ -1,13 +1,14 @@
 #pragma once
 
-#include "location.hh"
-#include "utils.h"
 #include <map>
 #include <string>
 #include <vector>
 
+#include "location.hh"
+#include "mapkey.h"
 #include "types.h"
 #include "usdt.h"
+#include "utils.h"
 
 namespace bpftrace {
 namespace ast {
@@ -17,7 +18,7 @@ class VisitorBase;
 #define DEFINE_ACCEPT void accept(VisitorBase &v) override;
 
 /**
- * Copy the node but leave all it's child members uninitialized, effecitvely
+ * Copy the node but leave all it's child members uninitialized, effectively
  * turning it into a leaf node
  */
 #define DEFINE_LEAFCOPY(T)                                                     \
@@ -26,7 +27,44 @@ class VisitorBase;
     return new T(*this);                                                       \
   };
 
-class Node {
+enum class JumpType
+{
+  INVALID = 0,
+  RETURN,
+  CONTINUE,
+  BREAK,
+};
+
+enum class Operator
+{
+  INVALID = 0,
+  ASSIGN,
+  EQ,
+  NE,
+  LE,
+  GE,
+  LEFT,
+  RIGHT,
+  LT,
+  GT,
+  LAND,
+  LOR,
+  PLUS,
+  INCREMENT,
+  DECREMENT,
+  MINUS,
+  MUL,
+  DIV,
+  MOD,
+  BAND,
+  BOR,
+  BXOR,
+  LNOT,
+  BNOT,
+};
+
+class Node
+{
 public:
   Node() = default;
   Node(location loc) : loc(loc){};
@@ -182,6 +220,7 @@ public:
   ~Map();
 
   std::string ident;
+  MapKey key_type;
   ExpressionList *vargs = nullptr;
   bool skip_key_validation = false;
 
@@ -208,13 +247,13 @@ public:
   DEFINE_ACCEPT
   DEFINE_LEAFCOPY(Binop)
 
-  Binop(Expression *left, int op, Expression *right, location loc);
+  Binop(Expression *left, Operator op, Expression *right, location loc);
 
   ~Binop();
 
   Expression *left = nullptr;
   Expression *right = nullptr;
-  int op;
+  Operator op;
 
 private:
   Binop(const Binop &other);
@@ -225,8 +264,8 @@ public:
   DEFINE_ACCEPT
   DEFINE_LEAFCOPY(Unop)
 
-  Unop(int op, Expression *expr, location loc = location());
-  Unop(int op,
+  Unop(Operator op, Expression *expr, location loc = location());
+  Unop(Operator op,
        Expression *expr,
        bool is_post_op = false,
        location loc = location());
@@ -234,7 +273,7 @@ public:
   ~Unop();
 
   Expression *expr = nullptr;
-  int op;
+  Operator op;
   bool is_post_op;
 
 private:
@@ -420,12 +459,12 @@ public:
   DEFINE_ACCEPT
   DEFINE_LEAFCOPY(Jump)
 
-  Jump(int ident, location loc = location()) : Statement(loc), ident(ident)
+  Jump(JumpType ident, location loc = location()) : Statement(loc), ident(ident)
   {
   }
   ~Jump() = default;
 
-  int ident = 0;
+  JumpType ident = JumpType::INVALID;
 
 private:
   Jump(const Jump &other) = default;
@@ -499,7 +538,7 @@ public:
   std::string func;
   std::string pin;
   usdt_probe_entry usdt; // resolved USDT entry, used to support arguments with wildcard matches
-  int freq = 0;
+  int64_t freq = 0;
   uint64_t len = 0;   // for watchpoint probes, the width of watched addr
   std::string mode;   // for watchpoint probes, the watch mode
   bool async = false; // for watchpoint probes, if it's an async watchpoint
@@ -541,6 +580,8 @@ public:
 
   int index() const;
   void set_index(int index);
+
+  bool has_ap_of_probetype(ProbeType probe_type);
 
 private:
   Probe(const Probe &other);

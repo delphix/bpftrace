@@ -14,6 +14,8 @@ struct btf_type;
 
 namespace bpftrace {
 
+class BPFtrace;
+
 class BTF
 {
   enum state
@@ -24,6 +26,10 @@ class BTF
 
 public:
   BTF();
+  BTF(BPFtrace* bpftrace) : BTF()
+  {
+    bpftrace_ = bpftrace;
+  };
   ~BTF();
 
   bool has_data(void) const;
@@ -40,14 +46,15 @@ public:
                    std::map<std::string, SizedType>& args,
                    bool ret);
 
+  int get_btf_id(const std::string& name) const;
+
 private:
   SizedType get_stype(__u32 id);
   const struct btf_type* btf_type_skip_modifiers(const struct btf_type* t);
-  bool is_traceable_func(const std::string& func_name) const;
 
   struct btf* btf;
   enum state state = NODATA;
-  std::unordered_set<std::string> traceable_funcs_;
+  BPFtrace* bpftrace_ = nullptr;
 };
 
 inline bool BTF::has_data(void) const

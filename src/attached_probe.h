@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "bpffeature.h"
+#include "btf.h"
 #include "types.h"
 
 #include <bcc/libbpf.h>
@@ -13,24 +14,28 @@
 namespace bpftrace {
 
 bpf_probe_attach_type attachtype(ProbeType t);
-bpf_prog_type progtype(ProbeType t);
-std::string progtypeName(bpf_prog_type t);
+libbpf::bpf_prog_type progtype(ProbeType t);
+std::string progtypeName(libbpf::bpf_prog_type t);
 
 class AttachedProbe
 {
 public:
   AttachedProbe(Probe &probe,
                 std::tuple<uint8_t *, uintptr_t> func,
-                bool safe_mode);
+                bool safe_mode,
+                BPFfeature &feature,
+                BTF &btf);
   AttachedProbe(Probe &probe,
                 std::tuple<uint8_t *, uintptr_t> func,
                 int pid,
-                BPFfeature &feature);
+                BPFfeature &feature,
+                BTF &btf);
   ~AttachedProbe();
   AttachedProbe(const AttachedProbe &) = delete;
   AttachedProbe &operator=(const AttachedProbe &) = delete;
 
   const Probe &probe() const;
+  int progfd() const;
   int linkfd_ = -1;
 
 private:
@@ -39,7 +44,8 @@ private:
   static std::string sanitise(const std::string &str);
   void resolve_offset_kprobe(bool safe_mode);
   void resolve_offset_uprobe(bool safe_mode);
-  void load_prog();
+  void load_prog(BPFfeature &feature);
+  void attach_multi_kprobe(void);
   void attach_kprobe(bool safe_mode);
   void attach_uprobe(bool safe_mode);
 
@@ -68,15 +74,34 @@ private:
   void attach_iter(void);
   int detach_iter(void);
 
+  static std::map<std::string, int> cached_prog_fds_;
+  bool use_cached_progfd(void);
+  void cache_progfd(void);
+
   Probe &probe_;
   std::tuple<uint8_t *, uintptr_t> func_;
   std::vector<int> perf_event_fds_;
+  bool close_progfd_ = true;
   int progfd_ = -1;
   uint64_t offset_ = 0;
-#ifdef HAVE_BCC_KFUNC
   int tracing_fd_ = -1;
-#endif
   std::function<void()> usdt_destructor_;
+
+  BTF &btf_;
+};
+
+class HelperVerifierError : public std::runtime_error
+{
+public:
+  const libbpf::bpf_func_id func_id_;
+  const std::string helper_name_;
+  explicit HelperVerifierError(libbpf::bpf_func_id func_id,
+                               std::string helper_name)
+      : std::runtime_error("helper invalid in probe"),
+        func_id_(func_id),
+        helper_name_(helper_name)
+  {
+  }
 };
 
 } // namespace bpftrace
