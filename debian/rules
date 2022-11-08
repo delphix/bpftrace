@@ -28,6 +28,7 @@ override_dh_auto_configure:
 
 override_dh_auto_build:
 	mkdir obj-x86_64-linux-gnu && cd obj-x86_64-linux-gnu && \
+	../build-libs.sh && \
 	cmake -DVENDOR_GTEST=1 -DCMAKE_BUILD_TYPE=DEBUG -DCMAKE_INSTALL_PREFIX=/usr ..
 override_dh_auto_test:
 
