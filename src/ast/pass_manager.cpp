@@ -1,8 +1,9 @@
-#include <ostream>
-#include <pass_manager.h>
+#include "ast/pass_manager.h"
 
+#include <ostream>
+
+#include "ast/passes/printer.h"
 #include "bpftrace.h"
-#include "printer.h"
 
 namespace bpftrace {
 namespace ast {
@@ -12,7 +13,7 @@ void print(Node *root, const std::string &name, std::ostream &out)
 {
   out << "\nAST after: " << name << std::endl;
   out << "-------------------\n";
-  ast::Printer printer(out);
+  ast::Printer printer(out, true);
   printer.print(root);
   out << std::endl;
 }
@@ -23,8 +24,7 @@ void PassManager::AddPass(Pass p)
   passes_.push_back(std::move(p));
 }
 
-std::unique_ptr<Node> PassManager::Run(std::unique_ptr<Node> node,
-                                       PassContext &ctx)
+PassResult PassManager::Run(std::unique_ptr<Node> node, PassContext &ctx)
 {
   Node *root = node.release();
   if (bt_debug != DebugLevel::kNone)
@@ -33,7 +33,7 @@ std::unique_ptr<Node> PassManager::Run(std::unique_ptr<Node> node,
   {
     auto result = pass.Run(*root, ctx);
     if (!result.Ok())
-      return {};
+      return result;
 
     if (result.Root())
     {
@@ -44,23 +44,28 @@ std::unique_ptr<Node> PassManager::Run(std::unique_ptr<Node> node,
     if (bt_debug != DebugLevel::kNone)
       print(root, pass.name, std::cout);
   }
-  return std::unique_ptr<Node>(root);
+  return PassResult::Success(root);
 }
 
-PassResult PassResult::Error(const std::string &msg)
+PassResult PassResult::Error(const std::string &pass)
 {
-  PassResult p;
-  p.success_ = false;
-  p.error_ = msg;
-  return p;
+  return PassResult(pass);
+}
+
+PassResult PassResult::Error(const std::string &pass, int code)
+{
+  return PassResult(pass, code);
+}
+
+PassResult PassResult::Error(const std::string &pass, const std::string &msg)
+{
+  return PassResult(pass, msg);
 }
 
 PassResult PassResult::Success(Node *root)
 {
-  PassResult p;
-  p.success_ = true;
-  p.root_ = root;
-  return p;
+  return PassResult(root);
 }
+
 } // namespace ast
 } // namespace bpftrace

@@ -20,6 +20,7 @@
 #include <bcc/bcc_elf.h>
 #include <bcc/bcc_syms.h>
 #include <bcc/bcc_usdt.h>
+#include <bpf/bpf.h>
 
 #include "attached_probe.h"
 #include "bpftrace.h"
@@ -27,15 +28,6 @@
 #include "log.h"
 #include "probe_matcher.h"
 #include "usdt.h"
-#ifdef HAVE_LIBBPF_BPF_H
-#include <bpf/bpf.h>
-#endif
-#include <linux/perf_event.h>
-
-namespace libbpf {
-#undef __BPF_FUNC_MAPPER
-#include "libbpf/bpf.h"
-} // namespace libbpf
 
 namespace bpftrace {
 
@@ -51,50 +43,44 @@ const std::set<std::string> banned_kretprobes = {
 
 bpf_probe_attach_type attachtype(ProbeType t)
 {
+  // clang-format off
   switch (t)
   {
     case ProbeType::kprobe:    return BPF_PROBE_ENTRY;  break;
     case ProbeType::kretprobe: return BPF_PROBE_RETURN; break;
+    case ProbeType::special:   return BPF_PROBE_ENTRY;  break;
     case ProbeType::uprobe:    return BPF_PROBE_ENTRY;  break;
     case ProbeType::uretprobe: return BPF_PROBE_RETURN; break;
     case ProbeType::usdt:      return BPF_PROBE_ENTRY;  break;
     default:
       LOG(FATAL) << "invalid probe attachtype \"" << probetypeName(t) << "\"";
   }
+  // clang-format on
   // lgtm[cpp/missing-return]
 }
 
-bpf_prog_type progtype(ProbeType t)
+libbpf::bpf_prog_type progtype(ProbeType t)
 {
   switch (t)
   {
-    case ProbeType::kprobe:     return BPF_PROG_TYPE_KPROBE; break;
-    case ProbeType::kretprobe:  return BPF_PROG_TYPE_KPROBE; break;
-    case ProbeType::uprobe:     return BPF_PROG_TYPE_KPROBE; break;
-    case ProbeType::uretprobe:  return BPF_PROG_TYPE_KPROBE; break;
-    case ProbeType::usdt:       return BPF_PROG_TYPE_KPROBE; break;
-    case ProbeType::tracepoint: return BPF_PROG_TYPE_TRACEPOINT; break;
-    case ProbeType::profile:
-      return BPF_PROG_TYPE_PERF_EVENT;
-      break;
-    case ProbeType::interval:
-      return BPF_PROG_TYPE_PERF_EVENT;
-      break;
-    case ProbeType::software:   return BPF_PROG_TYPE_PERF_EVENT; break;
-    case ProbeType::watchpoint: return BPF_PROG_TYPE_PERF_EVENT; break;
-    case ProbeType::asyncwatchpoint:
-      return BPF_PROG_TYPE_PERF_EVENT;
-      break;
-    case ProbeType::hardware:   return BPF_PROG_TYPE_PERF_EVENT; break;
-    case ProbeType::kfunc:
-      return static_cast<enum ::bpf_prog_type>(libbpf::BPF_PROG_TYPE_TRACING);
-      break;
-    case ProbeType::kretfunc:
-      return static_cast<enum ::bpf_prog_type>(libbpf::BPF_PROG_TYPE_TRACING);
-      break;
-    case ProbeType::iter:
-      return static_cast<enum ::bpf_prog_type>(libbpf::BPF_PROG_TYPE_TRACING);
-      break;
+    // clang-format off
+    case ProbeType::special:    return libbpf::BPF_PROG_TYPE_RAW_TRACEPOINT; break;
+    case ProbeType::kprobe:     return libbpf::BPF_PROG_TYPE_KPROBE; break;
+    case ProbeType::kretprobe:  return libbpf::BPF_PROG_TYPE_KPROBE; break;
+    case ProbeType::uprobe:     return libbpf::BPF_PROG_TYPE_KPROBE; break;
+    case ProbeType::uretprobe:  return libbpf::BPF_PROG_TYPE_KPROBE; break;
+    case ProbeType::usdt:       return libbpf::BPF_PROG_TYPE_KPROBE; break;
+    case ProbeType::tracepoint: return libbpf::BPF_PROG_TYPE_TRACEPOINT; break;
+    case ProbeType::profile:    return libbpf::BPF_PROG_TYPE_PERF_EVENT; break;
+    case ProbeType::interval:   return libbpf::BPF_PROG_TYPE_PERF_EVENT; break;
+    case ProbeType::software:   return libbpf::BPF_PROG_TYPE_PERF_EVENT; break;
+    case ProbeType::watchpoint: return libbpf::BPF_PROG_TYPE_PERF_EVENT; break;
+    case ProbeType::asyncwatchpoint: return libbpf::BPF_PROG_TYPE_PERF_EVENT; break;
+    case ProbeType::hardware:   return libbpf::BPF_PROG_TYPE_PERF_EVENT; break;
+    case ProbeType::kfunc:      return libbpf::BPF_PROG_TYPE_TRACING; break;
+    case ProbeType::kretfunc:   return libbpf::BPF_PROG_TYPE_TRACING; break;
+    case ProbeType::iter:       return libbpf::BPF_PROG_TYPE_TRACING; break;
+    // clang-format on
     case ProbeType::invalid:
       LOG(FATAL) << "program type invalid";
   }
@@ -102,7 +88,7 @@ bpf_prog_type progtype(ProbeType t)
   return {}; // unreached
 }
 
-std::string progtypeName(bpf_prog_type t)
+std::string progtypeName(libbpf::bpf_prog_type t)
 {
   switch (t)
   {
@@ -126,10 +112,12 @@ void check_banned_kretprobes(std::string const& kprobe_name) {
   }
 }
 
-#ifdef HAVE_BCC_KFUNC
 void AttachedProbe::attach_kfunc(void)
 {
-  tracing_fd_ = bpf_attach_kfunc(progfd_);
+  if (progfd_ < 0)
+    // Errors for kfunc are handled in load_prog, ignore here
+    return;
+  tracing_fd_ = bpf_raw_tracepoint_open(nullptr, progfd_);
   if (tracing_fd_ < 0)
     throw std::runtime_error("Error attaching probe: " + probe_.name);
 }
@@ -139,22 +127,7 @@ int AttachedProbe::detach_kfunc(void)
   close(tracing_fd_);
   return 0;
 }
-#else
-void AttachedProbe::attach_kfunc(void)
-{
-  throw std::runtime_error(
-      "Error attaching probe: " + probe_.name +
-      ", kfunc not available for your linked against bcc version");
-}
 
-int AttachedProbe::detach_kfunc(void)
-{
-  LOG(ERROR) << "kfunc not available for linked against bcc version";
-  return -1;
-}
-#endif // HAVE_BCC_KFUNC
-
-#ifdef HAVE_LIBBPF_LINK_CREATE
 void AttachedProbe::attach_iter(void)
 {
   linkfd_ = bpf_link_create(progfd_,
@@ -173,29 +146,25 @@ int AttachedProbe::detach_iter(void)
   close(linkfd_);
   return 0;
 }
-#else
-void AttachedProbe::attach_iter(void)
-{
-  throw std::runtime_error(
-      "Error attaching probe: " + probe_.name +
-      ", iter API is not available for linked libbpf version");
-}
 
-int AttachedProbe::detach_iter(void)
+AttachedProbe::AttachedProbe(Probe &probe,
+                             std::tuple<uint8_t *, uintptr_t> func,
+                             bool safe_mode,
+                             BPFfeature &feature,
+                             BTF &btf)
+    : probe_(probe), func_(func), btf_(btf)
 {
-  LOG(ERROR) << "iter is not available for linked bpf version";
-  return 0;
-}
-#endif // HAVE_LIBBPF_LINK_CREATE
-
-AttachedProbe::AttachedProbe(Probe &probe, std::tuple<uint8_t *, uintptr_t> func, bool safe_mode)
-  : probe_(probe), func_(func)
-{
-  load_prog();
+  load_prog(feature);
   if (bt_verbose)
-    std::cerr << "Attaching " << probe_.name << std::endl;
+    std::cerr << "Attaching " << probe_.orig_name << std::endl;
   switch (probe_.type)
   {
+    case ProbeType::special:
+      // If BPF_PROG_TYPE_RAW_TRACEPOINT is available, no need to attach prog
+      // to anything -- we will simply BPF_PROG_RUN it
+      if (!feature.has_raw_tp_special())
+        attach_uprobe(safe_mode);
+      break;
     case ProbeType::kprobe:
       attach_kprobe(safe_mode);
       break;
@@ -238,10 +207,11 @@ AttachedProbe::AttachedProbe(Probe &probe, std::tuple<uint8_t *, uintptr_t> func
 AttachedProbe::AttachedProbe(Probe &probe,
                              std::tuple<uint8_t *, uintptr_t> func,
                              int pid,
-                             BPFfeature &feature)
-    : probe_(probe), func_(func)
+                             BPFfeature &feature,
+                             BTF &btf)
+    : probe_(probe), func_(func), btf_(btf)
 {
-  load_prog();
+  load_prog(feature);
   switch (probe_.type)
   {
     case ProbeType::usdt:
@@ -272,7 +242,10 @@ AttachedProbe::~AttachedProbe()
   {
     case ProbeType::kprobe:
     case ProbeType::kretprobe:
-      err = bpf_detach_kprobe(eventname().c_str());
+      if (probe_.funcs.empty())
+        err = bpf_detach_kprobe(eventname().c_str());
+      else
+        close(linkfd_);
       break;
     case ProbeType::kfunc:
     case ProbeType::kretfunc:
@@ -291,6 +264,7 @@ AttachedProbe::~AttachedProbe()
     case ProbeType::tracepoint:
       err = bpf_detach_tracepoint(probe_.path.c_str(), eventname().c_str());
       break;
+    case ProbeType::special:
     case ProbeType::profile:
     case ProbeType::interval:
     case ProbeType::software:
@@ -305,13 +279,18 @@ AttachedProbe::~AttachedProbe()
   if (err)
     LOG(ERROR) << "failed to detach probe: " << probe_.name;
 
-  if (progfd_ >= 0)
+  if (close_progfd_ && progfd_ >= 0)
     close(progfd_);
 }
 
 const Probe &AttachedProbe::probe() const
 {
   return probe_;
+}
+
+int AttachedProbe::progfd() const
+{
+  return progfd_;
 }
 
 std::string AttachedProbe::eventprefix() const
@@ -338,6 +317,7 @@ std::string AttachedProbe::eventname() const
       offset_str << std::hex << offset_;
       return eventprefix() + sanitise(probe_.attach_point) + "_" +
              offset_str.str() + index_str;
+    case ProbeType::special:
     case ProbeType::uprobe:
     case ProbeType::uretprobe:
     case ProbeType::usdt:
@@ -594,27 +574,15 @@ void AttachedProbe::resolve_offset_kprobe(bool safe_mode)
   std::string path = find_vmlinux(locs, sym);
   if (path.empty())
   {
-    if (safe_mode)
+    if (bt_verbose)
     {
-      std::stringstream buf;
-      buf << "Could not resolve symbol " << symbol << ".";
-      buf << " Use BPFTRACE_VMLINUX env variable to specify vmlinux path.";
-#ifdef HAVE_UNSAFE_PROBE
-      buf << " Use --unsafe to skip the userspace check.";
-#else
-      buf << " Compile bpftrace with ALLOW_UNSAFE_PROBE option to force skip "
-             "the check.";
-#endif
-      throw std::runtime_error(buf.str());
+      LOG(WARNING) << "Could not resolve symbol " << symbol
+                   << ". Skipping usermode offset checking.";
+      LOG(WARNING) << "The kernel will verify the safety of the location but "
+                      "will also allow the offset to be in a different symbol.";
     }
-    else
-    {
-      // linux kernel checks alignment, but not the function bounds
-      if (bt_verbose)
-        std::cout << "Could not resolve symbol " << symbol
-                  << ". Skip offset checking." << std::endl;
-      return;
-    }
+
+    return;
   }
 
   if (func_offset >= sym.size)
@@ -627,50 +595,88 @@ void AttachedProbe::resolve_offset_kprobe(bool safe_mode)
       path, symbol, sym_offset, func_offset, safe_mode, probe_.type);
 }
 
-void AttachedProbe::load_prog()
+std::map<std::string, int> AttachedProbe::cached_prog_fds_;
+
+bool AttachedProbe::use_cached_progfd(void)
 {
+  // Enabled for so far only for kprobes/kretprobes
+  if (probe_.type != ProbeType::kprobe && probe_.type != ProbeType::kretprobe)
+    return false;
+
+  // Only for a wildcard probe which does not need expansion,
+  // because we can have multiple programs attached to a single probe
+  if (!has_wildcard(probe_.orig_name) || probe_.need_expansion)
+    return false;
+
+  // Keep map of loaded programs based on their 'orig_name',
+  // and make sure they are loaded just once and use cached
+  // fd as probe's progfd_.
+  // This way we prevent multiple copies of the same program
+  // loaded for wildcard probe.
+  auto search = cached_prog_fds_.find(probe_.orig_name);
+
+  if (search != cached_prog_fds_.end())
+  {
+    progfd_ = search->second;
+    close_progfd_ = false;
+    return true;
+  }
+
+  return false;
+}
+
+void AttachedProbe::cache_progfd(void)
+{
+  if (probe_.type != ProbeType::kprobe && probe_.type != ProbeType::kretprobe)
+    return;
+  cached_prog_fds_[probe_.orig_name] = progfd_;
+}
+
+namespace {
+const std::regex helper_verifier_error_re(
+    "[0-9]+: \\([0-9]+\\) call ([a-z|A-Z|0-9|_]+)#([0-9]+)");
+}
+
+void AttachedProbe::load_prog(BPFfeature &feature)
+{
+  if (use_cached_progfd())
+    return;
+
   uint8_t *insns = std::get<0>(func_);
-  int prog_len = std::get<1>(func_);
+  unsigned prog_len = std::get<1>(func_);
   const char *license = "GPL";
   int log_level = 0;
 
   uint64_t log_buf_size = probe_.log_size;
   auto log_buf = std::make_unique<char[]>(log_buf_size);
-  char name[STRING_SIZE];
-  const char *namep;
-  std::string tracing_type, tracing_name;
+  std::string name;
+  std::string tracing_type;
 
   {
-    // Redirect stderr, so we don't get error messages from BCC
-    StderrSilencer silencer;
-    if (bt_debug == DebugLevel::kNone)
-      silencer.silence();
-
     if (bt_debug != DebugLevel::kNone)
       log_level = 15;
-
     if (bt_verbose)
       log_level = 1;
 
-    // bpf_prog_load rejects colons in the probe name
-    strncpy(name, probe_.name.c_str(), STRING_SIZE - 1);
-    namep = name;
-    if (strrchr(name, ':') != NULL)
-      namep = strrchr(name, ':') + 1;
-
-    // The bcc_prog_load function now recognizes 'kfunc__/kretfunc__'
-    // prefixes and detects and fills in all the necessary BTF related
-    // attributes for loading the kfunc program.
-
-    tracing_type = probetypeName(probe_.type);
-    if (!tracing_type.empty())
+    if (probe_.type == ProbeType::kprobe || probe_.type == ProbeType::kretprobe)
     {
-      if (tracing_type == "iter")
-        tracing_type = "bpf_iter";
-
-      tracing_name = tracing_type + "__" + namep;
-      namep = tracing_name.c_str();
+      // Use orig_name for program name so we get proper name for
+      // wildcard probes, replace wildcards with '.'
+      name = probe_.orig_name;
+      std::replace(name.begin(), name.end(), '*', '.');
     }
+    else
+      name = probe_.name;
+
+    // bpf_prog_load rejects some characters in probe names, so we clean them
+    // start the name after the probe type, after ':'
+    if (auto last_colon = name.rfind(':'); last_colon != std::string::npos)
+      name = name.substr(last_colon + 1);
+    name = sanitise(name);
+
+    auto prog_type = progtype(probe_.type);
+    if (probe_.type == ProbeType::special && !feature.has_raw_tp_special())
+      prog_type = progtype(ProbeType::uprobe);
 
     for (int attempt = 0; attempt < 3; attempt++)
     {
@@ -678,61 +684,91 @@ void AttachedProbe::load_prog()
       if (version == 0 && attempt > 0)
       {
         // Recent kernels don't check the version so we should try to call
-        // bcc_prog_load during first iteration even if we failed to determine
+        // bpf_prog_load during first iteration even if we failed to determine
         // the version. We should not do that in subsequent iterations to avoid
         // zeroing of log_buf on systems with older kernels.
         continue;
       }
 
-#ifdef HAVE_BCC_PROG_LOAD_XATTR
-      struct bpf_load_program_attr attr = {};
+      LIBBPF_OPTS(bpf_prog_load_opts, opts);
+      opts.log_buf = log_buf.get();
+      opts.log_size = log_buf_size;
+      opts.log_level = log_level;
 
-      attr.prog_type = progtype(probe_.type);
-      attr.name = namep;
-      attr.insns = reinterpret_cast<struct bpf_insn *>(insns);
-      attr.license = license;
+      if (probe_.type == ProbeType::kfunc)
+        opts.expected_attach_type = static_cast<::bpf_attach_type>(
+            libbpf::BPF_TRACE_FENTRY);
+      else if (probe_.type == ProbeType::kretfunc)
+        opts.expected_attach_type = static_cast<::bpf_attach_type>(
+            libbpf::BPF_TRACE_FEXIT);
+      else if (probe_.type == ProbeType::iter)
+        opts.expected_attach_type = static_cast<::bpf_attach_type>(
+            libbpf::BPF_TRACE_ITER);
 
-      libbpf::bpf_prog_type prog_type = static_cast<libbpf::bpf_prog_type>(
-          progtype(probe_.type));
+      if (feature.has_kprobe_multi() && !probe_.funcs.empty())
+        opts.expected_attach_type = static_cast<::bpf_attach_type>(
+            libbpf::BPF_TRACE_KPROBE_MULTI);
 
-      if (prog_type != libbpf::BPF_PROG_TYPE_TRACING &&
-          prog_type != libbpf::BPF_PROG_TYPE_EXT)
-        attr.kern_version = version;
+      if (probe_.type == ProbeType::kfunc ||
+          probe_.type == ProbeType::kretfunc || probe_.type == ProbeType::iter)
+      {
+        std::string mod = probe_.path;
+        std::string fun = probe_.attach_point;
+        if (probe_.type == ProbeType::iter)
+          fun = "bpf_iter_" + fun;
+        auto btf_id = btf_.get_btf_id_fd(fun, mod);
+        if (btf_id.first < 0)
+        {
+          std::string msg = "No BTF found for " + fun;
+          if (probe_.orig_name != probe_.name)
+          {
+            // one attachpoint in a multi-attachpoint (wildcard or list) probe
+            // failed, print a warning but continue
+            LOG(WARNING) << msg << ", skipping.";
+            return;
+          }
+          else
+            // explicit match failed, fail hard
+            throw std::runtime_error(msg);
+        }
 
-      attr.log_level = log_level;
+        opts.attach_btf_id = btf_id.first;
+        opts.attach_btf_obj_fd = btf_id.second;
+      }
+      else
+      {
+        opts.kern_version = version;
+      }
 
-      progfd_ = bcc_prog_load_xattr(
-          &attr, prog_len, log_buf.get(), log_buf_size, true);
+      {
+        // Redirect stderr, so we don't get error messages from libbpf
+        StderrSilencer silencer;
+        if (bt_debug == DebugLevel::kNone)
+          silencer.silence();
 
-#else // HAVE_BCC_PROG_LOAD_XATTR
-#ifdef HAVE_BCC_PROG_LOAD
-      progfd_ = bcc_prog_load(progtype(probe_.type),
-                              namep,
-#else
-      progfd_ = bpf_prog_load(progtype(probe_.type),
-                              namep,
-#endif
-                              reinterpret_cast<struct bpf_insn *>(insns),
-                              prog_len,
-                              license,
-                              version,
-                              log_level,
-                              log_buf.get(),
-                              log_buf_size);
-#endif // HAVE_BCC_PROG_LOAD_XATTR
+        progfd_ = bpf_prog_load(static_cast<::bpf_prog_type>(prog_type),
+                                name.c_str(),
+                                license,
+                                reinterpret_cast<struct bpf_insn *>(insns),
+                                prog_len / sizeof(struct bpf_insn),
+                                &opts);
+      }
 
+      if (opts.attach_prog_fd > 0)
+        close(opts.attach_prog_fd);
       if (progfd_ >= 0)
         break;
     }
   }
 
   if (progfd_ < 0) {
+    std::stringstream errmsg;
     if (bt_verbose) {
       std::cerr << std::endl
                 << "Error log: " << std::endl
                 << log_buf.get() << std::endl;
-      if (errno == ENOSPC) {
-        std::stringstream errmsg;
+      if (errno == ENOSPC)
+      {
         errmsg << "Error: Failed to load program, verification log buffer "
                << "not big enough, try increasing the BPFTRACE_LOG_SIZE "
                << "environment variable beyond the current value of "
@@ -741,7 +777,33 @@ void AttachedProbe::load_prog()
         throw std::runtime_error(errmsg.str());
       }
     }
-    throw std::runtime_error("Error loading program: " + probe_.name + (bt_verbose ? "" : " (try -v)"));
+
+    // try to identify an illegal helper call
+    if (std::string(log_buf.get())
+            .find("helper call is not allowed in probe") != std::string::npos)
+    {
+      // get helper function name and id
+      std::cmatch m;
+      if (std::regex_search(log_buf.get(), m, helper_verifier_error_re))
+      {
+        throw HelperVerifierError(static_cast<libbpf::bpf_func_id>(
+                                      std::stoi(m[2].str())),
+                                  m[1].str());
+      }
+    }
+
+    errmsg << "Error loading program: " << probe_.name
+           << (bt_verbose ? "" : " (try -v)");
+    if (probe_.orig_name != probe_.name)
+    {
+      // one attachpoint in a multi-attachpoint (wildcard or list) probe failed,
+      // print a warning but continue
+      LOG(WARNING) << errmsg.str() << ", skipping.";
+      return;
+    }
+    else
+      // explicit match failed, fail hard
+      throw std::runtime_error(errmsg.str());
   }
 
   if (bt_verbose) {
@@ -757,25 +819,72 @@ void AttachedProbe::load_prog()
               << "The verifier log: " << std::endl
               << log_buf.get() << std::endl;
   }
+
+  cache_progfd();
+}
+
+static inline uint64_t ptr_to_u64(const void *ptr)
+{
+  return (uint64_t)(unsigned long)ptr;
+}
+
+void AttachedProbe::attach_multi_kprobe(void)
+{
+  DECLARE_LIBBPF_OPTS(bpf_link_create_opts, opts);
+  std::vector<const char *> syms;
+  unsigned int i = 0;
+
+  for (i = 0; i < probe_.funcs.size(); i++)
+  {
+    syms.push_back(probe_.funcs[i].c_str());
+  }
+
+  opts.kprobe_multi.syms = syms.data();
+  opts.kprobe_multi.cnt = syms.size();
+  opts.kprobe_multi.flags = probe_.type == ProbeType::kretprobe
+                                ? BPF_F_KPROBE_MULTI_RETURN
+                                : 0;
+
+  if (bt_verbose)
+  {
+    std::cout << "Attaching to " << probe_.funcs.size() << " functions"
+              << std::endl;
+
+    if (bt_verbose2)
+    {
+      for (i = 0; i < opts.kprobe_multi.cnt; i++)
+      {
+        std::cout << " " << syms[i] << std::endl;
+      }
+    }
+  }
+
+  linkfd_ = bpf_link_create(progfd_,
+                            0,
+                            static_cast<enum ::bpf_attach_type>(
+                                libbpf::BPF_TRACE_KPROBE_MULTI),
+                            &opts);
+  if (linkfd_ < 0)
+  {
+    throw std::runtime_error("Error attaching probe: '" + probe_.name + "'");
+  }
 }
 
 void AttachedProbe::attach_kprobe(bool safe_mode)
 {
+  if (!probe_.funcs.empty())
+  {
+    attach_multi_kprobe();
+    return;
+  }
+
   resolve_offset_kprobe(safe_mode);
-#ifdef LIBBCC_ATTACH_KPROBE_SIX_ARGS_SIGNATURE
   int perf_event_fd = bpf_attach_kprobe(progfd_,
                                         attachtype(probe_.type),
                                         eventname().c_str(),
                                         probe_.attach_point.c_str(),
                                         offset_,
                                         0);
-#else
-  int perf_event_fd = bpf_attach_kprobe(progfd_,
-                                        attachtype(probe_.type),
-                                        eventname().c_str(),
-                                        probe_.attach_point.c_str(),
-                                        offset_);
-#endif
 
   if (perf_event_fd < 0) {
     if (probe_.orig_name != probe_.name) {
@@ -783,6 +892,9 @@ void AttachedProbe::attach_kprobe(bool safe_mode)
       // as this is normal for some kernel functions (eg, do_debug())
       LOG(WARNING) << "could not attach probe " << probe_.name << ", skipping.";
     } else {
+      if (errno == EILSEQ)
+        LOG(ERROR) << "Possible attachment attempt in the middle of an "
+                      "instruction, try a different offset.";
       // an explicit match failed, so fail as the user must have wanted it
       throw std::runtime_error("Error attaching probe: '" + probe_.name + "'");
     }
@@ -795,23 +907,13 @@ void AttachedProbe::attach_uprobe(bool safe_mode)
 {
   resolve_offset_uprobe(safe_mode);
 
-  int perf_event_fd =
-#ifdef LIBBCC_ATTACH_UPROBE_SEVEN_ARGS_SIGNATURE
-      bpf_attach_uprobe(progfd_,
-                        attachtype(probe_.type),
-                        eventname().c_str(),
-                        probe_.path.c_str(),
-                        offset_,
-                        probe_.pid,
-                        0);
-#else
-      bpf_attach_uprobe(progfd_,
-                        attachtype(probe_.type),
-                        eventname().c_str(),
-                        probe_.path.c_str(),
-                        offset_,
-                        probe_.pid);
-#endif // LIBBCC_ATTACH_UPROBE_SEVEN_ARGS_SIGNATURE
+  int perf_event_fd = bpf_attach_uprobe(progfd_,
+                                        attachtype(probe_.type),
+                                        eventname().c_str(),
+                                        probe_.path.c_str(),
+                                        offset_,
+                                        probe_.pid,
+                                        0);
 
   if (perf_event_fd < 0)
     throw std::runtime_error("Error attaching probe: " + probe_.name);
@@ -844,7 +946,6 @@ int AttachedProbe::usdt_sem_up_manual(const std::string &fn_name, void *ctx)
   return err;
 }
 
-#ifdef HAVE_BCC_USDT_ADDSEM
 int AttachedProbe::usdt_sem_up_manual_addsem(int pid,
                                              const std::string &fn_name,
                                              void *ctx)
@@ -887,15 +988,6 @@ int AttachedProbe::usdt_sem_up_manual_addsem(int pid,
 
   return err;
 }
-#else
-int AttachedProbe::usdt_sem_up_manual_addsem(int pid __attribute__((unused)),
-                                             const std::string &fn_name
-                                             __attribute__((unused)),
-                                             void *ctx __attribute__((unused)))
-{
-  return 0;
-}
-#endif // HAVE_BCC_USDT_ADDSEM
 
 int AttachedProbe::usdt_sem_up([[maybe_unused]] BPFfeature &feature,
                                [[maybe_unused]] int pid,
@@ -911,11 +1003,7 @@ int AttachedProbe::usdt_sem_up([[maybe_unused]] BPFfeature &feature,
     return 0;
   }
 
-#if defined(HAVE_BCC_USDT_ADDSEM)
   return usdt_sem_up_manual_addsem(pid, fn_name, ctx);
-#else
-  return usdt_sem_up_manual(fn_name, ctx);
-#endif
 }
 
 void AttachedProbe::attach_usdt(int pid, BPFfeature &feature)
@@ -976,15 +1064,15 @@ void AttachedProbe::attach_usdt(int pid, BPFfeature &feature)
 
   if (err)
   {
-    std::string err;
-    err += "Error finding or enabling probe: " + probe_.name;
-    err += '\n';
-    err += "Try using -p or --usdt-file-activation if there's USDT semaphores";
-    throw std::runtime_error(err);
+    std::string errstr;
+    errstr += "Error finding or enabling probe: " + probe_.name;
+    errstr += '\n';
+    errstr +=
+        "Try using -p or --usdt-file-activation if there's USDT semaphores";
+    throw std::runtime_error(errstr);
   }
 
   int perf_event_fd =
-#ifdef LIBBCC_ATTACH_UPROBE_SEVEN_ARGS_SIGNATURE
       bpf_attach_uprobe(progfd_,
                         attachtype(probe_.type),
                         eventname().c_str(),
@@ -992,14 +1080,6 @@ void AttachedProbe::attach_usdt(int pid, BPFfeature &feature)
                         offset_,
                         pid == 0 ? -1 : pid,
                         semaphore_offset);
-#else
-      bpf_attach_uprobe(progfd_,
-                        attachtype(probe_.type),
-                        eventname().c_str(),
-                        probe_.path.c_str(),
-                        offset_,
-                        pid == 0 ? -1 : pid);
-#endif // LIBBCC_ATTACH_UPROBE_SEVEN_ARGS_SIGNATURE
 
   if (perf_event_fd < 0)
   {
@@ -1018,8 +1098,11 @@ void AttachedProbe::attach_tracepoint()
   int perf_event_fd = bpf_attach_tracepoint(progfd_, probe_.path.c_str(),
       eventname().c_str());
 
-  if (perf_event_fd < 0)
+  if (perf_event_fd < 0 && probe_.name == probe_.orig_name)
+  {
+    // do not fail if there are other attach points where attaching may succeed
     throw std::runtime_error("Error attaching probe: " + probe_.name);
+  }
 
   perf_event_fds_.push_back(perf_event_fd);
 }

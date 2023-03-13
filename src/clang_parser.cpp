@@ -1,14 +1,15 @@
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <regex>
 #include <vector>
 
 #include "llvm/Config/llvm-config.h"
 
-#include "ast.h"
+#include "ast/ast.h"
+#include "ast/passes/field_analyser.h"
 #include "btf.h"
 #include "clang_parser.h"
-#include "field_analyser.h"
 #include "headers.h"
 #include "log.h"
 #include "types.h"
@@ -38,6 +39,11 @@ const std::vector<CXUnsavedFile> &getDefaultHeaders()
         .Filename = "/bpftrace/include/stdarg.h",
         .Contents = stdarg_h,
         .Length = stdarg_h_len,
+    },
+    {
+        .Filename = "/bpftrace/include/stdbool.h",
+        .Contents = stdbool_h,
+        .Length = stdbool_h_len,
     },
     {
         .Filename = "/bpftrace/include/stddef.h",
@@ -292,7 +298,7 @@ static std::string get_unqualified_type_name(CXType clang_type)
   return remove_qualifiers(get_clang_string(clang_getTypeSpelling(clang_type)));
 }
 
-static SizedType get_sized_type(CXType clang_type)
+static SizedType get_sized_type(CXType clang_type, StructManager &structs)
 {
   auto size = 8 * clang_Type_getSizeOf(clang_type);
   auto typestr = get_unqualified_type_name(clang_type);
@@ -307,8 +313,12 @@ static SizedType get_sized_type(CXType clang_type)
     case CXType_ULong:
     case CXType_ULongLong:
       return CreateUInt(size);
-    case CXType_Record:
-      return CreateRecord(size / 8, typestr);
+    case CXType_Record: {
+      // Struct map entry may not exist for forward declared types so we create
+      // it now and fill it later
+      auto s = structs.LookupOrAdd(typestr, size / 8);
+      return CreateRecord(typestr, s);
+    }
     case CXType_Char_S:
     case CXType_SChar:
     case CXType_Short:
@@ -321,7 +331,7 @@ static SizedType get_sized_type(CXType clang_type)
     case CXType_Pointer:
     {
       auto pointee_type = clang_getPointeeType(clang_type);
-      return CreatePointer(get_sized_type(pointee_type));
+      return CreatePointer(get_sized_type(pointee_type, structs));
     }
     case CXType_ConstantArray:
     {
@@ -332,7 +342,7 @@ static SizedType get_sized_type(CXType clang_type)
         return CreateString(size);
       }
 
-      auto elem_stype = get_sized_type(elem_type);
+      auto elem_stype = get_sized_type(elem_type, structs);
       return CreateArray(size, elem_stype);
     }
     default:
@@ -363,6 +373,9 @@ CXErrorCode ClangParser::ClangParserHandler::parse_translation_unit(
     unsigned num_unsaved_files,
     unsigned options)
 {
+  // Clean up previous translation unit to prevent resource leak
+  clang_disposeTranslationUnit(translation_unit);
+
   return clang_parseTranslationUnit2(
       index,
       source_filename,
@@ -523,7 +536,7 @@ bool ClangParser::visit_children(CXCursor &cursor, BPFtrace &bpftrace)
 
         if (clang_getCursorKind(c) == CXCursor_FieldDecl)
         {
-          auto &structs = static_cast<BPFtrace*>(client_data)->structs_;
+          auto &structs = static_cast<BPFtrace *>(client_data)->structs;
 
           auto named_parent = get_named_parent(c);
           auto ptype = clang_getCanonicalType(clang_getCursorType(named_parent));
@@ -533,7 +546,7 @@ bool ClangParser::visit_children(CXCursor &cursor, BPFtrace &bpftrace)
           auto ident = get_clang_string(clang_getCursorSpelling(c));
           auto offset = clang_Type_getOffsetOf(ptype, ident.c_str()) / 8;
           auto type = clang_getCanonicalType(clang_getCursorType(c));
-          auto sized_type = get_sized_type(type);
+          auto sized_type = get_sized_type(type, structs);
           Bitfield bitfield;
           bool is_bitfield = getBitfield(c, bitfield);
           bool is_data_loc = false;
@@ -555,15 +568,22 @@ bool ClangParser::visit_children(CXCursor &cursor, BPFtrace &bpftrace)
             }
           }
 
+          // Initialize a new record type if needed
+          if (!structs.Has(ptypestr))
+            structs.Add(ptypestr, ptypesize, false);
+
+          auto str = structs.Lookup(ptypestr).lock();
+          if (str->allow_override)
+          {
+            str->ClearFields();
+            str->allow_override = false;
+          }
+
           // No need to worry about redefined types b/c we should have already
           // checked clang diagnostics. The diagnostics will tell us if we have
           // duplicated types.
-          structs[ptypestr].fields[ident].offset = offset;
-          structs[ptypestr].fields[ident].type = sized_type;
-          structs[ptypestr].fields[ident].is_bitfield = is_bitfield;
-          structs[ptypestr].fields[ident].bitfield = bitfield;
-          structs[ptypestr].fields[ident].is_data_loc = is_data_loc;
-          structs[ptypestr].size = ptypesize;
+          structs.Lookup(ptypestr).lock()->AddField(
+              ident, sized_type, offset, is_bitfield, bitfield, is_data_loc);
         }
 
         return CXChildVisit_Recurse;
@@ -699,6 +719,9 @@ bool ClangParser::parse(ast::Program *program, BPFtrace &bpftrace, std::vector<s
   StderrSilencer silencer;
   silencer.silence();
 #endif
+  if (program->c_definitions.empty() && bpftrace.btf_set_.empty())
+    return true;
+
   input = "#include <__btf_generated_header.h>\n" + program->c_definitions;
 
   input_files = getTranslationUnitFiles(CXUnsavedFile{
@@ -707,13 +730,17 @@ bool ClangParser::parse(ast::Program *program, BPFtrace &bpftrace, std::vector<s
       .Length = input.size(),
   });
 
-  // clang-format off
-  args = {
-    "-isystem", "/usr/local/include",
-    "-isystem", "/bpftrace/include",
-    "-isystem", "/usr/include",
-  };
-  // clang-format on
+  args = { "-isystem", "/bpftrace/include" };
+  auto system_paths = system_include_paths();
+  for (auto &path : system_paths)
+  {
+    args.push_back("-isystem");
+    args.push_back(path.c_str());
+  }
+  std::string arch_path = get_arch_include_path();
+  args.push_back("-isystem");
+  args.push_back(arch_path.c_str());
+
   for (auto &flag : extra_flags)
   {
     args.push_back(flag.c_str());
@@ -723,13 +750,13 @@ bool ClangParser::parse(ast::Program *program, BPFtrace &bpftrace, std::vector<s
   // The header must be the last file in the vector since the following methods
   // count on it.
   // If BTF is not available, the header is empty.
-  input_files.emplace_back(bpftrace.btf_.has_data()
+  input_files.emplace_back(bpftrace.has_btf_data()
                                ? get_btf_generated_header(bpftrace)
                                : get_empty_btf_generated_header());
 
   bool btf_conflict = false;
   ClangParserHandler handler;
-  if (bpftrace.btf_.has_data())
+  if (bpftrace.has_btf_data())
   {
     // We set these args early because some systems may not have <linux/types.h>
     // (containers) and fully rely on BTF.
@@ -740,6 +767,9 @@ bool ClangParser::parse(ast::Program *program, BPFtrace &bpftrace, std::vector<s
     // Since we're omitting <linux/types.h> there's no reason to
     // add the wokarounds for it
     args.push_back("-D__CLANG_WORKAROUNDS_H");
+    // Let script know we have BTF -- this is useful for prewritten tools to
+    // conditionally include headers if BTF isn't available.
+    args.push_back("-DBPFTRACE_HAVE_BTF");
 
     if (handler.parse_file("definitions.h", input, args, input_files, false) &&
         handler.has_redefinition_error())
@@ -770,6 +800,7 @@ bool ClangParser::parse(ast::Program *program, BPFtrace &bpftrace, std::vector<s
   {
     // There is a conflict (redefinition) between user-supplied types and types
     // taken from BTF. We cannot use BTF in such a case.
+    args.pop_back();
     args.pop_back();
     args.pop_back();
     input_files.back() = get_empty_btf_generated_header();
@@ -856,7 +887,7 @@ void ClangParser::resolve_unknown_typedefs_from_btf(BPFtrace &bpftrace)
 
 CXUnsavedFile ClangParser::get_btf_generated_header(BPFtrace &bpftrace)
 {
-  btf_cdef = bpftrace.btf_.c_def(bpftrace.btf_set_);
+  btf_cdef = bpftrace.btf_->c_def(bpftrace.btf_set_);
   return CXUnsavedFile{
     .Filename = "/bpftrace/include/__btf_generated_header.h",
     .Contents = btf_cdef.c_str(),
@@ -872,6 +903,40 @@ CXUnsavedFile ClangParser::get_empty_btf_generated_header()
     .Contents = btf_cdef.c_str(),
     .Length = btf_cdef.size(),
   };
+}
+
+std::string ClangParser::get_arch_include_path()
+{
+  struct utsname utsname;
+  uname(&utsname);
+  return "/usr/include/" + std::string(utsname.machine) + "-linux-gnu";
+}
+
+std::vector<std::string> ClangParser::system_include_paths()
+{
+  std::vector<std::string> result;
+  try
+  {
+    auto clang = "clang-" + std::to_string(LLVM_VERSION_MAJOR);
+    auto cmd = clang + " -Wp,-v -x c -fsyntax-only /dev/null 2>&1";
+    auto check = exec_system(cmd.c_str());
+    std::istringstream lines(check);
+    std::string line;
+    while (std::getline(lines, line) &&
+           line != "#include <...> search starts here:")
+    {
+    }
+    while (std::getline(lines, line) && line != "End of search list.")
+      result.push_back(trim(line));
+  }
+  catch (std::runtime_error &)
+  { // If exec_system fails, just ignore it
+  }
+
+  if (result.empty())
+    result = { "/usr/local/include", "/usr/include" };
+
+  return result;
 }
 
 } // namespace bpftrace

@@ -1,9 +1,9 @@
-cmake_minimum_required(VERSION 3.8)
+cmake_minimum_required(VERSION 3.13.0)
 project(bpftrace)
 
 # bpftrace version number components.
 set(bpftrace_VERSION_MAJOR 0)
-set(bpftrace_VERSION_MINOR 12)
+set(bpftrace_VERSION_MINOR 17)
 set(bpftrace_VERSION_PATCH 0)
 
 include(GNUInstallDirs)
@@ -11,10 +11,12 @@ include(GNUInstallDirs)
 set(WARNINGS_AS_ERRORS OFF CACHE BOOL "Build with -Werror")
 set(STATIC_LINKING OFF CACHE BOOL "Build bpftrace as a statically linked executable")
 set(STATIC_LIBC OFF CACHE BOOL "Attempt to embed libc, only known to work with musl. Has issues with dlopen.")
-set(EMBED_LLVM OFF CACHE BOOL "Build LLVM static libs as an ExternalProject and link to these instead of system libs.")
-set(EMBED_CLANG OFF CACHE BOOL "Build Clang static libs as an ExternalProject and link to these instead of system libs.")
-set(EMBED_LIBCLANG_ONLY OFF CACHE BOOL "Build only libclang.a, and link to system libraries statically")
-set(LLVM_VERSION "8" CACHE STRING "Embedded LLVM/Clang version to build and link against.")
+set(USE_SYSTEM_BPF_BCC OFF CACHE BOOL "Use system libbpf and bcc instead of the repository vendored ones.")
+
+set(EMBED_USE_LLVM OFF CACHE BOOL "Use a prebuilt embedded LLVM, speeds up the build process")
+set(EMBED_BUILD_LLVM OFF CACHE BOOL "Build Clang&LLVM static libs as an ExternalProject and link to these instead of system libs.")
+set(EMBED_LLVM_VERSION "12" CACHE STRING "Embedded LLVM/Clang version to build and link against.")
+
 set(BUILD_ASAN OFF CACHE BOOL "Build bpftrace with -fsanitize=address")
 set(ENABLE_MAN ON CACHE BOOL "Build man pages")
 set(BUILD_TESTING ON CACHE BOOL "Build test suite")
@@ -24,9 +26,19 @@ set(BUILD_FUZZ OFF CACHE BOOL "Build bpftrace for fuzzing")
 set(USE_LIBFUZZER OFF CACHE BOOL "Use libfuzzer for fuzzing")
 set(FUZZ_TARGET "codegen" CACHE STRING "Fuzzing target")
 
+set(ENABLE_SKB_OUTPUT ON CACHE BOOL "Enable skb_output, will include libpcap")
+
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
-if(EMBED_LLVM OR EMBED_CLANG OR STATIC_LIBC)
+if(EMBED_BUILD_LLVM)
+  set(EMBED_USE_LLVM ON)
+endif()
+
+if(EMBED_USE_LLVM AND NOT EMBED_BUILD_LLVM)
+  set(EMBED_LLVM_PATH "/usr/local/lib")
+endif()
+
+if(EMBED_USE_LLVM OR STATIC_LIBC)
   set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed)
   include(embed_helpers)
   if (NOT STATIC_LINKING)
@@ -38,13 +50,13 @@ if(EMBED_LLVM OR EMBED_CLANG OR STATIC_LIBC)
   endif()
 endif()
 
-if(EMBED_LIBCLANG_ONLY AND NOT EMBED_CLANG)
-    message(FATAL_ERROR "Cannot set EMBED_LIBCLANG_ONLY without also setting EMBED_CLANG")
-endif()
-
 set (CMAKE_CXX_STANDARD 17)
 set (CMAKE_CXX_STANDARD_REQUIRED ON)
 set (CMAKE_CXX_EXTENSIONS OFF)
+
+if (NOT USE_SYSTEM_BPF_BCC)
+  set(BPF_BCC_PREFIX_PATH ${CMAKE_BINARY_DIR}/build-libs/)
+endif()
 
 add_compile_options("-Wall")
 add_compile_options("-Wextra")
@@ -62,32 +74,51 @@ if (WARNINGS_AS_ERRORS)
   add_compile_options("-Werror")
 endif()
 
+# Clang compiler produces narrowing errors when calling BPF_LD_MAP_FD in the bcc library
+# Turning off them before bcc library fixes this
+if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
+  add_compile_options("-Wno-narrowing")
+endif()
+
+# Ninja buffers output so gcc/clang think it's not an interactive session.
+# Colors are useful for compiler errors so force the color
+if("${CMAKE_GENERATOR}" STREQUAL "Ninja")
+  if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
+    add_compile_options(-fdiagnostics-color=always)
+  elseif("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
+    add_compile_options(-fcolor-diagnostics)
+  endif()
+endif()
+
 include(CTest)
 
+if(STATIC_LINKING OR NOT USE_SYSTEM_BPF_BCC)
+  set(STATIC_BPF_BCC TRUE)
+else()
+  set(STATIC_BPF_BCC FALSE)
+endif()
+
 if(STATIC_LINKING)
-  if(STATIC_LIBC)
-    set(CMAKE_EXE_LINKER_FLAGS "-static")
-  elseif(EMBED_LLVM OR EMBED_CLANG)
-    set(EMBEDDED_LINK_FLAGS "-static-libgcc -static-libstdc++ -Wl,--start-group")
-    set(EMBEDDED_LINK_FLAGS "${EMBEDDED_LINK_FLAGS} -Wl,-Bdynamic -lrt")
-    set(EMBEDDED_LINK_FLAGS "${EMBEDDED_LINK_FLAGS} -Wl,-Bdynamic -lpthread")
-    set(EMBEDDED_LINK_FLAGS "${EMBEDDED_LINK_FLAGS} -Wl,-Bdynamic -ldl -lm")
-    set(EMBEDDED_LINK_FLAGS "${EMBEDDED_LINK_FLAGS} -Wl,-Bstatic -lz")
-  endif(STATIC_LIBC)
   set(CMAKE_FIND_LIBRARY_SUFFIXES ".a")
   set(CMAKE_LINK_SEARCH_START_STATIC TRUE)
   set(CMAKE_LINK_SEARCH_END_STATIC TRUE)
 endif(STATIC_LINKING)
 
-set(FIND_LIBRARY_USE_LIB64_PATHS TRUE)
+set_property( GLOBAL PROPERTY FIND_LIBRARY_USE_LIB64_PATHS TRUE )
 
 include_directories(SYSTEM ${KERNEL_INCLUDE_DIRS})
 
 find_package(LibBcc REQUIRED)
 include_directories(SYSTEM ${LIBBCC_INCLUDE_DIRS})
 
+find_package(LibBpf REQUIRED)
+include_directories(SYSTEM ${LIBBPF_INCLUDE_DIRS})
+
 find_package(LibElf REQUIRED)
 include_directories(SYSTEM ${LIBELF_INCLUDE_DIRS})
+
+find_package(LibCereal REQUIRED)
+include_directories(SYSTEM ${LIBCEREAL_INCLUDE_DIRS})
 
 find_package(BISON REQUIRED)
 find_package(FLEX REQUIRED)
@@ -103,37 +134,17 @@ set(CMAKE_REQUIRED_DEFINITIONS -D_GNU_SOURCE)
 check_symbol_exists(name_to_handle_at "sys/types.h;sys/stat.h;fcntl.h" HAVE_NAME_TO_HANDLE_AT)
 set(CMAKE_REQUIRED_DEFINITIONS)
 
-find_package(LibBpf)
 find_package(LibBfd)
 find_package(LibOpcodes)
+find_package(LibDw)
+
+if(ENABLE_SKB_OUTPUT)
+find_package(LibPcap)
+endif()
 
 if(POLICY CMP0075)
   cmake_policy(SET CMP0075 NEW)
 endif()
-if(STATIC_LINKING)
-  set(CMAKE_REQUIRED_LIBRARIES bcc bcc_bpf bpf elf z)
-else()
-  set(CMAKE_REQUIRED_LIBRARIES ${LIBBCC_LIBRARIES})
-  if (LIBBPF_FOUND)
-      set(CMAKE_REQUIRED_LIBRARIES ${CMAKE_REQUIRED_LIBRARIES} ${LIBBPF_LIBRARIES})
-  endif()
-endif(STATIC_LINKING)
-get_filename_component(LIBBCC_LIBDIR ${LIBBCC_LIBRARIES} DIRECTORY)
-set(CMAKE_REQUIRED_LINK_OPTIONS -L${LIBBCC_LIBDIR})
-
-check_symbol_exists(bcc_prog_load "${LIBBCC_INCLUDE_DIRS}/bcc/libbpf.h" HAVE_BCC_PROG_LOAD)
-check_symbol_exists(bcc_create_map "${LIBBCC_INCLUDE_DIRS}/bcc/libbpf.h" HAVE_BCC_CREATE_MAP)
-check_symbol_exists(bcc_elf_foreach_sym "${LIBBCC_INCLUDE_DIRS}/bcc/bcc_elf.h" HAVE_BCC_ELF_FOREACH_SYM)
-check_symbol_exists(bpf_attach_kfunc "${LIBBCC_INCLUDE_DIRS}/bcc/libbpf.h" HAVE_BCC_KFUNC)
-check_symbol_exists(bcc_usdt_addsem_probe "${LIBBCC_INCLUDE_DIRS}/bcc/bcc_usdt.h" HAVE_BCC_USDT_ADDSEM)
-
-# bcc_prog_load_xattr needs struct bpf_load_program_attr,
-# which is defined in libbpf
-if (LIBBPF_FOUND)
-  check_symbol_exists(bcc_prog_load_xattr "${LIBBCC_INCLUDE_DIRS}/bcc/libbpf.h" HAVE_BCC_PROG_LOAD_XATTR)
-endif()
-set(CMAKE_REQUIRED_LIBRARIES)
-set(CMAKE_REQUIRED_LINK_OPTIONS)
 
 if(${LIBBFD_FOUND} AND ${LIBOPCODES_FOUND})
   set(HAVE_BFD_DISASM TRUE)
@@ -142,7 +153,7 @@ endif()
 include(CheckIncludeFile)
 check_include_file("sys/sdt.h" HAVE_SYSTEMTAP_SYS_SDT_H)
 
-if (EMBED_LLVM)
+if (EMBED_USE_LLVM)
   include(embed_llvm)
 else()
   # Some users have multiple versions of llvm installed and would like to specify
@@ -153,8 +164,12 @@ else()
     find_package(LLVM REQUIRED)
   endif()
 
-  if(${LLVM_VERSION_MAJOR} VERSION_LESS 6)
-    message(SEND_ERROR "Unsupported LLVM version found: ${LLVM_INCLUDE_DIRS}")
+  set(MIN_LLVM_MAJOR 6)
+  set(MAX_LLVM_MAJOR 15)
+
+  if((${LLVM_VERSION_MAJOR} VERSION_LESS ${MIN_LLVM_MAJOR}) OR (${LLVM_VERSION_MAJOR} VERSION_GREATER ${MAX_LLVM_MAJOR}))
+    message(SEND_ERROR "Unsupported LLVM version found via ${LLVM_INCLUDE_DIRS}: ${LLVM_VERSION_MAJOR}")
+    message(SEND_ERROR "Only versions between ${MIN_LLVM_MAJOR} and ${MAX_LLVM_MAJOR} are supported")
     message(SEND_ERROR "Specify an LLVM major version using LLVM_REQUESTED_VERSION=<major version>")
   endif()
 
@@ -167,23 +182,42 @@ add_definitions(-DLLVM_VERSION_MAJOR=${LLVM_VERSION_MAJOR})
 add_definitions(-DLLVM_VERSION_MINOR=${LLVM_VERSION_MINOR})
 add_definitions(-DLLVM_VERSION_PATCH=${LLVM_VERSION_PATCH})
 
-if(${LLVM_VERSION_MAJOR} VERSION_GREATER_EQUAL 11)
-  set(LLVM_ORC_V2)
-  add_definitions(-DLLVM_ORC_V2)
-  message(STATUS "Using LLVM orcv2")
-else()
-  add_definitions(-DLLVM_ORC_V1)
-endif()
-
-if(EMBED_CLANG)
+if(EMBED_USE_LLVM)
   include(embed_clang)
 else()
   find_package(Clang REQUIRED)
   include_directories(SYSTEM ${CLANG_INCLUDE_DIRS})
 endif()
 
-add_subdirectory(src/arch)
-add_subdirectory(src/ast)
+# BPFtrace compile definitions
+
+set(BPFTRACE_FLAGS)
+if (ALLOW_UNSAFE_PROBE)
+  set(BPFTRACE_FLAGS "${BPFTRACE_FLAGS}" HAVE_UNSAFE_PROBE)
+endif(ALLOW_UNSAFE_PROBE)
+
+if(HAVE_NAME_TO_HANDLE_AT)
+  set(BPFTRACE_FLAGS "${BPFTRACE_FLAGS}" HAVE_NAME_TO_HANDLE_AT=1)
+endif(HAVE_NAME_TO_HANDLE_AT)
+
+if(HAVE_BFD_DISASM)
+  set(BPFTRACE_FLAGS "${BPFTRACE_FLAGS}" HAVE_BFD_DISASM)
+  if(LIBBFD_DISASM_FOUR_ARGS_SIGNATURE)
+    set(BPFTRACE_FLAGS "${BPFTRACE_FLAGS}" LIBBFD_DISASM_FOUR_ARGS_SIGNATURE)
+  endif(LIBBFD_DISASM_FOUR_ARGS_SIGNATURE)
+  if(LIBBFD_INIT_DISASM_INFO_FOUR_ARGS_SIGNATURE)
+    set(BPFTRACE_FLAGS "${BPFTRACE_FLAGS}" LIBBFD_INIT_DISASM_INFO_FOUR_ARGS_SIGNATURE)
+  endif(LIBBFD_INIT_DISASM_INFO_FOUR_ARGS_SIGNATURE)
+endif(HAVE_BFD_DISASM)
+
+if (LIBDW_FOUND)
+  set(BPFTRACE_FLAGS "${BPFTRACE_FLAGS}" HAVE_LIBDW)
+endif ()
+
+if(LIBPCAP_FOUND)
+  set(BPFTRACE_FLAGS "${BPFTRACE_FLAGS}" HAVE_LIBPCAP)
+endif(LIBPCAP_FOUND)
+
 add_subdirectory(src)
 if (BUILD_TESTING)
   add_subdirectory(tests)
@@ -191,5 +225,15 @@ endif()
 add_subdirectory(resources)
 add_subdirectory(tools)
 if (ENABLE_MAN)
-add_subdirectory(man)
+  add_subdirectory(man)
 endif(ENABLE_MAN)
+
+if(NOT TARGET uninstall)
+  configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CmakeUninstall.cmake.in"
+	"${CMAKE_CURRENT_BINARY_DIR}/CmakeUninstall.cmake"
+    IMMEDIATE @ONLY)
+
+  add_custom_target(uninstall
+	  COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_BINARY_DIR}/CmakeUninstall.cmake)
+endif()

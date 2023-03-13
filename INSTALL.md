@@ -8,6 +8,8 @@
   - [Debian](#debian-package)
   - [openSUSE](#openSUSE-package)
   - [CentOS](#CentOS-package)
+  - [Arch](#arch-package)
+  - [Alpine](#alpine-package)
 - [Docker images](#docker-images)
   - [Copying bpftrace binary docker](#copying-bpftrace-binary-from-docker)
   - [Kernel headers install](#kernel-headers-install)
@@ -103,6 +105,27 @@ Is available and tracked [here](https://software.opensuse.org/package/bpftrace).
 A build maintained by @fbs can be found
 [here](https://github.com/fbs/el7-bpf-specs/blob/master/README.md#repository).
 
+## Arch package
+
+In Arch Linux, bpftrace is available in the official repositories.
+```
+sudo pacman -S bpftrace
+```
+
+## Alpine package
+
+bpftrace is available in Alpine's official `community` repository:
+
+```
+sudo apk add bpftrace
+```
+
+To install tools and documentation:
+
+```
+sudo apk add bpftrace-doc bpftrace-tools bpftrace-tools-doc
+```
+
 # Docker images
 
 Each push to master will result in a docker image being built and pushed to
@@ -170,7 +193,8 @@ docker pull quay.io/iovisor/bpftrace:master-vanilla_llvm_clang_glibc2.23
 To copy the binary out of bpftrace in the current directory:
 
 ```
-$ docker run -v $(pwd):/output quay.io/iovisor/bpftrace:master-vanilla_llvm_clang_glibc2.23 /bin/bash -c "cp /usr/bin/bpftrace /output"
+$ docker run -v $(pwd):/output quay.io/iovisor/bpftrace:master-vanilla_llvm_clang_glibc2.23 \
+  /bin/bash -c "cp /usr/bin/bpftrace /output"
 $ ./bpftrace -V
 v0.9.4
 ```
@@ -203,7 +227,8 @@ major_version="$(echo "${KERNEL_VERSION}" | awk -vFS=. '{ print $1 }')"
 apt-get install -y build-essential bc curl flex bison libelf-dev
 
 mkdir -p /usr/src/linux
-curl -sL "https://www.kernel.org/pub/linux/kernel/v${major_version}.x/linux-$kernel_version.tar.gz"     | tar --strip-components=1 -xzf - -C /usr/src/linux
+curl -sL "https://www.kernel.org/pub/linux/kernel/v${major_version}.x/linux-$kernel_version.tar.gz" \
+  | tar --strip-components=1 -xzf - -C /usr/src/linux
 cd /usr/src/linux
 zcat /proc/config.gz > .config
 make ARCH=x86 oldconfig
@@ -215,7 +240,13 @@ ln -sf /usr/src/linux /lib/modules/$(uname -r)/build
 
 # Building bpftrace
 
-bpftrace's build system will download `gtest` at build time. If you don't want that or don't want tests, you can use the `make bpftrace` target.
+## Vendored libraries
+The bpftrace tree include bcc and libbpf submodules. 
+Use `git submodule init && git submodule update --recursive` to initialize them (after having cloned the repo) or use `git clone --recurse-submodules https://github.com/iovisor/bpftrace` when first cloning the bpftrace repo.
+
+By default the build system will look for these libraries as built in the
+bpftrace tree. If you want to use the system ones, pass
+`-DUSE_SYSTEM_BPF_BCC=1` to your `cmake` invocation.
 
 ## Ubuntu
 
@@ -245,10 +276,29 @@ sudo apt-get install -y libbpfcc-dev
 
 ```
 sudo apt-get update
-sudo apt-get install -y bison cmake flex g++ git libelf-dev zlib1g-dev libfl-dev systemtap-sdt-dev binutils-dev
-sudo apt-get install -y llvm-7-dev llvm-7-runtime libclang-7-dev clang-7
-git clone https://github.com/iovisor/bpftrace
+sudo apt-get install -y \
+  bison \
+  cmake \
+  flex \
+  g++ \
+  git \
+  libelf-dev \
+  zlib1g-dev \
+  libfl-dev \
+  systemtap-sdt-dev \
+  binutils-dev \
+  libcereal-dev \
+  llvm-12-dev \
+  llvm-12-runtime \
+  libclang-12-dev \
+  clang-12 \
+  libpcap-dev \
+  libgtest-dev \
+  libgmock-dev \
+  asciidoctor
+git clone https://github.com/iovisor/bpftrace --recurse-submodules
 mkdir bpftrace/build; cd bpftrace/build;
+../build-libs.sh
 cmake -DCMAKE_BUILD_TYPE=Release ..
 make -j8
 sudo make install
@@ -263,10 +313,30 @@ argument to cmake, where the default is `-DCMAKE_INSTALL_PREFIX=/usr/local`.
 You'll want the newest kernel possible (see kernel requirements), eg, by using Fedora 28 or newer.
 
 ```
-sudo dnf install -y bison flex cmake make git gcc-c++ elfutils-libelf-devel zlib-devel llvm-devel clang-devel bcc-devel systemtap-sdt-devel binutils-devel
-git clone https://github.com/iovisor/bpftrace
+sudo dnf install -y bison \
+  flex \
+  cmake \
+  make \
+  git \
+  gcc-c++ \
+  elfutils-libelf-devel \
+  zlib-devel \
+  llvm-devel \
+  clang-devel \
+  bcc-devel \
+  systemtap-sdt-devel \
+  binutils-devel \
+  libbpf-devel \
+  libpcap-devel \
+  gtest-devel \
+  gmock-devel \
+  cereal-devel \
+  asciidoctor
+git clone https://github.com/iovisor/bpftrace --recurse-submodules
 cd bpftrace
-mkdir build; cd build; cmake -DCMAKE_BUILD_TYPE=Release ..
+mkdir build; cd build
+../build-libs.sh
+cmake -DCMAKE_BUILD_TYPE=Release ..
 make -j8
 sudo make install
 ```
@@ -314,6 +384,7 @@ cd $builddir
 git clone https://github.com/iovisor/bpftrace
 cd bpftrace
 mkdir build; cd build
+../build-libs.sh
 cmake3 ..
 make -j8
 make install
@@ -348,11 +419,19 @@ Use specific OS build sections listed earlier if available (Ubuntu, Docker).
 - CMake
 - Flex
 - Bison
-- LLVM & Clang 5.0+ development packages
-- BCC development package
+- LLVM & Clang 10.0+ development packages
 - LibElf
 - Binutils development package
+- Libcereal
 - Kernel requirements described earlier
+- Libpcap
+
+The bpftrace repository contains submodules for appropriate libbpf and bcc
+versions, which will be used unless `-DUSE_SYSTEM_BPF_BCC=1` is passed to `cmake`.
+
+If using `USE_SYSTEM_BPF_BCC`, the current required versions are:
+- BCC development package - v0.25.0
+- libbpf - v0.8.1
 
 ### Compilation
 
@@ -360,11 +439,22 @@ Use specific OS build sections listed earlier if available (Ubuntu, Docker).
 git clone https://github.com/iovisor/bpftrace
 mkdir -p bpftrace/build
 cd bpftrace/build
+../build-libs.sh
 cmake -DCMAKE_BUILD_TYPE=Release ../
 make
 ```
 
-By default bpftrace will be built as a dynamically linked executable. If a statically linked executable would be preferred and your system has the required libraries installed, the CMake option `-DSTATIC_LINKING:BOOL=ON` can be used. Building bpftrace using the alpine Docker image below will result in a statically linked executable, and additional flags allow for compiling and statically linking the dependencies of bpftrace, see [the embedded build docs](./docs/embedded_builds.md) for more about this type of build. A debug build of bpftrace can be set up with `cmake -DCMAKE_BUILD_TYPE=Debug ../`.
+If using system bcc and libbpf libraries, it would look like this:
+
+```
+git clone https://github.com/iovisor/bpftrace
+mkdir -p bpftrace/build
+cd bpftrace/build
+cmake -DUSE_SYSTEM_BPF_BCC=1 -DCMAKE_BUILD_TYPE=Release ../
+make
+```
+
+By default bpftrace will be built as a dynamically linked executable (except for vendored libraries, if used). If a statically linked executable would be preferred and your system has the required libraries installed, the CMake option `-DSTATIC_LINKING:BOOL=ON` can be used. Building bpftrace using the alpine Docker image below will result in a statically linked executable, and additional flags allow for compiling and statically linking the dependencies of bpftrace, see [the embedded build docs](./docs/embedded_builds.md) for more about this type of build. A debug build of bpftrace can be set up with `cmake -DCMAKE_BUILD_TYPE=Debug ../`.
 
 The latest version of Google Test will be downloaded on each build. To speed up builds and only download its source on the first run, use the CMake option `-DOFFLINE_BUILDS:BOOL=ON`.
 
@@ -412,3 +502,7 @@ $ sudo mokutil --disable-validation
 ```
 3. Use the `SysRQ+x` key combination to temporarily lift lockdown (until next
    boot)
+
+Note that you may encounter kernel lockdown error if you install bpftrace
+via `snap` incorrectly. Please refer to [Ubuntu](#ubuntu-packages) for more
+details regrading how to use `snap` to install `bpftrace`.

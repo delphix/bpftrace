@@ -9,18 +9,20 @@
 #include <utility>
 #include <vector>
 
-#include "ast.h"
+#include "ast/ast.h"
 #include "attached_probe.h"
 #include "bpffeature.h"
-#include "bpforc.h"
 #include "btf.h"
 #include "child.h"
+#include "dwarf_parser.h"
 #include "map.h"
 #include "mapmanager.h"
 #include "output.h"
+#include "pcap_writer.h"
 #include "printf.h"
 #include "probe_matcher.h"
 #include "procmon.h"
+#include "required_resources.h"
 #include "struct.h"
 #include "types.h"
 #include "utils.h"
@@ -41,6 +43,7 @@ enum class DebugLevel;
 extern DebugLevel bt_debug;
 extern bool bt_quiet;
 extern bool bt_verbose;
+extern bool bt_verbose2;
 
 enum class DebugLevel
 {
@@ -83,17 +86,14 @@ private:
   std::string msg_;
 };
 
-struct HelperErrorInfo
-{
-  int func_id;
-  location loc;
-};
+using BpfBytecode = std::unordered_map<std::string, std::vector<uint8_t>>;
 
 class BPFtrace
 {
 public:
   BPFtrace(std::unique_ptr<Output> o = std::make_unique<TextOutput>(std::cout))
-      : out_(std::move(o)),
+      : traceable_funcs_(get_traceable_funcs()),
+        out_(std::move(o)),
         feature_(std::make_unique<BPFfeature>()),
         probe_matcher_(std::make_unique<ProbeMatcher>(this)),
         ncpus_(get_possible_cpus().size())
@@ -105,10 +105,12 @@ public:
                                      const ast::AttachPoint &ap,
                                      const ast::Probe &probe);
   int num_probes() const;
-  int run(std::unique_ptr<BpfOrc> bpforc);
-  std::vector<std::unique_ptr<AttachedProbe>> attach_probe(Probe &probe,
-                                                           BpfOrc &bpforc);
-  int run_iter(std::unique_ptr<BpfOrc> bpforc);
+  int prerun() const;
+  int run(BpfBytecode bytecode);
+  std::vector<std::unique_ptr<AttachedProbe>> attach_probe(
+      Probe &probe,
+      BpfBytecode &bytecode);
+  int run_iter();
   int print_maps();
   int clear_map(IMap &map);
   int zero_map(IMap &map);
@@ -125,11 +127,8 @@ public:
                             struct symbol *sym,
                             const std::string &path) const;
   std::string resolve_mac_address(const uint8_t *mac_addr) const;
-  std::string map_value_to_str(const SizedType &stype,
-                               std::vector<uint8_t> value,
-                               bool is_per_cpu,
-                               uint32_t div,
-                               const Output &output);
+  std::string resolve_cgroup_path(uint64_t cgroup_path_id,
+                                  uint64_t cgroup_id) const;
   virtual std::string extract_func_symbols_from_path(const std::string &path) const;
   std::string resolve_probe(uint64_t probe_id) const;
   uint64_t resolve_cgroupid(const std::string &path) const;
@@ -140,31 +139,39 @@ public:
   void request_finalize();
   bool is_aslr_enabled(int pid);
   std::string get_string_literal(const ast::Expression *expr) const;
+  std::optional<long> get_int_literal(const ast::Expression *expr) const;
   std::optional<std::string> get_watchpoint_binary_path() const;
+  virtual bool is_traceable_func(const std::string &func_name) const;
+  std::unordered_set<std::string> get_func_modules(
+      const std::string &func_name) const;
+  int create_pcaps(void);
+  void close_pcaps(void);
+  bool write_pcaps(uint64_t id, uint64_t ns, uint8_t *pkt, unsigned int size);
 
-  std::vector<std::unique_ptr<AttachedProbe>> attached_probes_;
-  std::vector<Probe> watchpoint_probes_;
+  void parse_btf(const std::set<std::string> &modules);
+  bool has_btf_data() const;
+  Dwarf *get_dwarf(const std::string &filename);
+  Dwarf *get_dwarf(const ast::AttachPoint &attachpoint);
+
   std::string cmd_;
   bool finalize_ = false;
-  // Global variable checking if an exit signal was received
+  // Global variables checking if an exit/usr1 signal was received
   static volatile sig_atomic_t exitsig_recv;
+  static volatile sig_atomic_t sigusr1_recv;
 
+  RequiredResources resources;
   MapManager maps;
-  std::unique_ptr<BpfOrc> bpforc_;
-  std::map<std::string, Struct> structs_;
+  BpfBytecode bytecode_;
+  StructManager structs;
   std::map<std::string, std::string> macros_;
   std::map<std::string, uint64_t> enums_;
-  std::vector<std::tuple<std::string, std::vector<Field>>> printf_args_;
-  std::vector<std::tuple<std::string, std::vector<Field>>> system_args_;
-  std::vector<std::tuple<std::string, std::vector<Field>>> seq_printf_args_;
-  std::vector<std::string> join_args_;
-  std::vector<std::string> time_args_;
-  std::vector<std::string> strftime_args_;
-  std::vector<std::tuple<std::string, std::vector<Field>>> cat_args_;
-  std::vector<SizedType> non_map_print_args_;
-  std::unordered_map<int64_t, struct HelperErrorInfo> helper_error_info_;
+  std::map<libbpf::bpf_func_id, location> helper_use_loc_;
+  // mapping traceable functions to modules (or "vmlinux") that they appear in
+  FuncsModulesMap traceable_funcs_;
+  std::vector<std::unique_ptr<AttachedProbe>> attached_probes_;
 
-  std::vector<std::string> probe_ids_;
+  std::map<std::string, std::unique_ptr<PCAPwriter>> pcap_writers;
+
   unsigned int join_argnum_ = 16;
   unsigned int join_argsize_ = 1024;
   std::unique_ptr<Output> out_;
@@ -174,6 +181,7 @@ public:
   uint64_t mapmax_ = 4096;
   size_t cat_bytes_max_ = 10240;
   uint64_t max_probes_ = 512;
+  uint64_t max_programs_ = 512;
   uint64_t log_size_ = 1000000;
   uint64_t perf_rb_pages_ = 64;
   uint64_t max_type_res_iterations = 0;
@@ -194,28 +202,24 @@ public:
 
   std::unique_ptr<ProbeMatcher> probe_matcher_;
 
-  BTF btf_;
+  std::unique_ptr<BTF> btf_;
   std::unordered_set<std::string> btf_set_;
-  std::map<std::string, std::map<std::string, SizedType>> btf_ap_args_;
+  std::map<std::string, ProbeArgs> ap_args_;
   std::unique_ptr<ChildProcBase> child_;
   std::unique_ptr<ProcMonBase> procmon_;
   pid_t pid(void) const
   {
     return procmon_ ? procmon_->pid() : 0;
   }
+  int ncpus_;
+  int online_cpus_;
 
-  std::vector<std::tuple<int, int>> seq_printf_ids_;
-
-  std::vector<Probe> probes_;
-  std::vector<Probe> special_probes_;
 private:
   int run_special_probe(std::string name,
-                        BpfOrc &bpforc,
+                        BpfBytecode &bytecode,
                         void (*trigger)(void));
   void* ksyms_{nullptr};
   std::map<std::string, std::pair<int, void *>> exe_sym_; // exe -> (pid, cache)
-  int ncpus_;
-  int online_cpus_;
   std::vector<std::string> params_;
 
   std::vector<std::unique_ptr<void, void (*)(void *)>> open_perf_buffers_;
@@ -226,16 +230,15 @@ private:
       int pid,
       bool file_activation);
   int setup_perf_events();
-  void poll_perf_events(int epollfd, bool drain = false);
+  void poll_perf_events(bool drain = false);
   int print_map_hist(IMap &map, uint32_t top, uint32_t div);
   int print_map_stats(IMap &map, uint32_t top, uint32_t div);
-  template <typename T>
-  static T reduce_value(const std::vector<uint8_t> &value, int nvalues);
-  static int64_t min_value(const std::vector<uint8_t> &value, int nvalues);
-  static uint64_t max_value(const std::vector<uint8_t> &value, int nvalues);
   static uint64_t read_address_from_output(std::string output);
   std::vector<uint8_t> find_empty_key(IMap &map, size_t size) const;
   bool has_iter_ = false;
+  int epollfd_ = -1;
+
+  std::unordered_map<std::string, std::unique_ptr<Dwarf>> dwarves_;
 };
 
 } // namespace bpftrace

@@ -3,6 +3,7 @@
 #include "ast/attachpoint_parser.h"
 #include "driver.h"
 #include "log.h"
+#include "parser.tab.hh"
 
 extern void *yy_scan_string(const char *yy_str, yyscan_t yyscanner);
 extern int yylex_init(yyscan_t *scanner);
@@ -14,11 +15,6 @@ namespace bpftrace {
 Driver::Driver(BPFtrace &bpftrace, std::ostream &o)
     : bpftrace_(bpftrace), out_(o)
 {
-}
-
-Driver::~Driver()
-{
-  delete root_;
 }
 
 void Driver::source(std::string filename, std::string script)
@@ -35,10 +31,8 @@ int Driver::parse_str(std::string script)
 
 int Driver::parse()
 {
-  // Ensure we free memory allocated the previous parse if we parse
-  // more than once
-  delete root_;
-  root_ = nullptr;
+  // Reset previous state if we parse more than once
+  root.reset();
 
   // Reset source location info on every pass
   loc.initialize();
@@ -46,21 +40,24 @@ int Driver::parse()
   yyscan_t scanner;
   yylex_init(&scanner);
   Parser parser(*this, scanner);
+  if (debug_)
+  {
+    parser.set_debug_level(1);
+  }
   yy_scan_string(Log::get().get_source().c_str(), scanner);
   parser.parse();
   yylex_destroy(scanner);
 
   if (!failed_)
   {
-    ast::AttachPointParser ap_parser(root_, bpftrace_, out_, listing_);
+    ast::AttachPointParser ap_parser(root.get(), bpftrace_, out_, listing_);
     if (ap_parser.parse())
       failed_ = true;
   }
 
   if (failed_)
   {
-    delete root_;
-    root_ = nullptr;
+    root.reset();
   }
 
   // Keep track of errors thrown ourselves, since the result of
@@ -79,6 +76,35 @@ void Driver::error(const std::string &m)
 {
   LOG(ERROR, out_) << m;
   failed_ = true;
+}
+
+// Retrieves the list of kernel modules for all attached-to functions.
+// Currently modules are only important for k(ret)func probes.
+std::set<std::string> Driver::list_modules() const
+{
+  std::set<std::string> modules;
+  for (auto &probe : *root->probes)
+  {
+    for (auto &ap : *probe->attach_points)
+    {
+      auto probe_type = probetype(ap->provider);
+      if (probe_type == ProbeType::kfunc || probe_type == ProbeType::kretfunc)
+      {
+        if (ap->need_expansion)
+        {
+          for (auto &match : bpftrace_.probe_matcher_->get_matches_for_ap(*ap))
+          {
+            std::string mod = match;
+            auto match_modules = bpftrace_.get_func_modules(erase_prefix(mod));
+            modules.insert(match_modules.begin(), match_modules.end());
+          }
+        }
+        else
+          modules.insert(ap->target);
+      }
+    }
+  }
+  return modules;
 }
 
 } // namespace bpftrace

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "ast.h"
+#include "ast/ast.h"
 
 #include <set>
 #include <sstream>
@@ -8,11 +8,6 @@
 #include <linux/perf_event.h>
 
 namespace bpftrace {
-
-const std::string kprobe_path =
-    "/sys/kernel/debug/tracing/available_filter_functions";
-const std::string tp_avail_path = "/sys/kernel/debug/tracing/available_events";
-const std::string tp_path = "/sys/kernel/debug/tracing/events";
 
 struct ProbeListItem
 {
@@ -100,6 +95,8 @@ private:
 
   virtual std::unique_ptr<std::istream> get_symbols_from_file(
       const std::string &path) const;
+  virtual std::unique_ptr<std::istream> get_symbols_from_file_safe(
+      const std::string &path) const;
   virtual std::unique_ptr<std::istream> get_func_symbols_from_file(
       const std::string &path) const;
   virtual std::unique_ptr<std::istream> get_symbols_from_usdt(
@@ -107,6 +104,9 @@ private:
       const std::string &target) const;
   virtual std::unique_ptr<std::istream> get_symbols_from_list(
       const std::vector<ProbeListItem> &probes_list) const;
+
+  virtual std::unique_ptr<std::istream> adjust_kernel_modules(
+      std::istream &symbol_list) const;
 
   std::unique_ptr<std::istream> get_iter_symbols(void) const;
 
@@ -117,5 +117,6 @@ private:
       const std::set<std::string> &tracepoints);
 
   FuncParamLists get_iters_params(const std::set<std::string> &iters);
+  FuncParamLists get_uprobe_params(const std::set<std::string> &uprobes);
 };
 } // namespace bpftrace

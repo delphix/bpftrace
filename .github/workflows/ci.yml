@@ -9,6 +9,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
+      with:
+        submodules: recursive
     - name: Install clang-format
       run: sudo apt-get install clang-format
     - name: Download git-clang-format
@@ -23,79 +25,25 @@ jobs:
       run: git diff --exit-code
 
   build_test:
-    runs-on: ubuntu-18.04
+    runs-on: ubuntu-latest
     strategy:
       matrix:
         env:
-        - NAME: LLVM 6 Debug
-          TYPE: Debug
-          LLVM_VERSION: "6.0"
-          RUN_ALL_TESTS: 1
-          RUNTIME_TEST_DISABLE: probe.kprobe_offset_fail_size
-          BASE: bionic
-          VENDOR_GTEST: ON
-        - NAME: LLVM 6 Release
-          TYPE: Release
-          LLVM_VERSION: "6.0"
-          RUN_ALL_TESTS: 1
-          RUNTIME_TEST_DISABLE: probe.kprobe_offset_fail_size
-          BASE: bionic
-          VENDOR_GTEST: ON
-        - NAME: LLVM 7 Debug
-          TYPE: Debug
-          LLVM_VERSION: 7
-          RUN_ALL_TESTS: 1
-          RUNTIME_TEST_DISABLE: probe.kprobe_offset_fail_size
-          BASE: bionic
-          VENDOR_GTEST: ON
-        - NAME: LLVM 7 Release
-          TYPE: Release
-          LLVM_VERSION: 7
-          RUN_ALL_TESTS: 1
-          RUNTIME_TEST_DISABLE: probe.kprobe_offset_fail_size
-          BASE: bionic
-          VENDOR_GTEST: ON
-        - NAME: LLVM 8 Debug
-          TYPE: Debug
-          LLVM_VERSION: 8
-          RUN_ALL_TESTS: 1
-          RUNTIME_TEST_DISABLE: probe.kprobe_offset_fail_size
-          BASE: bionic
-          VENDOR_GTEST: ON
-        - NAME: LLVM 8 Release
-          TYPE: Release
-          LLVM_VERSION: 8
-          RUN_ALL_TESTS: 1
-          RUNTIME_TEST_DISABLE: probe.kprobe_offset_fail_size
-          BASE: bionic
-          VENDOR_GTEST: ON
-        - NAME: LLVM 9 Debug
-          TYPE: Debug
-          LLVM_VERSION: 9
-          RUN_ALL_TESTS: 1
-          RUNTIME_TEST_DISABLE: probe.kprobe_offset_fail_size
-          BASE: bionic
-          VENDOR_GTEST: ON
-        - NAME: LLVM 9 Release
-          TYPE: Release
-          LLVM_VERSION: 9
-          RUN_ALL_TESTS: 1
-          RUNTIME_TEST_DISABLE: probe.kprobe_offset_fail_size
-          BASE: bionic
-          VENDOR_GTEST: ON
         - NAME: LLVM 10 Debug
           TYPE: Debug
           LLVM_VERSION: 10
           RUN_ALL_TESTS: 1
-          RUNTIME_TEST_DISABLE: probe.kprobe_offset_fail_size
-          BASE: bionic
+          RUNTIME_TEST_DISABLE: probe.kprobe_offset_fail_size,usdt."usdt probes - file based semaphore activation multi process"
+          TOOLS_TEST_OLDVERSION: biosnoop.bt tcpdrop.bt
+          BASE: focal
           VENDOR_GTEST: ON
         - NAME: LLVM 10 Release
           TYPE: Release
           LLVM_VERSION: 10
           RUN_ALL_TESTS: 1
-          RUNTIME_TEST_DISABLE: probe.kprobe_offset_fail_size
-          BASE: bionic
+          RUNTIME_TEST_DISABLE: probe.kprobe_offset_fail_size,usdt."usdt probes - file based semaphore activation multi process"
+          TOOLS_TEST_OLDVERSION: biosnoop.bt tcpdrop.bt
+          BASE: focal
           VENDOR_GTEST: ON
         - NAME: LLVM 10 Clang Debug
           TYPE: Debug
@@ -103,32 +51,76 @@ jobs:
           CC: clang-10
           CXX: clang++-10
           RUN_ALL_TESTS: 1
-          RUNTIME_TEST_DISABLE: probe.kprobe_offset_fail_size
-          BASE: bionic
+          RUNTIME_TEST_DISABLE: probe.kprobe_offset_fail_size,usdt."usdt probes - file based semaphore activation multi process"
+          TOOLS_TEST_OLDVERSION: biosnoop.bt tcpdrop.bt
+          BASE: focal
           VENDOR_GTEST: ON
         - NAME: LLVM 11 Debug
           TYPE: Debug
           LLVM_VERSION: 11
           RUN_ALL_TESTS: 1
-          RUNTIME_TEST_DISABLE: probe.kprobe_offset_fail_size
-          BASE: bionic
+          RUNTIME_TEST_DISABLE: probe.kprobe_offset_fail_size,usdt."usdt probes - file based semaphore activation multi process"
+          TOOLS_TEST_OLDVERSION: biosnoop.bt tcpdrop.bt
+          BASE: focal
           VENDOR_GTEST: ON
         - NAME: LLVM 11 Release
           TYPE: Release
           LLVM_VERSION: 11
           RUN_ALL_TESTS: 1
-          RUNTIME_TEST_DISABLE: probe.kprobe_offset_fail_size
-          BASE: bionic
+          RUNTIME_TEST_DISABLE: probe.kprobe_offset_fail_size,usdt."usdt probes - file based semaphore activation multi process"
+          TOOLS_TEST_OLDVERSION: biosnoop.bt tcpdrop.bt
+          BASE: focal
           VENDOR_GTEST: ON
         - NAME: LLVM 12 Release
           TYPE: Release
           LLVM_VERSION: 12
           RUN_ALL_TESTS: 1
-          RUNTIME_TEST_DISABLE: probe.kprobe_offset_fail_size
-          BASE: bionic
+          RUNTIME_TEST_DISABLE: probe.kprobe_offset_fail_size,usdt."usdt probes - file based semaphore activation multi process"
+          TOOLS_TEST_OLDVERSION: biosnoop.bt tcpdrop.bt
+          BASE: focal
+          VENDOR_GTEST: ON
+        - NAME: LLVM 13 Release
+          TYPE: Release
+          LLVM_VERSION: 13
+          RUN_ALL_TESTS: 1
+          RUNTIME_TEST_DISABLE: probe.kprobe_offset_fail_size,usdt."usdt probes - file based semaphore activation multi process"
+          TOOLS_TEST_OLDVERSION: biosnoop.bt tcpdrop.bt
+          BASE: focal
+          VENDOR_GTEST: ON
+        - NAME: LLVM 14 Release
+          TYPE: Release
+          LLVM_VERSION: 14
+          RUN_ALL_TESTS: 1
+          RUNTIME_TEST_DISABLE: probe.kprobe_offset_fail_size,usdt."usdt probes - file based semaphore activation multi process"
+          TOOLS_TEST_OLDVERSION: biosnoop.bt tcpdrop.bt
+          BASE: focal
+          VENDOR_GTEST: ON
+        - NAME: LLVM 15 Release
+          TYPE: Release
+          LLVM_VERSION: 15
+          RUN_ALL_TESTS: 1
+          RUNTIME_TEST_DISABLE: probe.kprobe_offset_fail_size,usdt."usdt probes - file based semaphore activation multi process"
+          TOOLS_TEST_OLDVERSION: biosnoop.bt tcpdrop.bt
+          BASE: focal
+          VENDOR_GTEST: ON
+        - NAME: Memleak test (LLVM 11 Debug)
+          TYPE: Debug
+          LLVM_VERSION: 11
+          BASE: focal
+          RUN_MEMLEAK_TEST: 1
+          RUN_TESTS: 0
+          VENDOR_GTEST: ON
+        - NAME: Memleak test (LLVM 11 Release)
+          TYPE: Release
+          LLVM_VERSION: 11
+          BASE: focal
+          RUN_MEMLEAK_TEST: 1
+          RUN_TESTS: 0
           VENDOR_GTEST: ON
     steps:
     - uses: actions/checkout@v2
+      with:
+        submodules: recursive
     - name: Get date
       id: get-date
       run: echo "::set-output name=date::$(/bin/date -u "+%Y.week%g")"
@@ -160,6 +152,9 @@ jobs:
       if: steps.docker-cache.outputs.cache-hit == 'true'
       run: >
         docker load --input /tmp/docker-save/i.tar
+    - name: Load kernel modules
+      # nf_tables is necessary for testing kernel modules BTF support
+      run: sudo modprobe nf_tables
     - name: Build and test
       env: ${{matrix.env}}
       run: >
@@ -169,12 +164,17 @@ jobs:
         -v /sys/kernel/debug:/sys/kernel/debug:rw
         -v /lib/modules:/lib/modules:ro
         -v /usr/src:/usr/src:ro
+        -e RUN_TESTS=${RUN_TESTS}
         -e RUN_ALL_TESTS=${RUN_ALL_TESTS}
+        -e RUN_MEMLEAK_TEST="${RUN_MEMLEAK_TEST}"
         -e CMAKE_EXTRA_FLAGS="${CMAKE_EXTRA_FLAGS}"
         -e RUNTIME_TEST_DISABLE="${RUNTIME_TEST_DISABLE}"
         -e VENDOR_GTEST="${VENDOR_GTEST}"
         -e CC="${CC}"
         -e CXX="${CXX}"
+        -e GTEST_FILTER="${GTEST_FILTER:-*}"
+        -e TOOLS_TEST_DISABLE="$TOOLS_TEST_DISABLE"
+        -e TOOLS_TEST_OLDVERSION="$TOOLS_TEST_OLDVERSION"
         bpftrace-builder-$BASE-llvm-$LLVM_VERSION
         ${PWD}/build-$TYPE-$BASE
         $TYPE

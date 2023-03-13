@@ -1,6 +1,5 @@
 include(ExternalProject)
 include(ProcessorCount)
-include(embed_patches)
 
 # Workaround to remove dynamic libs from library dependencies
 function(unlink_transitive_dependency targets dep_to_remove)
@@ -101,7 +100,7 @@ function(fetch_patches patchName patchPath patchURL patchChecksum stripLevel)
     if(patchName MATCHES .*tar.*)
       execute_process(COMMAND tar -xpf ${patchPath}/${patchName} --strip-components=${stripLevel} -C ${patchPath})
     else()
-      message("Patch ${patchName} doesn't appear to a tar achive, assuming it is a plaintext patch")
+      message("Patch ${patchName} doesn't appear to a tar archive, assuming it is a plaintext patch")
     endif()
   endif()
 endfunction(fetch_patches patchName patchPatch patchURL patchChecksum)

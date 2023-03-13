@@ -2,6 +2,7 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <errno.h>
 #include <fcntl.h>
 #include <fstream>
 #include <glob.h>
@@ -14,12 +15,14 @@
 #include <string>
 #include <sys/auxv.h>
 #include <sys/stat.h>
+#include <system_error>
 #include <tuple>
 #include <unistd.h>
 
 #include "bpftrace.h"
 #include "log.h"
 #include "probe_matcher.h"
+#include "tracefs.h"
 #include "utils.h"
 #include <bcc/bcc_elf.h>
 #include <bcc/bcc_syms.h>
@@ -115,23 +118,63 @@ resolve_binary_path(const std::string &cmd, const char *env_paths, int pid);
 
 void StdioSilencer::silence()
 {
-  fflush(ofile);
-  int fd = fileno(ofile);
-  old_stdio_ = dup(fd);
-  int new_stdio_ = open("/dev/null", O_WRONLY);
-  dup2(new_stdio_, fd);
-  close(new_stdio_);
+  auto syserr = [](std::string msg) {
+    return std::system_error(errno, std::generic_category(), msg);
+  };
+
+  try
+  {
+    int fd = fileno(ofile);
+    if (fd < 0)
+      throw syserr("fileno()");
+
+    fflush(ofile);
+
+    if ((old_stdio_ = dup(fd)) < 0)
+      throw syserr("dup(fd)");
+
+    int new_stdio = -1;
+    if ((new_stdio = open("/dev/null", O_WRONLY)) < 0)
+      throw syserr("open(\"/dev/null\")");
+
+    if (dup2(new_stdio, fd) < 0)
+      throw syserr("dup2(new_stdio_, fd)");
+
+    close(new_stdio);
+  }
+  catch (const std::system_error &e)
+  {
+    if (errno == EMFILE)
+      LOG(FATAL) << e.what() << ": please raise NOFILE";
+    else
+      LOG(BUG) << e.what();
+  }
 }
 
 StdioSilencer::~StdioSilencer()
 {
-  if (old_stdio_ != -1)
+  if (old_stdio_ == -1)
+    return;
+
+  auto syserr = [](std::string msg) {
+    return std::system_error(errno, std::generic_category(), msg);
+  };
+
+  try
   {
-    fflush(ofile);
     int fd = fileno(ofile);
-    dup2(old_stdio_, fd);
+    if (fd < 0)
+      throw syserr("fileno()");
+
+    fflush(ofile);
+    if (dup2(old_stdio_, fd) < 0)
+      throw syserr("dup2(old_stdio_)");
     close(old_stdio_);
     old_stdio_ = -1;
+  }
+  catch (const std::system_error &e)
+  {
+    LOG(BUG) << e.what();
   }
 }
 
@@ -144,6 +187,26 @@ bool get_uint64_env_var(const std::string &str, uint64_t &dest)
     {
       LOG(ERROR) << "Env var '" << str
                  << "' did not contain a valid uint64_t, or was zero-valued.";
+      return false;
+    }
+  }
+  return true;
+}
+
+bool get_bool_env_var(const std::string &str, bool &dest, bool neg)
+{
+  if (const char *env_p = std::getenv(str.c_str()))
+  {
+    std::string s(env_p);
+    if (s == "1")
+      dest = !neg;
+    else if (s == "0")
+      dest = neg;
+    else
+    {
+      LOG(ERROR) << "Env var '" << str
+                 << "' did not contain a "
+                    "valid value (0 or 1).";
       return false;
     }
   }
@@ -222,6 +285,25 @@ bool wildcard_match(const std::string &str, std::vector<std::string> &tokens, bo
   return true;
 }
 
+/*
+ * Splits input string by '*' delimiter and return the individual parts.
+ * Sets start_wildcard and end_wildcard if input starts or ends with '*'.
+ */
+std::vector<std::string> get_wildcard_tokens(const std::string &input,
+                                             bool &start_wildcard,
+                                             bool &end_wildcard)
+{
+  if (input.empty())
+    return {};
+
+  start_wildcard = input[0] == '*';
+  end_wildcard = input[input.length() - 1] == '*';
+
+  std::vector<std::string> tokens = split_string(input, '*');
+  tokens.erase(std::remove(tokens.begin(), tokens.end(), ""), tokens.end());
+  return tokens;
+}
+
 std::vector<int> get_online_cpus()
 {
   return read_cpu_range("/sys/devices/system/cpu/online");
@@ -295,7 +377,130 @@ std::vector<std::string> get_kernel_cflags(
   if (archenv)
     cflags.push_back("-D__TARGET_ARCH_" + arch);
 
+  if (arch == "arm")
+  {
+    // Required by several header files in arch/arm/include
+    cflags.push_back("-D__LINUX_ARM_ARCH__=7");
+  }
+
   return cflags;
+}
+
+std::string get_cgroup_path_in_hierarchy(uint64_t cgroupid,
+                                         std::string base_path)
+{
+  static std::map<std::pair<uint64_t, std::string>, std::string> path_cache;
+  struct stat path_st;
+
+  auto cached_path = path_cache.find({ cgroupid, base_path });
+  if (cached_path != path_cache.end() &&
+      stat(cached_path->second.c_str(), &path_st) >= 0 &&
+      path_st.st_ino == cgroupid)
+    return cached_path->second;
+
+  // Check for root cgroup path separately, since recursive_directory_iterator
+  // does not iterate over base directory
+  if (stat(base_path.c_str(), &path_st) >= 0 && path_st.st_ino == cgroupid)
+  {
+    path_cache[{ cgroupid, base_path }] = "/";
+    return "/";
+  }
+
+  for (auto &path_iter :
+       std_filesystem::recursive_directory_iterator(base_path))
+  {
+    if (stat(path_iter.path().c_str(), &path_st) < 0)
+      return "";
+    if (path_st.st_ino == cgroupid)
+    {
+      // Base directory is not a part of cgroup path
+      path_cache[{ cgroupid, base_path }] = path_iter.path().string().substr(
+          base_path.length());
+      return path_cache[{ cgroupid, base_path }];
+    }
+  }
+
+  return "";
+}
+
+std::vector<std::pair<std::string, std::string>> get_cgroup_hierarchy_roots()
+{
+  // Get all cgroup mounts and their type (cgroup/cgroup2) from /proc/mounts
+  std::ifstream mounts_file("/proc/mounts");
+  std::vector<std::pair<std::string, std::string>> result;
+
+  const std::regex cgroup_mount_regex("(cgroup[2]?) (\\S*)[ ]?.*");
+  for (std::string line; std::getline(mounts_file, line);)
+  {
+    std::smatch match;
+    if (std::regex_match(line, match, cgroup_mount_regex))
+    {
+      result.push_back({ match[1].str(), match[2].str() });
+    }
+  }
+
+  mounts_file.close();
+  return result;
+}
+
+std::vector<std::pair<std::string, std::string>> get_cgroup_paths(
+    uint64_t cgroupid,
+    std::string filter)
+{
+  // TODO: Rewrite using std::views when C++20 support becomes common
+  auto roots = get_cgroup_hierarchy_roots();
+
+  // Replace cgroup version with cgroup mount point directory name for cgroupv1
+  // roots and "unified" for cgroupv2 roots
+  for (auto &root : roots)
+  {
+    if (root.first == "cgroup")
+    {
+      root = { std_filesystem::path(root.second).filename().string(),
+               root.second };
+    }
+    else if (root.first == "cgroup2")
+    {
+      root = { "unified", root.second };
+    }
+  }
+
+  // Filter roots
+  bool start_wildcard, end_wildcard;
+  auto tokens = get_wildcard_tokens(filter, start_wildcard, end_wildcard);
+  std::vector<std::pair<std::string, std::string>> filtered_roots;
+  std::copy_if(roots.begin(),
+               roots.end(),
+               std::back_inserter(filtered_roots),
+               [&tokens, &start_wildcard, &end_wildcard](auto &pair) {
+                 return wildcard_match(
+                     pair.first, tokens, start_wildcard, end_wildcard);
+               });
+
+  // Get cgroup path for each root
+  std::vector<std::pair<std::string, std::string>> result;
+  std::transform(filtered_roots.begin(),
+                 filtered_roots.end(),
+                 std::back_inserter(result),
+                 [&cgroupid](auto &pair) {
+                   return std::pair<std::string, std::string>{
+                     pair.first,
+                     get_cgroup_path_in_hierarchy(cgroupid, pair.second)
+                   };
+                 });
+
+  // Sort paths lexically by name (with the exception of unified, which always
+  // comes first)
+  std::sort(result.begin(), result.end(), [](auto &pair1, auto &pair2) {
+    if (pair1.first == "unified")
+      return true;
+    else if (pair2.first == "unified")
+      return false;
+    else
+      return pair1.first < pair2.first;
+  });
+
+  return result;
 }
 
 bool is_dir(const std::string& path)
@@ -409,7 +614,14 @@ std::tuple<std::string, std::string> get_kernel_dirs(
 
   const char *kpath_env = ::getenv("BPFTRACE_KERNEL_SOURCE");
   if (kpath_env)
-    return std::make_tuple(kpath_env, kpath_env);
+  {
+    const char *kpath_build_env = ::getenv("BPFTRACE_KERNEL_BUILD");
+    if (!kpath_build_env)
+    {
+      kpath_build_env = kpath_env;
+    }
+    return std::make_tuple(kpath_env, kpath_build_env);
+  }
 
   std::string kdir = std::string("/lib/modules/") + utsname.release;
   auto ksrc = kdir + "/source";
@@ -740,33 +952,42 @@ pid_t parse_pid(const std::string &str)
   }
 }
 
-std::string hex_format_buffer(const char *buf, size_t size)
+std::string hex_format_buffer(const char *buf,
+                              size_t size,
+                              bool keep_ascii,
+                              bool escape_hex)
 {
   // Allow enough space for every byte to be sanitized in the form "\x00"
   char s[size * 4 + 1];
 
   size_t offset = 0;
   for (size_t i = 0; i < size; i++)
-    if (buf[i] >= 32 && buf[i] <= 126)
+    if (keep_ascii && buf[i] >= 32 && buf[i] <= 126)
       offset += sprintf(s + offset, "%c", ((const uint8_t *)buf)[i]);
-    else
+    else if (escape_hex)
       offset += sprintf(s + offset, "\\x%02x", ((const uint8_t *)buf)[i]);
+    else
+      offset += sprintf(s + offset,
+                        i == size - 1 ? "%02x" : "%02x ",
+                        ((const uint8_t *)buf)[i]);
 
   s[offset] = '\0';
 
   return std::string(s);
 }
 
-std::unordered_set<std::string> get_traceable_funcs()
+FuncsModulesMap get_traceable_funcs()
 {
+#ifdef FUZZ
+  return {};
+#else
   // Try to get the list of functions from BPFTRACE_AVAILABLE_FUNCTIONS_TEST env
-  const char *path = std::getenv("BPFTRACE_AVAILABLE_FUNCTIONS_TEST");
+  const char *path_env = std::getenv("BPFTRACE_AVAILABLE_FUNCTIONS_TEST");
+  const std::string kprobe_path = path_env
+                                      ? path_env
+                                      : tracefs::available_filter_functions();
 
-  // Use kprobe list as default
-  if (!path)
-    path = kprobe_path.c_str();
-
-  std::ifstream available_funs(path);
+  std::ifstream available_funs(kprobe_path);
   if (available_funs.fail())
   {
     if (bt_debug != DebugLevel::kNone)
@@ -777,27 +998,17 @@ std::unordered_set<std::string> get_traceable_funcs()
     return {};
   }
 
-  std::unordered_set<std::string> result;
+  FuncsModulesMap result;
   std::string line;
   while (std::getline(available_funs, line))
-    result.insert(line);
+  {
+    auto func_mod = split_symbol_module(line);
+    if (func_mod.second.empty())
+      func_mod.second = "vmlinux";
+    result[func_mod.first].insert(func_mod.second);
+  }
   return result;
-}
-
-uint64_t parse_exponent(const char *str)
-{
-  char *e_offset;
-  auto base = strtoll(str, &e_offset, 10);
-
-  if (*e_offset != 'e')
-    return base;
-
-  auto exp = strtoll(e_offset + 1, nullptr, 10);
-  auto num = base * std::pow(10, exp);
-  uint64_t max = std::numeric_limits<uint64_t>::max();
-  if (num > (double)max)
-    throw std::runtime_error(std::string(str) + " is too big for uint64_t");
-  return num;
+#endif
 }
 
 /**
@@ -908,9 +1119,10 @@ uint32_t kernel_version(int attempt)
       return *a2;
     }
     default:
-      throw std::runtime_error("BUG: kernel_version(): Invalid attempt: " +
-                               std::to_string(attempt));
+      LOG(BUG) << "kernel_version(): Invalid attempt: "
+               << std::to_string(attempt);
   }
+  // lgtm[cpp/missing-return]
 }
 
 std::optional<std::string> abs_path(const std::string &rel_path)
@@ -935,6 +1147,89 @@ std::optional<std::string> abs_path(const std::string &rel_path)
   {
     return rel_path;
   }
+}
+
+int64_t min_value(const std::vector<uint8_t> &value, int nvalues)
+{
+  int64_t val, max = 0, retval;
+  for (int i = 0; i < nvalues; i++)
+  {
+    val = read_data<int64_t>(value.data() + i * sizeof(int64_t));
+    if (val > max)
+      max = val;
+  }
+
+  /*
+   * This is a hack really until the code generation for the min() function
+   * is sorted out. The way it is currently implemented doesn't allow >
+   * 32 bit quantities and also means we have to do gymnastics with the return
+   * value owing to the way it is stored (i.e., 0xffffffff - val).
+   */
+  if (max == 0) /* If we have applied the zero() function */
+    retval = max;
+  else if ((0xffffffff - max) <= 0) /* A negative 32 bit value */
+    retval = 0 - (max - 0xffffffff);
+  else
+    retval = 0xffffffff - max; /* A positive 32 bit value */
+
+  return retval;
+}
+
+uint64_t max_value(const std::vector<uint8_t> &value, int nvalues)
+{
+  uint64_t val, max = 0;
+  for (int i = 0; i < nvalues; i++)
+  {
+    val = read_data<uint64_t>(value.data() + i * sizeof(uint64_t));
+    if (val > max)
+      max = val;
+  }
+  return max;
+}
+
+bool symbol_has_module(const std::string &symbol)
+{
+  return !symbol.empty() && symbol[symbol.size() - 1] == ']';
+}
+
+std::string strip_symbol_module(const std::string &symbol)
+{
+  size_t idx = symbol.rfind(" [");
+  return idx != std::string::npos ? symbol.substr(0, idx) : symbol;
+}
+
+int get_kernel_ptr_width()
+{
+  // We can't assume that sizeof(void*) in bpftrace is the same as the kernel
+  // pointer size (bpftrace can be compiled as a 32-bit binary and run on a
+  // 64-bit kernel), so we guess based on the machine field of struct utsname.
+  // Note that the uname() syscall can return different values for compat mode
+  // processes (e.g. "armv8l" instead of "aarch64"; see COMPAT_UTS_MACHINE), so
+  // make sure this is taken into account.
+  struct utsname utsname;
+  if (uname(&utsname) != 0)
+    LOG(FATAL) << "uname failed: " << strerror(errno);
+
+  const char *machine = utsname.machine;
+  if (!strncmp(machine, "armv7", 5))
+    return 32;
+
+  return 64;
+}
+
+std::pair<std::string, std::string> split_symbol_module(
+    const std::string &symbol)
+{
+  if (!symbol_has_module(symbol))
+    return { symbol, "" };
+
+  size_t idx = symbol.rfind(" [");
+  if (idx == std::string::npos)
+    return { symbol, "" };
+
+  return { symbol.substr(0, idx),
+           symbol.substr(idx + strlen(" ["),
+                         symbol.length() - idx - strlen(" []")) };
 }
 
 } // namespace bpftrace

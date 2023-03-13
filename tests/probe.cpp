@@ -1,18 +1,22 @@
-#include "bpforc.h"
+
+#include "ast/passes/codegen_llvm.h"
+#include "ast/passes/field_analyser.h"
+#include "ast/passes/resource_analyser.h"
+#include "ast/passes/semantic_analyser.h"
+
 #include "bpftrace.h"
 #include "clang_parser.h"
-#include "codegen_llvm.h"
 #include "driver.h"
 #include "fake_map.h"
-#include "field_analyser.h"
 #include "mocks.h"
-#include "semantic_analyser.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 
 namespace bpftrace {
 namespace test {
 namespace probe {
+
+#include "btf_common.h"
 
 using bpftrace::ast::AttachPoint;
 using bpftrace::ast::AttachPointList;
@@ -22,23 +26,28 @@ void gen_bytecode(const std::string &input, std::stringstream &out)
 {
   auto bpftrace = get_mock_bpftrace();
   Driver driver(*bpftrace);
-  FakeMap::next_mapfd_ = 1;
 
   ASSERT_EQ(driver.parse_str(input), 0);
 
-  ast::FieldAnalyser fields(driver.root_, *bpftrace);
+  ast::FieldAnalyser fields(driver.root.get(), *bpftrace);
   EXPECT_EQ(fields.analyse(), 0);
 
   ClangParser clang;
-  clang.parse(driver.root_, *bpftrace);
+  clang.parse(driver.root.get(), *bpftrace);
 
   // Override to mockbpffeature.
   bpftrace->feature_ = std::make_unique<MockBPFfeature>(true);
-  ast::SemanticAnalyser semantics(driver.root_, *bpftrace);
+  ast::SemanticAnalyser semantics(driver.root.get(), *bpftrace);
   ASSERT_EQ(semantics.analyse(), 0);
-  ASSERT_EQ(semantics.create_maps(true), 0);
 
-  ast::CodegenLLVM codegen(driver.root_, *bpftrace);
+  ast::ResourceAnalyser resource_analyser(driver.root.get());
+  auto resources_optional = resource_analyser.analyse();
+  ASSERT_TRUE(resources_optional.has_value());
+  auto resources = resources_optional.value();
+  ASSERT_EQ(resources.create_maps(*bpftrace, true), 0);
+  bpftrace->resources = resources;
+
+  ast::CodegenLLVM codegen(driver.root.get(), *bpftrace);
   codegen.generate_ir();
   codegen.DumpIR(out);
 }
@@ -66,10 +75,6 @@ TEST(probe, short_name)
   compare_bytecode("interval:s:1 { 1 }", "i:s:1 { 1 }");
 }
 
-#ifdef HAVE_LIBBPF_BTF_DUMP
-
-#include "btf_common.h"
-
 class probe_btf : public test_btf
 {
 };
@@ -81,8 +86,6 @@ TEST_F(probe_btf, short_name)
   compare_bytecode("iter:task { 1 }", "it:task { 1 }");
   compare_bytecode("iter:task_file { 1 }", "it:task_file { 1 }");
 }
-
-#endif // HAVE_LIBBPF_BTF_DUMP
 
 } // namespace probe
 } // namespace test

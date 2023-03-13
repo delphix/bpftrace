@@ -1,27 +1,31 @@
+add_library(ast_defs ast.cpp)
+
 add_library(ast
-  ast.cpp
+  async_event_types.cpp
   attachpoint_parser.cpp
-  codegen_llvm.cpp
-  fake_map.cpp
-  field_analyser.cpp
+  elf_parser.cpp
+  int_parser.cpp
   irbuilderbpf.cpp
   pass_manager.cpp
-  printer.cpp
-  semantic_analyser.cpp
   signal.cpp
   visitors.cpp
+
+  passes/field_analyser.cpp
+  passes/portability_analyser.cpp
+  passes/printer.cpp
+  passes/resource_analyser.cpp
+  passes/semantic_analyser.cpp
+  passes/codegen_llvm.cpp
 )
 
-target_include_directories(ast PUBLIC ${CMAKE_SOURCE_DIR}/src)
-target_include_directories(ast PUBLIC ${CMAKE_SOURCE_DIR}/src/ast)
-target_include_directories(ast PUBLIC ${CMAKE_BINARY_DIR})
-target_link_libraries(ast arch)
+target_include_directories(ast_defs PUBLIC ${CMAKE_SOURCE_DIR}/src)
+target_include_directories(ast_defs PUBLIC ${CMAKE_SOURCE_DIR}/src/ast)
+target_include_directories(ast_defs PUBLIC ${CMAKE_BINARY_DIR})
+target_link_libraries(ast ast_defs arch parser)
 
-if (HAVE_BCC_KFUNC)
-  target_compile_definitions(ast PRIVATE HAVE_BCC_KFUNC)
-endif(HAVE_BCC_KFUNC)
+add_dependencies(ast_defs parser)
 
-add_dependencies(ast parser)
+target_compile_definitions(ast PRIVATE ${BPFTRACE_FLAGS})
 
 if (STATIC_LINKING)
   set(clang_libs
@@ -32,28 +36,40 @@ if (STATIC_LINKING)
       clangEdit
       clangFormat
       clangFrontend
+      clangIncludeFixerPlugin
       clangIndex
       clangLex
       clangParse
       clangRewrite
       clangSema
       clangSerialization
+      clangTidyPlugin
       clangToolingCore)
 
-  if(EMBED_CLANG)
-    list(APPEND clang_libs clangToolingInclusions)
-    if(EMBED_LIBCLANG_ONLY)
-      unlink_transitive_dependency("${CLANG_EXPORTED_TARGETS}" "LLVM")
-    endif()
-    target_link_libraries(ast ${CLANG_EMBEDDED_CMAKE_TARGETS})
-  else()
-    list(INSERT clang_libs 0 libclang.a)
-  endif()
+  set(llvm_lib_names
+      bpfcodegen
+      frontendopenmp
+      ipo
+      irreader
+      mcjit
+      option
+      orcjit
+      ${LLVM_TARGETS_TO_BUILD})
 
-  if(EMBED_LLVM)
-    target_link_libraries(ast ${LLVM_EMBEDDED_CMAKE_TARGETS})
+
+  if(EMBED_USE_LLVM)
+    target_link_libraries(ast "-Wl,--start-group" ${CLANG_EMBEDDED_CMAKE_TARGETS} ${LLVM_EMBEDDED_CMAKE_TARGETS} "-Wl,--end-group")
   else()
-    llvm_map_components_to_libnames(llvm_libs bpfcodegen ipo irreader mcjit option orcjit ${LLVM_TARGETS_TO_BUILD})
+    llvm_map_components_to_libnames(llvm_libs ${llvm_lib_names})
+
+    if(TARGET libclang_static)
+      target_link_libraries(ast libclang_static)
+    else()
+      # old LLVM versions don't export libclang_static in ClangTargets.cmake; fall back to
+      # libclang.a in that case
+      target_link_libraries(ast libclang.a)    
+    endif()
+
     target_link_libraries(ast ${clang_libs})
     target_link_libraries(ast ${llvm_libs})
   endif()
@@ -61,6 +77,7 @@ if (STATIC_LINKING)
   if(STATIC_LIBC)
     unlink_transitive_dependency("${CLANG_EXPORTED_TARGETS}" "LLVM")
   endif()
+
 else()
   find_library(found_LLVM LLVM HINTS ${LLVM_LIBRARY_DIRS})
   if(found_LLVM)

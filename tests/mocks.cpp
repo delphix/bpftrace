@@ -1,4 +1,5 @@
 #include "mocks.h"
+#include "tracefs.h"
 
 namespace bpftrace {
 namespace test {
@@ -10,9 +11,7 @@ using ::testing::StrictMock;
 
 void setup_mock_probe_matcher(MockProbeMatcher &matcher)
 {
-  ON_CALL(matcher,
-          get_symbols_from_file(
-              "/sys/kernel/debug/tracing/available_filter_functions"))
+  ON_CALL(matcher, get_symbols_from_file(tracefs::available_filter_functions()))
       .WillByDefault([](const std::string &) {
         std::string ksyms = "SyS_read\n"
                             "sys_read\n"
@@ -24,8 +23,7 @@ void setup_mock_probe_matcher(MockProbeMatcher &matcher)
         return myval;
       });
 
-  ON_CALL(matcher,
-          get_symbols_from_file("/sys/kernel/debug/tracing/available_events"))
+  ON_CALL(matcher, get_symbols_from_file(tracefs::available_events()))
       .WillByDefault([](const std::string &) {
         std::string tracepoints = "sched:sched_one\n"
                                   "sched:sched_two\n"
@@ -74,68 +72,47 @@ void setup_mock_probe_matcher(MockProbeMatcher &matcher)
 
 void setup_mock_bpftrace(MockBPFtrace &bpftrace)
 {
+  bpftrace.parse_btf({ "vmlinux" });
   // Fill in some default tracepoint struct definitions
-  bpftrace.structs_["struct _tracepoint_sched_sched_one"] = Struct{
-    .size = 8,
-    .fields = { { "common_field",
-                  Field{
-                      .type = CreateUInt64(),
-                      .offset = 8,
-                      .is_bitfield = false,
-                      .bitfield = {},
-                  } } },
-  };
-  bpftrace.structs_["struct _tracepoint_sched_sched_two"] = Struct{
-    .size = 8,
-    .fields = { { "common_field",
-                  Field{
-                      .type = CreateUInt64(),
-                      .offset = 16, // different offset than
-                                    // sched_one.common_field
-                      .is_bitfield = false,
-                      .bitfield = {},
-                  } } },
-  };
-  bpftrace.structs_["struct _tracepoint_sched_extra_sched_extra"] = Struct{
-    .size = 8,
-    .fields = { { "common_field",
-                  Field{
-                      .type = CreateUInt64(),
-                      .offset = 24, // different offset than
-                                    // sched_(one|two).common_field
-                      .is_bitfield = false,
-                      .bitfield = {},
-                  } } },
-  };
-  bpftrace.structs_["struct _tracepoint_tcp_some_tcp_tp"] = Struct{
-    .size = 16,
-    .fields = { { "saddr_v6",
-                  Field{
-                      .type = CreateArray(16, CreateUInt(8)),
-                      .offset = 8,
-                      .is_bitfield = false,
-                      .bitfield = {},
-                  } } },
-  };
+  bpftrace.structs.Add("struct _tracepoint_sched_sched_one", 8);
+  bpftrace.structs.Lookup("struct _tracepoint_sched_sched_one")
+      .lock()
+      ->AddField("common_field", CreateUInt64(), 8, false, {}, false);
+
+  bpftrace.structs.Add("struct _tracepoint_sched_sched_two", 8);
+  bpftrace.structs.Lookup("struct _tracepoint_sched_sched_two")
+      .lock()
+      ->AddField("common_field",
+                 CreateUInt64(),
+                 16, // different offset than
+                     // sched_one.common_field
+                 false,
+                 {},
+                 false);
+  bpftrace.structs.Add("struct _tracepoint_sched_extra_sched_extra", 8);
+  bpftrace.structs.Lookup("struct _tracepoint_sched_extra_sched_extra")
+      .lock()
+      ->AddField("common_field",
+                 CreateUInt64(),
+                 24, // different offset than
+                     // sched_(one|two).common_field
+                 false,
+                 {},
+                 false);
+  bpftrace.structs.Add("struct _tracepoint_tcp_some_tcp_tp", 16);
+  bpftrace.structs.Lookup("struct _tracepoint_tcp_some_tcp_tp")
+      .lock()
+      ->AddField(
+          "saddr_v6", CreateArray(16, CreateUInt(8)), 8, false, {}, false);
 
   auto ptr_type = CreatePointer(CreateInt8());
-  bpftrace.structs_["struct _tracepoint_file_filename"] = Struct{
-    .size = 8,
-    .fields = { { "common_field",
-                  Field{
-                      .type = CreateUInt64(),
-                      .offset = 0,
-                      .is_bitfield = false,
-                      .bitfield = {},
-                  } },
-                { "filename",
-                  Field{
-                      .type = ptr_type,
-                      .offset = 8,
-                      .is_bitfield = false,
-                      .bitfield = {},
-                  } } },
-  };
+  bpftrace.structs.Add("struct _tracepoint_file_filename", 8);
+  bpftrace.structs.Lookup("struct _tracepoint_file_filename")
+      .lock()
+      ->AddField("common_field", CreateUInt64(), 0, false, {}, false);
+  bpftrace.structs.Lookup("struct _tracepoint_file_filename")
+      .lock()
+      ->AddField("filename", ptr_type, 8, false, {}, false);
 }
 
 std::unique_ptr<MockBPFtrace> get_mock_bpftrace()

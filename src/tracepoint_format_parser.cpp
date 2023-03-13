@@ -3,10 +3,11 @@
 #include <glob.h>
 #include <iostream>
 
-#include "ast.h"
+#include "ast/ast.h"
 #include "bpftrace.h"
 #include "log.h"
 #include "struct.h"
+#include "tracefs.h"
 #include "tracepoint_format_parser.h"
 
 namespace bpftrace {
@@ -17,17 +18,16 @@ bool TracepointFormatParser::parse(ast::Program *program, BPFtrace &bpftrace)
 {
   std::vector<ast::Probe*> probes_with_tracepoint;
   for (ast::Probe *probe : *program->probes)
-    for (ast::AttachPoint *ap : *probe->attach_points)
-      if (ap->provider == "tracepoint") {
-        probes_with_tracepoint.push_back(probe);
-        continue;
-      }
+  {
+    if (probe->has_ap_of_probetype(ProbeType::tracepoint))
+      probes_with_tracepoint.push_back(probe);
+  }
 
   if (probes_with_tracepoint.empty())
     return true;
 
   ast::TracepointArgsVisitor n{};
-  if (!bpftrace.btf_.has_data())
+  if (!bpftrace.has_btf_data())
     program->c_definitions += "#include <linux/types.h>\n";
   for (ast::Probe *probe : probes_with_tracepoint)
   {
@@ -39,7 +39,8 @@ bool TracepointFormatParser::parse(ast::Program *program, BPFtrace &bpftrace)
       {
         std::string &category = ap->target;
         std::string &event_name = ap->func;
-        std::string format_file_path = "/sys/kernel/debug/tracing/events/" + category + "/" + event_name + "/format";
+        std::string format_file_path = tracefs::event_format_file(category,
+                                                                  event_name);
         glob_t glob_result;
 
         if (has_wildcard(category) || has_wildcard(event_name))
@@ -79,7 +80,7 @@ bool TracepointFormatParser::parse(ast::Program *program, BPFtrace &bpftrace)
           for (size_t i = 0; i < glob_result.gl_pathc; ++i) {
             std::string filename(glob_result.gl_pathv[i]);
             std::ifstream format_file(filename);
-            std::string prefix("/sys/kernel/debug/tracing/events/");
+            const std::string prefix = tracefs::events() + "/";
             size_t pos = prefix.length();
             std::string real_category = filename.substr(
                 pos, filename.find('/', pos) - pos);
@@ -108,18 +109,30 @@ bool TracepointFormatParser::parse(ast::Program *program, BPFtrace &bpftrace)
             // Errno might get clobbered by LOG().
             int saved_errno = errno;
 
-            LOG(ERROR, ap->loc, std::cerr)
-                << "tracepoint not found: " << category << ":" << event_name;
+            // Do not fail if trying to attach to multiple tracepoints
+            // (at least one of them could succeed)
+            bool fail = probe->attach_points->size() == 1;
+            auto msg = "tracepoint not found: " + category + ":" + event_name;
+            if (fail)
+              LOG(ERROR, ap->loc, std::cerr) << msg;
+            else
+              LOG(WARNING, ap->loc, std::cerr) << msg;
+
             // helper message:
             if (category == "syscall")
               LOG(WARNING, ap->loc, std::cerr)
                   << "Did you mean syscalls:" << event_name << "?";
-            if (bt_verbose) {
+
+            if (fail && bt_verbose)
+            {
               // Having the location info isn't really useful here, so no
               // bpftrace.error
               LOG(ERROR) << strerror(saved_errno) << ": " << format_file_path;
             }
-            return false;
+            if (fail)
+              return false;
+            else
+              continue;
           }
 
           if (probe->tp_args_structs_level <= 0)
@@ -213,13 +226,23 @@ std::string TracepointFormatParser::parse_field(const std::string &line,
     field_type = R"_(__attribute__((annotate("tp_data_loc"))) int)_";
   }
 
+  auto arr_size_pos = field_name.find('[');
+  auto arr_size_end_pos = field_name.find(']');
   // Only adjust field types for non-arrays
-  if (field_name.find("[") == std::string::npos)
+  if (arr_size_pos == std::string::npos)
     field_type = adjust_integer_types(field_type, size);
 
   // If BTF is available, we try not to use any header files, including
   // <linux/types.h> and request all the types we need from BTF.
   bpftrace.btf_set_.emplace(field_type);
+
+  if (arr_size_pos != std::string::npos)
+  {
+    auto arr_size = field_name.substr(arr_size_pos + 1,
+                                      arr_size_end_pos - arr_size_pos - 1);
+    if (arr_size.find_first_not_of("0123456789") != std::string::npos)
+      bpftrace.btf_set_.emplace(arr_size);
+  }
 
   return extra + "  " + field_type + " " + field_name + ";\n";
 }

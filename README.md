@@ -1,12 +1,12 @@
 # bpftrace
 
 [![Build Status](https://github.com/iovisor/bpftrace/workflows/CI/badge.svg?branch=master)](https://github.com/iovisor/bpftrace/actions?query=workflow%3ACI+branch%3Amaster)
-[![IRC #bpftrace](https://img.shields.io/badge/IRC-bpftrace-blue.svg)](http://irc.lc/oftc/bpftrace/web@@@)
+[![IRC#bpftrace](https://img.shields.io/badge/IRC-bpftrace-blue.svg)](https://webchat.oftc.net/?channels=bpftrace)
 [![Total alerts](https://img.shields.io/lgtm/alerts/g/iovisor/bpftrace.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/iovisor/bpftrace/alerts/)
 
 bpftrace is a high-level tracing language for Linux enhanced Berkeley Packet Filter (eBPF) available in recent Linux kernels (4.x). bpftrace uses LLVM as a backend to compile scripts to BPF-bytecode and makes use of [BCC](https://github.com/iovisor/bcc) for interacting with the Linux BPF system, as well as existing Linux tracing capabilities: kernel dynamic tracing (kprobes), user-level dynamic tracing (uprobes), and tracepoints. The bpftrace language is inspired by awk and C, and predecessor tracers such as DTrace and SystemTap. bpftrace was created by [Alastair Robertson](https://github.com/ajor).
 
-To learn more about bpftrace, see the [Reference Guide](docs/reference_guide.md) and [One-Liner Tutorial](docs/tutorial_one_liners.md).
+To learn more about bpftrace, see the [Manual](man/adoc/bpftrace.adoc) the [Reference Guide](docs/reference_guide.md) and [One-Liner Tutorial](docs/tutorial_one_liners.md).
 
 ## One-Liners
 
@@ -74,6 +74,8 @@ bpftrace contains various tools, which also serve as examples of programming in 
 - tools/[runqlat.bt](tools/runqlat.bt): CPU scheduler run queue latency as a histogram. [Examples](tools/runqlat_example.txt).
 - tools/[runqlen.bt](tools/runqlen.bt): CPU scheduler run queue length as a histogram. [Examples](tools/runqlen_example.txt).
 - tools/[setuids.bt](tools/setuids.bt): Trace the setuid syscalls: privilege escalation. [Examples](tools/setuids_example.txt).
+- tools/[ssllatency.bt](tools/ssllatency.bt): Summarize SSL/TLS handshake latency as a histogram. [Examples](tools/ssllatency_example.txt)
+- tools/[sslsnoop.bt](tools/sslsnoop.bt): Trace SSL/TLS handshake, showing latency and return value. [Examples](tools/sslsnoop_example.txt)
 - tools/[statsnoop.bt](tools/statsnoop.bt): Trace stat() syscalls for general debugging. [Examples](tools/statsnoop_example.txt).
 - tools/[swapin.bt](tools/swapin.bt): Show swapins by process. [Examples](tools/swapin_example.txt).
 - tools/[syncsnoop.bt](tools/syncsnoop.bt): Trace sync() variety of syscalls. [Examples](tools/syncsnoop_example.txt).
@@ -85,6 +87,7 @@ bpftrace contains various tools, which also serve as examples of programming in 
 - tools/[tcpretrans.bt](tools/tcpretrans.bt): Trace TCP retransmits. [Examples](tools/tcpretrans_example.txt).
 - tools/[tcpsynbl.bt](tools/tcpsynbl.bt): Show TCP SYN backlog as a histogram. [Examples](tools/tcpsynbl_example.txt).
 - tools/[threadsnoop.bt](tools/threadsnoop.bt): List new thread creation. [Examples](tools/threadsnoop_example.txt).
+- tools/[undump.bt](tools/undump.bt): Capture UNIX domain socket packages. [Examples](tools/undump_example.txt).
 - tools/[vfscount.bt](tools/vfscount.bt): Count VFS calls. [Examples](tools/vfscount_example.txt).
 - tools/[vfsstat.bt](tools/vfsstat.bt): Count some VFS calls, with per-second summaries. [Examples](tools/vfsstat_example.txt).
 - tools/[writeback.bt](tools/writeback.bt): Trace file system writeback events with details. [Examples](tools/writeback_example.txt).
@@ -109,7 +112,27 @@ For additional help / discussion, please use our [discussions](https://github.co
 
 * bpftrace development IRC: #bpftrace at irc.oftc.net
 
+* Development guidelines: [developers.md](docs/developers.md)
+
 ## Development
+
+### Docker
+
+For build & test directly in docker
+
+```
+$ ./build.sh
+```
+
+For build in docker then test directly on host
+
+```
+$ ./build-static.sh
+$ ./build-static/src/bpftrace
+$ ./build-static/tests/bpftrace_test
+```
+
+### Vagrant
 
 For development and testing a [Vagrantfile](Vagrantfile) is available.
 

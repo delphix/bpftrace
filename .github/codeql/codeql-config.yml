@@ -1,0 +1,4 @@
+paths-ignore:
+  - bcc/
+  - libbpf/
+  - tests/runtime/engine/cmake_vars.py

@@ -9,10 +9,256 @@ and this project adheres to
 ## Unreleased
 
 #### Added
+#### Changed
+#### Deprecated
+#### Removed
+#### Fixed
+- Simplify and fix probe index assignment
+  - [#2482](https://github.com/iovisor/bpftrace/pull/2482)
+- Handle colon in positional param used in attachpoint
+  - [#2514](https://github.com/iovisor/bpftrace/pull/2514)
+- Handle BPF load errors for multi-attachpoints
+  - [#2521](https://github.com/iovisor/bpftrace/pull/2521)
+#### Docs
+#### Tools
+
+## [0.17.0] 2023-01-30
+
+#### Added
+- Support for 32-bit ARM systems
+  - [#2360](https://github.com/iovisor/bpftrace/pull/2360)
+- Support BTF for kernel modules
+  - [#2315](https://github.com/iovisor/bpftrace/pull/2315)
+- Add %rh option to print buffer as hex without \x
+  - [#2445](https://github.com/iovisor/bpftrace/pull/2445)
+- Add stdbool.h to built-in headers
+  - [#2380](https://github.com/iovisor/bpftrace/pull/2380)
+#### Changed
+- Raise minimum versions for libbpf and bcc and vendor them for local builds
+  - [#2369](https://github.com/iovisor/bpftrace/pull/2369)
+  - [#2370](https://github.com/iovisor/bpftrace/pull/2370)
+- Support comparison for integer arrays
+  - [#2387](https://github.com/iovisor/bpftrace/pull/2387)
+#### Deprecated
+#### Removed
+- Drop Ubuntu 19.10 lockdown detection
+  - [#2467](https://github.com/iovisor/bpftrace/pull/2467)
+#### Fixed
+- Fix pointer/register loads on 32-bit architectures
+  - [#2361](https://github.com/iovisor/bpftrace/pull/2361)
+- Fix kprobe multi-attachment
+  - [#2381](https://github.com/iovisor/bpftrace/pull/2381)
+- Fix attaching to multiple USDT probes using the same wildcard
+  - [#2456](https://github.com/iovisor/bpftrace/pull/2456)
+- Fix pointer arithmetics codegen
+  - [#2397](https://github.com/iovisor/bpftrace/pull/2397)
+- Fix segfault for invalid AssignVarStatement visit
+  - [#2423](https://github.com/iovisor/bpftrace/pull/2423)
+- Better handling of missing function trace support files
+  - [#2433](https://github.com/iovisor/bpftrace/pull/2433)
+- Fix unroll ID reset
+  - [#2439](https://github.com/iovisor/bpftrace/pull/2439)
+- Support profile and interval probes in probe matcher
+  - [#2443](https://github.com/iovisor/bpftrace/pull/2443)
+- Fix BTF detection macro in tools/old/mdflush.bt
+  - [#2444](https://github.com/iovisor/bpftrace/pull/2444)
+
+#### Docs
+#### Tools
+
+## [0.16.0] 2022-08-30
+
+#### Added
+- Add builtin: `numaid`
+  - [#2177](https://github.com/iovisor/bpftrace/pull/2177)
+- Add helper verifier error handling
+  - [#2279](https://github.com/iovisor/bpftrace/pull/2279)
+- Add builtin: `pton`
+  - [#2289](https://github.com/iovisor/bpftrace/pull/2289)
+- Add builtin: `debugf`
+  - [#2307](https://github.com/iovisor/bpftrace/pull/2307)
+- Add builtin: `strerror`
+  - [#2329](https://github.com/iovisor/bpftrace/pull/2329)
+
+#### Changed
+- Move from BCC to libbpf
+  - [#2265](https://github.com/iovisor/bpftrace/pull/2265)
+- Add non-uprobe based BEGIN/END implementation
+  - [#2264](https://github.com/iovisor/bpftrace/pull/2264)
+- Helper errors (-k, -kk options) are now emitted to text or json output
+  - [#2326](https://github.com/iovisor/bpftrace/pull/2326)
+- kprobe offset verification is now optional, without requiring --unsafe
+  - [#2332](https://github.com/iovisor/bpftrace/pull/2332)
+
+#### Deprecated
+#### Removed
+#### Fixed
+- Disallow different lhist bounds in a single map
+  - [#2204](https://github.com/iovisor/bpftrace/pull/2204)
+- Serialize empty histogram as an empty JSON array
+  - [#2250](https://github.com/iovisor/bpftrace/pull/2250)
+- Handle enum values in tracepoint format defs
+  - [#2236](https://github.com/iovisor/bpftrace/pull/2236)
+- Fix compound assignments with non-unary expr
+  - [#2291](https://github.com/iovisor/bpftrace/pull/2293)
+- Fix invalid LLVM IR in join builtin
+  - [#2296](https://github.com/iovisor/bpftrace/pull/2296)
+- Fix lexer buffer size check
+  - [#2313](https://github.com/iovisor/bpftrace/pull/2313)
+- Fix invalid LLVM IR as detected by tests
+  - [#2316](https://github.com/iovisor/bpftrace/pull/2316)
+- Fix builds against libbfd(binutils) >=2.39
+  - [#2328](https://github.com/iovisor/bpftrace/pull/2328)
+- Fix access to ctx
+  - [#2343](https://github.com/iovisor/bpftrace/pull/2343)
+
+#### Docs
+#### Tools
+- Add sslsnoop and ssllatency tools
+  - [#2117](https://github.com/iovisor/bpftrace/pull/2117)
+- Add undump tool.
+  - [#2225](https://github.com/iovisor/bpftrace/pull/2225)
+
+## [0.15.0] 2022-05-24
+
+The 0.15.0 release has basic support for LLVM 14 but not all features work yet, see [#2228](https://github.com/iovisor/bpftrace/issues/2228)
+
+#### Added
+- Add option for unconditional hex output
+  - [#2200](https://github.com/iovisor/bpftrace/pull/2200)
+- Add builtin function: `cgroup_path`
+  - [#2055](https://github.com/iovisor/bpftrace/pull/2055)
+- Limit number of generated BPF programs
+  - [#2141](https://github.com/iovisor/bpftrace/pull/2141)
+- Support the octal format specifier (`%o`) in `printf`
+  - [#2147](https://github.com/iovisor/bpftrace/pull/2147)
+- Improve include paths resolution
+  - [#2149](https://github.com/iovisor/bpftrace/pull/2149)
+- Automatic type resolution from DWARF
+  - [#2034](https://github.com/iovisor/bpftrace/pull/2034)
+- Add builtin function: `bswap`
+  - [#2166](https://github.com/iovisor/bpftrace/pull/2166)
+- Print all maps to stdout on `SIGUSR1`
+  - [#2203](https://github.com/iovisor/bpftrace/pull/2203)
+- Add builtin function: `skb_output`
+  - [#2223](https://github.com/iovisor/bpftrace/pull/2223)
+
+#### Changed
+- Use auto-resolution of library paths for tools
+  - [#2181](https://github.com/iovisor/bpftrace/pull/2181)
+- Improve handling empty attach points
+  - [#2179](https://github.com/iovisor/bpftrace/pull/2179)
+
+#### Fixed
+- Fix precedence of multiplicative operations
+  - [#2096](https://github.com/iovisor/bpftrace/pull/2096)
+- Fix probe matching for uprobes with absolute address
+  - [#2138](https://github.com/iovisor/bpftrace/pull/2138)
+- Fix tools to work on new kernel versions
+  - [#2136](https://github.com/iovisor/bpftrace/pull/2136)
+- Fix uprobe target resolution
+  - [#2180](https://github.com/iovisor/bpftrace/pull/2180)
+- Fix using wildcards in kfunc
+  - [#2208](https://github.com/iovisor/bpftrace/pull/2208)
+- Improve handling of format strings
+  - [#2164](https://github.com/iovisor/bpftrace/pull/2164)
+- Fix codegen for buf
+  - [#2217](https://github.com/iovisor/bpftrace/pull/2217)
+
+#### Tools
+- Update biosnoop.bt for kernel >=5.17
+  - [#2207](https://github.com/iovisor/bpftrace/pull/2207)
+
+
+## [0.14.1] 2021-12-29
+
+#### Fixed
+
+- Fix precedence of multiplicative operations
+  - [#2096](https://github.com/iovisor/bpftrace/pull/2096)
+
+## [0.14.0] 2021-10-22
+
+#### Added
+- Build time dependency on cereal
+  - [#1893](https://github.com/iovisor/bpftrace/pull/1893)
+- Build time dependency on asciidoctor for man page generation
+  - [#1927] (https://github.com/iovisor/bpftrace/pull/1927)
+- Support microsecond timestamps in stftime()
+  - [#1922](https://github.com/iovisor/bpftrace/pull/1922)
+- Add `_` as integer literal digit separator
+  - [#1900](https://github.com/iovisor/bpftrace/pull/1900)
+- Support for C style integer suffix in parser
+  - [#1938](https://github.com/iovisor/bpftrace/pull/1938)
+- Add C like pointer arithmetic
+  - [#1881](https://github.com/iovisor/bpftrace/pull/1881)
+- Automatic resolution of library paths for uprobes
+  - [#1971](https://github.com/iovisor/bpftrace/pull/1971)
+- Support positional parameters as integer literals
+  - [#1982](https://github.com/iovisor/bpftrace/pull/1982)
+- Access to uprobe arguments by name
+  - [#1994](https://github.com/iovisor/bpftrace/pull/1994)
+- Support variable strings size
+  - [#2044](https://github.com/iovisor/bpftrace/pull/2044)
+
+#### Changed
+- Prevent LLVM from unrolling loops
+  - [#1967](https://github.com/iovisor/bpftrace/pull/1967)
+
+#### Deprecated
+
+#### Removed
+
+#### Fixed
+- Fix memory leaks in struct types
+  - [#1885](https://github.com/iovisor/bpftrace/pull/1885)
+- Fix strncmp() when N is bigger than on-stack buffer
+  - [#1974](https://github.com/iovisor/bpftrace/pull/1974)
+- Fix strncmp() to check for NUL terminator
+  - [#1974](https://github.com/iovisor/bpftrace/pull/1974)
+- Fix unroll() with async calls
+  - [#1972](https://github.com/iovisor/bpftrace/pull/1972)
+- Fix string comparison codegen
+  - [#1979](https://github.com/iovisor/bpftrace/pull/1979)
+- Fix verifier error when accessing same tracepoint field twice
+  - [#2008](https://github.com/iovisor/bpftrace/pull/2008)
+- Fix reading too many bits for <64 bit kfunc args
+  - [#2014](https://github.com/iovisor/bpftrace/pull/2014)
+- Fix misaligned stack access for map keys
+  - [#2012](https://github.com/iovisor/bpftrace/pull/2012)
+
+#### Tools
+
+#### Documentation
+- Write new man page for `bpftrace(8)`
+  - [#1711](https://github.com/iovisor/bpftrace/pull/1711)
+
+## [0.13.1] 2021-12-29
+
+#### Fixed
+
+- Fix precedence of multiplicative operations
+  - [#2096](https://github.com/iovisor/bpftrace/pull/2096)
+
+## [0.13.0] 2021-07-01
+
+#### Added
+- Warn if attaching a kprobe to a non-traceable function
+  - [#1835](https://github.com/iovisor/bpftrace/pull/1835)
+- Support for `-k[k]` and `elapsed` in `iter` probes
+  - [#1882](https://github.com/iovisor/bpftrace/pull/1882)
 
 #### Changed
 - Disallow accessing common tracepoint fields
   - [#1810](https://github.com/iovisor/bpftrace/pull/1810)
+- Improve JSON printing (nested structs)
+  - [#1778](https://github.com/iovisor/bpftrace/pull/1778)
+- Return 1 from tracepoint probes
+  - [#1857](https://github.com/iovisor/bpftrace/pull/1857)
+- Preserve original order of struct types
+  - [#1850](https://github.com/iovisor/bpftrace/pull/1850)
+- Forbid casting from/to struct types
+  - [#1873](https://github.com/iovisor/bpftrace/pull/1873)
 
 #### Deprecated
 
@@ -25,10 +271,20 @@ and this project adheres to
   - [#1776](https://github.com/iovisor/bpftrace/pull/1776)
 - Reduce frequency of lost stack traces
   - [#1812](https://github.com/iovisor/bpftrace/pull/1812)
+- Make kaddr() report failure for unknown kernel symbols
+  - [#1836](https://github.com/iovisor/bpftrace/pull/1836)
+- Fix false non-traceable function warnings
+  - [#1866](https://github.com/iovisor/bpftrace/pull/1866)
+- Fix memory leak in clang parser
+  - [#1878](https://github.com/iovisor/bpftrace/pull/1878)
 
 #### Tools
 
 #### Documentation
+
+## [0.12.1] 2021-04-16
+
+Incorrect --info output bug fix release
 
 ## [0.12.0] 2021-04-01
 

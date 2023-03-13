@@ -1,5 +1,5 @@
 #
-# Copyright 2018 Delphix
+# Copyright 2018, 2023 Delphix
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -23,16 +23,23 @@ Build-Depends: bison,
                flex,
                g++,
                git,
-               google-mock,
                libelf-dev,
-               libgtest-dev,
                zlib1g-dev,
                libfl-dev,
                systemtap-sdt-dev,
-               llvm-7-dev,
-               llvm-7-runtime,
-               libclang-7-dev,
-               clang-7
+               binutils-dev,
+               libcereal-dev,
+               llvm-12-dev,
+               llvm-12-runtime,
+               libclang-12-dev,
+               clang-12,
+               libpcap-dev,
+               libgtest-dev,
+               libgmock-dev,
+               asciidoctor,
+               libdw1,
+               libdw-dev,
+               pkg-config
 Standards-Version: 4.1.2
 
 Package: bpftrace

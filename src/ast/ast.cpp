@@ -1,8 +1,9 @@
-#include "ast.h"
-#include "log.h"
-#include "parser.tab.hh"
-#include "visitors.h"
+#include "ast/ast.h"
+
 #include <iostream>
+
+#include "ast/visitors.h"
+#include "log.h"
 
 namespace bpftrace {
 namespace ast {
@@ -277,18 +278,17 @@ Variable::Variable(const std::string &ident, location loc)
   is_variable = true;
 }
 
-Binop::Binop(Expression *left, int op, Expression *right, location loc)
+Binop::Binop(Expression *left, Operator op, Expression *right, location loc)
     : Expression(loc), left(left), right(right), op(op)
 {
 }
 
-
-Unop::Unop(int op, Expression *expr, location loc)
+Unop::Unop(Operator op, Expression *expr, location loc)
     : Expression(loc), expr(expr), op(op), is_post_op(false)
 {
 }
 
-Unop::Unop(int op, Expression *expr, bool is_post_op, location loc)
+Unop::Unop(Operator op, Expression *expr, bool is_post_op, location loc)
     : Expression(loc), expr(expr), op(op), is_post_op(is_post_op)
 {
 }
@@ -408,12 +408,14 @@ std::string opstr(Jump &jump)
 {
   switch (jump.ident)
   {
-    case bpftrace::Parser::token::RETURN:
+    case JumpType::RETURN:
       return "return";
-    case bpftrace::Parser::token::BREAK:
+    case JumpType::BREAK:
       return "break";
-    case bpftrace::Parser::token::CONTINUE:
+    case JumpType::CONTINUE:
       return "continue";
+    default:
+      return {};
   }
 
   return {}; // unreached
@@ -422,24 +424,44 @@ std::string opstr(Jump &jump)
 std::string opstr(Binop &binop)
 {
   switch (binop.op) {
-    case bpftrace::Parser::token::EQ:    return "==";
-    case bpftrace::Parser::token::NE:    return "!=";
-    case bpftrace::Parser::token::LE:    return "<=";
-    case bpftrace::Parser::token::GE:    return ">=";
-    case bpftrace::Parser::token::LT:    return "<";
-    case bpftrace::Parser::token::GT:    return ">";
-    case bpftrace::Parser::token::LAND:  return "&&";
-    case bpftrace::Parser::token::LOR:   return "||";
-    case bpftrace::Parser::token::LEFT:  return "<<";
-    case bpftrace::Parser::token::RIGHT: return ">>";
-    case bpftrace::Parser::token::PLUS:  return "+";
-    case bpftrace::Parser::token::MINUS: return "-";
-    case bpftrace::Parser::token::MUL:   return "*";
-    case bpftrace::Parser::token::DIV:   return "/";
-    case bpftrace::Parser::token::MOD:   return "%";
-    case bpftrace::Parser::token::BAND:  return "&";
-    case bpftrace::Parser::token::BOR:   return "|";
-    case bpftrace::Parser::token::BXOR:  return "^";
+    case Operator::EQ:
+      return "==";
+    case Operator::NE:
+      return "!=";
+    case Operator::LE:
+      return "<=";
+    case Operator::GE:
+      return ">=";
+    case Operator::LT:
+      return "<";
+    case Operator::GT:
+      return ">";
+    case Operator::LAND:
+      return "&&";
+    case Operator::LOR:
+      return "||";
+    case Operator::LEFT:
+      return "<<";
+    case Operator::RIGHT:
+      return ">>";
+    case Operator::PLUS:
+      return "+";
+    case Operator::MINUS:
+      return "-";
+    case Operator::MUL:
+      return "*";
+    case Operator::DIV:
+      return "/";
+    case Operator::MOD:
+      return "%";
+    case Operator::BAND:
+      return "&";
+    case Operator::BOR:
+      return "|";
+    case Operator::BXOR:
+      return "^";
+    default:
+      return {};
   }
 
   return {}; // unreached
@@ -448,12 +470,20 @@ std::string opstr(Binop &binop)
 std::string opstr(Unop &unop)
 {
   switch (unop.op) {
-    case bpftrace::Parser::token::LNOT: return "!";
-    case bpftrace::Parser::token::BNOT: return "~";
-    case bpftrace::Parser::token::MINUS: return "-";
-    case bpftrace::Parser::token::MUL: return "dereference";
-    case bpftrace::Parser::token::INCREMENT: return "++";
-    case bpftrace::Parser::token::DECREMENT: return "--";
+    case Operator::LNOT:
+      return "!";
+    case Operator::BNOT:
+      return "~";
+    case Operator::MINUS:
+      return "-";
+    case Operator::MUL:
+      return "dereference";
+    case Operator::INCREMENT:
+      return "++";
+    case Operator::DECREMENT:
+      return "--";
+    default:
+      return {};
   }
 
   return {}; // unreached
@@ -489,15 +519,14 @@ std::string AttachPoint::name(const std::string &attach_point) const
   return name(target, attach_point);
 }
 
-int AttachPoint::index(const std::string &name) const
+int AttachPoint::index() const
 {
-  if (index_.count(name) == 0) return 0;
-  return index_.at(name);
+  return index_;
 }
 
-void AttachPoint::set_index(const std::string &name, int index)
+void AttachPoint::set_index(int index)
 {
-  index_[name] = index;
+  index_ = index;
 }
 
 std::string Probe::name() const
@@ -594,6 +623,18 @@ Probe::Probe(const Probe &other) : Node(other)
   need_expansion = other.need_expansion;
   tp_args_structs_level = other.tp_args_structs_level;
   index_ = other.index_;
+}
+
+bool Probe::has_ap_of_probetype(ProbeType probe_type)
+{
+  if (!attach_points)
+    return false;
+  for (auto ap : *attach_points)
+  {
+    if (probetype(ap->provider) == probe_type)
+      return true;
+  }
+  return false;
 }
 
 While::While(const While &other) : Statement(other)

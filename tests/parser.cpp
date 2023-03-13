@@ -1,9 +1,9 @@
 #include <limits.h>
 #include <sstream>
 
-#include "gtest/gtest.h"
+#include "ast/passes/printer.h"
 #include "driver.h"
-#include "printer.h"
+#include "gtest/gtest.h"
 
 namespace bpftrace {
 namespace test {
@@ -33,7 +33,7 @@ void test(BPFtrace &bpftrace,
 
   std::ostringstream out;
   Printer printer(out);
-  printer.print(driver.root_);
+  printer.print(driver.root.get());
   EXPECT_EQ(output, out.str());
 }
 
@@ -53,6 +53,7 @@ TEST(Parser, builtin_variables)
   test("kprobe:f { gid }", "Program\n kprobe:f\n  builtin: gid\n");
   test("kprobe:f { nsecs }", "Program\n kprobe:f\n  builtin: nsecs\n");
   test("kprobe:f { elapsed }", "Program\n kprobe:f\n  builtin: elapsed\n");
+  test("kprobe:f { numaid }", "Program\n kprobe:f\n  builtin: numaid\n");
   test("kprobe:f { cpu }", "Program\n kprobe:f\n  builtin: cpu\n");
   test("kprobe:f { curtask }", "Program\n kprobe:f\n  builtin: curtask\n");
   test("kprobe:f { rand }", "Program\n kprobe:f\n  builtin: rand\n");
@@ -380,6 +381,23 @@ TEST(semantic_analyser, compound_variable_assignments)
        "    int: 1\n");
 }
 
+TEST(Parser, compound_variable_assignment_binary_expr)
+{
+  test("kprobe:f { $a = 0; $a += 2 - 1 }",
+       "Program\n"
+       " kprobe:f\n"
+       "  =\n"
+       "   variable: $a\n"
+       "   int: 0\n"
+       "  =\n"
+       "   variable: $a\n"
+       "   +\n"
+       "    variable: $a\n"
+       "    -\n"
+       "     int: 2\n"
+       "     int: 1\n");
+}
+
 TEST(Parser, compound_map_assignments)
 {
   test("kprobe:f { @a <<= 1 }",
@@ -462,6 +480,20 @@ TEST(Parser, compound_map_assignments)
        "   ^\n"
        "    map: @a\n"
        "    int: 1\n");
+}
+
+TEST(Parser, compound_map_assignment_binary_expr)
+{
+  test("kprobe:f { @a += 2 - 1 }",
+       "Program\n"
+       " kprobe:f\n"
+       "  =\n"
+       "   map: @a\n"
+       "   +\n"
+       "    map: @a\n"
+       "    -\n"
+       "     int: 2\n"
+       "     int: 1\n");
 }
 
 TEST(Parser, integer_sizes)
@@ -990,6 +1022,7 @@ TEST(Parser, uprobe)
 
   test_parse_failure("uprobe:f { 1 }");
   test_parse_failure("uprobe { 1 }");
+  test_parse_failure("uprobe:/my/program*:0x1234 { 1 }");
 }
 
 TEST(Parser, usdt)
@@ -1094,6 +1127,16 @@ TEST(Parser, interval_probe)
       " interval:s:1\n"
       "  int: 1\n");
 
+  test("interval:s:1e3 { 1 }",
+       "Program\n"
+       " interval:s:1000\n"
+       "  int: 1\n");
+
+  test("interval:s:1_0_0_0 { 1 }",
+       "Program\n"
+       " interval:s:1000\n"
+       "  int: 1\n");
+
   test_parse_failure("interval:s:1b { 1 }");
 }
 
@@ -1104,6 +1147,16 @@ TEST(Parser, software_probe)
       " software:faults:1000\n"
       "  int: 1\n");
 
+  test("software:faults:1e3 { 1 }",
+       "Program\n"
+       " software:faults:1000\n"
+       "  int: 1\n");
+
+  test("software:faults:1_000 { 1 }",
+       "Program\n"
+       " software:faults:1000\n"
+       "  int: 1\n");
+
   test_parse_failure("software:faults:1b { 1 }");
 }
 
@@ -1113,6 +1166,16 @@ TEST(Parser, hardware_probe)
       "Program\n"
       " hardware:cache-references:1000000\n"
       "  int: 1\n");
+
+  test("hardware:cache-references:1e6 { 1 }",
+       "Program\n"
+       " hardware:cache-references:1000000\n"
+       "  int: 1\n");
+
+  test("hardware:cache-references:1_000_000 { 1 }",
+       "Program\n"
+       " hardware:cache-references:1000000\n"
+       "  int: 1\n");
 
   test_parse_failure("hardware:cache-references:1b { 1 }");
 }
@@ -1180,6 +1243,7 @@ TEST(Parser, wildcard_probetype)
        " uprobe:/bin/sh:*\n"
        " usdt:/bin/sh:*\n"
        "  int: 1\n");
+  test_parse_failure("iter:task* { }");
 }
 
 TEST(Parser, wildcard_attach_points)
@@ -1689,15 +1753,51 @@ TEST(Parser, empty_arguments)
   test_parse_failure(":w:0x10000000:8:rw { 1 }");
 }
 
-TEST(Parser, scientific_notation)
+TEST(Parser, int_notation)
 {
   test("k:f { print(1e6); }",
        "Program\n kprobe:f\n  call: print\n   int: 1000000\n");
   test("k:f { print(5e9); }",
        "Program\n kprobe:f\n  call: print\n   int: 5000000000\n");
+  test("k:f { print(1e1_0); }",
+       "Program\n kprobe:f\n  call: print\n   int: 10000000000\n");
+  test("k:f { print(1_000_000_000_0); }",
+       "Program\n kprobe:f\n  call: print\n   int: 10000000000\n");
+  test("k:f { print(1_0_0_0_00_0_000_0); }",
+       "Program\n kprobe:f\n  call: print\n   int: 10000000000\n");
+  test("k:f { print(123_456_789_0); }",
+       "Program\n kprobe:f\n  call: print\n   int: 1234567890\n");
+  test("k:f { print(0xe5); }",
+       "Program\n kprobe:f\n  call: print\n   int: 229\n");
+  test("k:f { print(0x5e5); }",
+       "Program\n kprobe:f\n  call: print\n   int: 1509\n");
+  test("k:f { print(0xeeee); }",
+       "Program\n kprobe:f\n  call: print\n   int: 61166\n");
+  test("k:f { print(0777); }",
+       "Program\n kprobe:f\n  call: print\n   int: 511\n");
+  test("k:f { print(0123); }",
+       "Program\n kprobe:f\n  call: print\n   int: 83\n");
+
+  test("k:f { print(1_000u); }",
+       "Program\n kprobe:f\n  call: print\n   int: 1000\n");
+  test("k:f { print(1_000ul); }",
+       "Program\n kprobe:f\n  call: print\n   int: 1000\n");
+  test("k:f { print(1_000ull); }",
+       "Program\n kprobe:f\n  call: print\n   int: 1000\n");
+  test("k:f { print(1_000l); }",
+       "Program\n kprobe:f\n  call: print\n   int: 1000\n");
+  test("k:f { print(1_000ll); }",
+       "Program\n kprobe:f\n  call: print\n   int: 1000\n");
 
   test_parse_failure("k:f { print(5e-9); }");
-  test_parse_failure("k:f { print(1e100); }");
+  test_parse_failure("k:f { print(1e17); }");
+  test_parse_failure("k:f { print(12e4); }");
+  test_parse_failure("k:f { print(1_1e100); }");
+  test_parse_failure("k:f { print(1e1_1_); }");
+  test_parse_failure("k:f { print(1_1_e100); }");
+  test_parse_failure("k:f { print(1_1_); }");
+  test_parse_failure("k:f { print(1ulll); }");
+  test_parse_failure("k:f { print(1lul); }");
 }
 
 TEST(Parser, while_loop)

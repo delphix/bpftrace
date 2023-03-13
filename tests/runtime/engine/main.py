@@ -1,23 +1,32 @@
 #!/usr/bin/python3
 
-import time
-from datetime import timedelta
 import argparse
+from datetime import timedelta
+from fnmatch import fnmatch
+import time
 
-from utils import Utils, ok, fail, warn
 from parser import TestParser, UnknownFieldError, RequiredFieldError
+from runner import Runner, ok, fail, warn
 
 
-def main(test_filter = None):
+def main(test_filter, run_aot_tests):
     if not test_filter:
         test_filter = "*"
 
     try:
-        test_suite = sorted(TestParser.read_all(test_filter))
+        test_suite = sorted(TestParser.read_all(run_aot_tests))
         test_suite = [ (n, sorted(t)) for n, t in test_suite ]
     except (UnknownFieldError, RequiredFieldError) as error:
         print(fail(str(error)))
         exit(1)
+
+    # Apply filter
+    filtered_suites = []
+    for fname, tests in test_suite:
+        filtered_tests = [t for t in tests if fnmatch("{}.{}".format(fname, t.name), test_filter)]
+        if len(filtered_tests) != 0:
+            filtered_suites.append((fname, filtered_tests))
+    test_suite = filtered_suites
 
     total_tests = 0
     for fname, suite_tests in test_suite:
@@ -33,10 +42,10 @@ def main(test_filter = None):
     for fname, tests in test_suite:
         print(ok("[----------]") + " %d tests from %s" % (len(tests), fname))
         for test in tests:
-            status = Utils.run_test(test)
-            if Utils.skipped(status):
+            status = Runner.run_test(test)
+            if Runner.skipped(status):
                 skipped_tests.append((fname, test, status))
-            if Utils.failed(status):
+            if Runner.failed(status):
                 failed_tests.append("%s.%s" % (fname, test.name))
         # TODO(mmarchini) elapsed time per test suite and per test (like gtest)
         print(ok("[----------]") + " %d tests from %s\n" % (len(tests), fname))
@@ -50,7 +59,7 @@ def main(test_filter = None):
     if skipped_tests:
         print(warn("[   SKIP   ]") + " %d tests, listed below:" % len(skipped_tests))
         for test_suite, test, status in skipped_tests:
-            print(warn("[   SKIP   ]") + " %s.%s (%s)" % (test_suite, test.name, Utils.skip_reason(test, status)))
+            print(warn("[   SKIP   ]") + " %s.%s (%s)" % (test_suite, test.name, Runner.skip_reason(test, status)))
 
     if failed_tests:
         print(fail("[  FAILED  ]") + " %d tests, listed below:" % len(failed_tests))
@@ -65,7 +74,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Runtime tests for bpftrace.')
     parser.add_argument('--filter', dest='tests_filter',
                         help='filter runtime tests')
+    parser.add_argument('--run-aot-tests', action='store_true',
+                        help='Run ahead-of-time compilation tests. Note this would roughly double test time.')
 
     args = parser.parse_args()
 
-    main(args.tests_filter)
+    main(args.tests_filter, args.run_aot_tests)

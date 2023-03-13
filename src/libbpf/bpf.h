@@ -8,6 +8,10 @@
 #define BPF_PSEUDO_MAP_VALUE 2
 #endif
 
+#ifndef BPF_F_KPROBE_MULTI_RETURN
+#define BPF_F_KPROBE_MULTI_RETURN (1U << 0)
+#endif
+
 // clang-format off
 enum bpf_map_type {
 	BPF_MAP_TYPE_UNSPEC,
@@ -38,6 +42,9 @@ enum bpf_map_type {
 	BPF_MAP_TYPE_DEVMAP_HASH,
 	BPF_MAP_TYPE_STRUCT_OPS,
 	BPF_MAP_TYPE_RINGBUF,
+	BPF_MAP_TYPE_INODE_STORAGE,
+	BPF_MAP_TYPE_TASK_STORAGE,
+	BPF_MAP_TYPE_BLOOM_FILTER,
 };
 
 enum bpf_prog_type {
@@ -71,6 +78,8 @@ enum bpf_prog_type {
 	BPF_PROG_TYPE_STRUCT_OPS,
 	BPF_PROG_TYPE_EXT,
 	BPF_PROG_TYPE_LSM,
+	BPF_PROG_TYPE_SK_LOOKUP,
+	BPF_PROG_TYPE_SYSCALL,
 };
 
 enum bpf_attach_type {
@@ -112,8 +121,16 @@ enum bpf_attach_type {
 	BPF_XDP_CPUMAP,
 	BPF_SK_LOOKUP,
 	BPF_XDP,
+	BPF_SK_SKB_VERDICT,
+	BPF_SK_REUSEPORT_SELECT,
+	BPF_SK_REUSEPORT_SELECT_OR_MIGRATE,
+	BPF_PERF_EVENT,
+	BPF_TRACE_KPROBE_MULTI,
 };
 
+#ifdef __BPF_FUNC_MAPPER
+#undef __BPF_FUNC_MAPPER
+#endif
 #define __BPF_FUNC_MAPPER(FN)		\
 	FN(unspec),			\
 	FN(map_lookup_elem),		\
