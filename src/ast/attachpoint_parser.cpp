@@ -172,13 +172,10 @@ AttachPointParser::State AttachPointParser::parse_attachpoint(AttachPoint &ap)
     return NEW_APS;
   }
 
-  ap_->provider = probetypeName(*probe_types.begin());
+  ap.provider = expand_probe_name(*probe_types.begin());
 
   switch (probetype(ap.provider))
   {
-    case ProbeType::invalid:
-      LOG(FATAL) << "Invalid probe type made it to attachpoint parser";
-      return INVALID;
     case ProbeType::special:
       return special_parser();
     case ProbeType::kprobe:
@@ -210,9 +207,12 @@ AttachPointParser::State AttachPointParser::parse_attachpoint(AttachPoint &ap)
       return kfunc_parser();
     case ProbeType::iter:
       return iter_parser();
+    case ProbeType::invalid:
+      errs_ << "Invalid probe type: " << ap.provider << std::endl;
+      return INVALID;
   }
 
-  return OK;
+  __builtin_unreachable();
 }
 
 AttachPointParser::State AttachPointParser::lex_attachpoint(

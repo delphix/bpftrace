@@ -50,7 +50,6 @@ enum class OutputBufferConfig {
 enum class TestMode
 {
   UNSET = 0,
-  SEMANTIC,
   CODEGEN,
 };
 
@@ -413,7 +412,7 @@ ast::PassManager CreateDynamicPM()
   return pm;
 }
 
-ast::PassManager CreateAotPM(std::string __attribute__((unused)))
+ast::PassManager CreateAotPM()
 {
   ast::PassManager pm;
   pm.AddPass(ast::CreateSemanticPass());
@@ -493,13 +492,11 @@ Args parse_args(int argc, char* argv[])
         DISABLE_LOG(WARNING);
         break;
       case Options::TEST: // --test
-        if (std::strcmp(optarg, "semantic") == 0)
-          args.test_mode = TestMode::SEMANTIC;
-        else if (std::strcmp(optarg, "codegen") == 0)
+        if (std::strcmp(optarg, "codegen") == 0)
           args.test_mode = TestMode::CODEGEN;
         else
         {
-          LOG(ERROR) << "USAGE: --test must be either 'semantic' or 'codegen'.";
+          LOG(ERROR) << "USAGE: --test can only be 'codegen'.";
           exit(1);
         }
         break;
@@ -853,7 +850,7 @@ int main(int argc, char* argv[])
   if (!is_root())
     return 1;
 
-  auto lockdown_state = lockdown::detect(bpftrace.feature_);
+  auto lockdown_state = lockdown::detect();
   if (lockdown_state == lockdown::LockdownState::Confidentiality)
   {
     lockdown::emit_warning(std::cerr);
@@ -877,7 +874,7 @@ int main(int argc, char* argv[])
       pm = CreateDynamicPM();
       break;
     case BuildMode::AHEAD_OF_TIME:
-      pm = CreateAotPM(args.aot);
+      pm = CreateAotPM();
       break;
   }
 
