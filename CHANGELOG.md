@@ -11,6 +11,8 @@ and this project adheres to
 #### Added
 - Add `iter:task_vma` iterators detection
   - [#2524](https://github.com/iovisor/bpftrace/pull/2524)
+- Support parsing bitfields from BTF/DWARF
+  - [#2505](https://github.com/iovisor/bpftrace/pull/2505)
 #### Changed
 #### Deprecated
 #### Removed
@@ -21,6 +23,8 @@ and this project adheres to
   - [#2514](https://github.com/iovisor/bpftrace/pull/2514)
 - Handle BPF load errors for multi-attachpoints
   - [#2521](https://github.com/iovisor/bpftrace/pull/2521)
+- Respect BPFTRACE_STRLEN environment variable for all strings
+  - [#2545](https://github.com/iovisor/bpftrace/pull/2545)
 #### Docs
 #### Tools
 
