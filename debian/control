@@ -39,7 +39,9 @@ Build-Depends: bison,
                asciidoctor,
                libdw1,
                libdw-dev,
-               pkg-config
+               pkg-config,
+	       dwarves,
+	       xxd
 Standards-Version: 4.1.2
 
 Package: bpftrace
