@@ -11,6 +11,10 @@ and this project adheres to
 #### Added
 - Add `iter:task_vma` iterators detection
   - [#2524](https://github.com/iovisor/bpftrace/pull/2524)
+- Support parsing bitfields from BTF/DWARF
+  - [#2505](https://github.com/iovisor/bpftrace/pull/2505)
+- Support printing entire structs
+  - [#2557](https://github.com/iovisor/bpftrace/pull/2557)
 #### Changed
 #### Deprecated
 #### Removed
@@ -21,6 +25,12 @@ and this project adheres to
   - [#2514](https://github.com/iovisor/bpftrace/pull/2514)
 - Handle BPF load errors for multi-attachpoints
   - [#2521](https://github.com/iovisor/bpftrace/pull/2521)
+- Respect BPFTRACE_STRLEN environment variable for all strings
+  - [#2545](https://github.com/iovisor/bpftrace/pull/2545)
+- Treat str() builtin's len parameter as int64
+  - [#2546](https://github.com/iovisor/bpftrace/pull/2546)
+- arm64: define the KASAN_SHADOW_SCALE_SHIFT macro
+  - [#2518](https://github.com/iovisor/bpftrace/pull/2518)
 #### Docs
 #### Tools
 
@@ -35,6 +45,9 @@ and this project adheres to
   - [#2445](https://github.com/iovisor/bpftrace/pull/2445)
 - Add stdbool.h to built-in headers
   - [#2380](https://github.com/iovisor/bpftrace/pull/2380)
+- Add `strcontains` builtin function, find a substring in a string
+  - [#2393](https://github.com/iovisor/bpftrace/pull/2393)
+
 #### Changed
 - Raise minimum versions for libbpf and bcc and vendor them for local builds
   - [#2369](https://github.com/iovisor/bpftrace/pull/2369)

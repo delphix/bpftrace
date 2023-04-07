@@ -2,11 +2,13 @@
 
 [![Build Status](https://github.com/iovisor/bpftrace/workflows/CI/badge.svg?branch=master)](https://github.com/iovisor/bpftrace/actions?query=workflow%3ACI+branch%3Amaster)
 [![IRC#bpftrace](https://img.shields.io/badge/IRC-bpftrace-blue.svg)](https://webchat.oftc.net/?channels=bpftrace)
-[![Total alerts](https://img.shields.io/lgtm/alerts/g/iovisor/bpftrace.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/iovisor/bpftrace/alerts/)
+[![CodeQL](https://github.com/iovisor/bpftrace/actions/workflows/codeql.yml/badge.svg)](https://github.com/iovisor/bpftrace/actions/workflows/codeql.yml)
 
 bpftrace is a high-level tracing language for Linux enhanced Berkeley Packet Filter (eBPF) available in recent Linux kernels (4.x). bpftrace uses LLVM as a backend to compile scripts to BPF-bytecode and makes use of [BCC](https://github.com/iovisor/bcc) for interacting with the Linux BPF system, as well as existing Linux tracing capabilities: kernel dynamic tracing (kprobes), user-level dynamic tracing (uprobes), and tracepoints. The bpftrace language is inspired by awk and C, and predecessor tracers such as DTrace and SystemTap. bpftrace was created by [Alastair Robertson](https://github.com/ajor).
 
 To learn more about bpftrace, see the [Manual](man/adoc/bpftrace.adoc) the [Reference Guide](docs/reference_guide.md) and [One-Liner Tutorial](docs/tutorial_one_liners.md).
+
+We are also holding regular [office hours](https://docs.google.com/document/d/1nt010RfL4s4gydhCPSJ-Z5mnFMFuD4NrcpVmUcyvu2E/edit?usp=sharing) open to the public.
 
 ## One-Liners
 

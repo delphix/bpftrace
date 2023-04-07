@@ -502,6 +502,7 @@ TEST(semantic_analyser, call_print_non_map)
   test(R"_(BEGIN { print((1, 2, "tuple")) })_", 0);
   test(R"_(BEGIN { $x = 1; print($x) })_", 0);
   test(R"_(BEGIN { $x = 1; $y = $x + 3; print($y) })_", 0);
+  test(R"_(BEGIN { print((int8 *)0) })_", 0);
 
   test(R"_(BEGIN { print(3, 5) })_", 1);
   test(R"_(BEGIN { print(3, 5, 2) })_", 1);
@@ -509,7 +510,6 @@ TEST(semantic_analyser, call_print_non_map)
   test(R"_(BEGIN { print(exit()) })_", 10);
   test(R"_(BEGIN { print(count()) })_", 1);
   test(R"_(BEGIN { print(ctx) })_", 1);
-  test(R"_(BEGIN { print((int8 *)0) })_", 10);
 }
 
 TEST(semantic_analyser, call_clear)
@@ -767,7 +767,7 @@ TEST(semantic_analyser, call_uaddr)
 
 TEST(semantic_analyser, call_cgroupid)
 {
-  // Handle args above STRING_SIZE
+  // Handle args above default max-string length (64)
   test("kprobe:f { cgroupid("
        //          1         2         3         4         5         6
        "\"123456789/123456789/123456789/123456789/123456789/123456789/12345\""

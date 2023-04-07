@@ -28,6 +28,7 @@
 #include <bcc/bcc_syms.h>
 #include <bcc/bcc_usdt.h>
 #include <elf.h>
+#include <zlib.h>
 
 #include <linux/version.h>
 
@@ -178,6 +179,55 @@ StdioSilencer::~StdioSilencer()
   }
 }
 
+KConfig::KConfig()
+{
+  std::vector<std::string> config_locs;
+
+  // Try to get the config from BPFTRACE_KCONFIG_TEST env
+  // If not set, use the set of default locations
+  const char *path_env = std::getenv("BPFTRACE_KCONFIG_TEST");
+  if (path_env)
+    config_locs = { std::string(path_env) };
+  else
+  {
+    struct utsname utsname;
+    if (uname(&utsname) < 0)
+      return;
+    config_locs = {
+      "/proc/config.gz",
+      "/boot/config-" + std::string(utsname.release),
+    };
+  }
+
+  for (auto &path : config_locs)
+  {
+    // gzopen/gzgets handle both uncompressed and compressed files
+    gzFile file = gzopen(path.c_str(), "r");
+    if (!file)
+      continue;
+
+    char buf[4096];
+    while (gzgets(file, buf, sizeof(buf)))
+    {
+      std::string option(buf);
+      if (option.find("CONFIG_") == 0)
+      {
+        // trim trailing '\n'
+        if (option[option.length() - 1] == '\n')
+          option = option.substr(0, option.length() - 1);
+
+        auto split = option.find("=");
+        if (split == std::string::npos)
+          continue;
+
+        config.emplace(option.substr(0, split), option.substr(split + 1));
+      }
+    }
+    gzclose(file);
+    break;
+  }
+}
+
 bool get_uint64_env_var(const std::string &str, uint64_t &dest)
 {
   if (const char* env_p = std::getenv(str.c_str()))
@@ -314,10 +364,10 @@ std::vector<int> get_possible_cpus()
   return read_cpu_range("/sys/devices/system/cpu/possible");
 }
 
-std::vector<std::string> get_kernel_cflags(
-    const char* uname_machine,
-    const std::string& ksrc,
-    const std::string& kobj)
+std::vector<std::string> get_kernel_cflags(const char *uname_machine,
+                                           const std::string &ksrc,
+                                           const std::string &kobj,
+                                           const KConfig &kconfig)
 {
   std::vector<std::string> cflags;
   std::string arch = uname_machine;
@@ -381,6 +431,20 @@ std::vector<std::string> get_kernel_cflags(
   {
     // Required by several header files in arch/arm/include
     cflags.push_back("-D__LINUX_ARM_ARCH__=7");
+  }
+
+  if (arch == "arm64")
+  {
+    // arm64 defines KASAN_SHADOW_SCALE_SHIFT in a Makefile instead of defining
+    // it in a header file. Since we're not executing make, we need to set the
+    // value manually (values are taken from arch/arm64/Makefile).
+    if (kconfig.has_value("CONFIG_KASAN", "y"))
+    {
+      if (kconfig.has_value("CONFIG_KASAN_SW_TAGS", "y"))
+        cflags.push_back("-DKASAN_SHADOW_SCALE_SHIFT=4");
+      else
+        cflags.push_back("-DKASAN_SHADOW_SCALE_SHIFT=3");
+    }
   }
 
   return cflags;

@@ -72,6 +72,16 @@ BTF::~BTF()
 
 void BTF::load_kernel_btfs(const std::set<std::string> &modules)
 {
+  vmlinux_btf = btf__load_vmlinux_btf();
+  if (libbpf_get_error(vmlinux_btf))
+  {
+    if (bt_debug != DebugLevel::kNone)
+      LOG(ERROR) << "BTF: failed to find BTF data for vmlinux, errno " << errno;
+    return;
+  }
+  btf_objects.push_back(
+      BTFObj{ .btf = vmlinux_btf, .id = 0, .name = "vmlinux" });
+
   // Note that we cannot parse BTFs from /sys/kernel/btf/ as we need BTF object
   // IDs, so the only way is to iterate through all loaded BTF objects
   __u32 id = 0;
@@ -116,19 +126,10 @@ void BTF::load_kernel_btfs(const std::set<std::string> &modules)
 
     if (mod_name == "vmlinux")
     {
-      btf_objects.push_back(BTFObj{ .btf = btf__load_from_kernel_by_id(id),
-                                    .id = id,
-                                    .name = "vmlinux" });
-      vmlinux_btf = btf_objects.back().btf;
+      btf_objects.front().id = id;
     }
-    else if (modules.empty() || modules.find(mod_name) != modules.end())
+    else if (modules.find(mod_name) != modules.end())
     {
-      if (!vmlinux_btf)
-      {
-        if (bt_debug != DebugLevel::kNone)
-          LOG(ERROR) << "BTF: failed to find BTF data for vmlinux";
-        return;
-      }
       btf_objects.push_back(
           BTFObj{ .btf = btf__load_from_kernel_by_id_split(id, vmlinux_btf),
                   .id = id,
@@ -773,6 +774,18 @@ void BTF::resolve_fields(SizedType &type)
   resolve_fields(type_id, record.get(), 0);
 }
 
+static std::optional<Bitfield> resolve_bitfield(
+    const struct btf_type *record_type,
+    __u32 member_idx)
+{
+  __u32 bitfield_width = btf_member_bitfield_size(record_type, member_idx);
+  if (bitfield_width <= 0)
+    return std::nullopt;
+
+  return Bitfield(btf_member_bit_offset(record_type, member_idx) % 8,
+                  bitfield_width);
+}
+
 void BTF::resolve_fields(const BTFId &type_id,
                          Struct *record,
                          __u32 start_offset)
@@ -795,13 +808,8 @@ void BTF::resolve_fields(const BTFId &type_id,
 
     std::string field_name = btf__name_by_offset(type_id.btf,
                                                  members[i].name_off);
-    if (members[i].offset % 8 != 0)
-    {
-      // bitfield - not supported yet
-      record->ClearFields();
-      return;
-    }
-    __u32 field_offset = start_offset + members[i].offset / 8;
+
+    __u32 field_offset = start_offset + btf_member_bit_offset(btf_type, i) / 8;
 
     if (btf_is_composite(field_type) &&
         (field_name.empty() || field_name == "(anon)"))
@@ -810,8 +818,11 @@ void BTF::resolve_fields(const BTFId &type_id,
       return;
     }
 
-    record->AddField(
-        field_name, get_stype(field_id), field_offset, false, {}, false);
+    record->AddField(field_name,
+                     get_stype(field_id),
+                     field_offset,
+                     resolve_bitfield(btf_type, i),
+                     false);
   }
 }
 

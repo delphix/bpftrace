@@ -16,7 +16,6 @@ namespace bpftrace {
 
 const int MAX_STACK_SIZE = 1024;
 const int DEFAULT_STACK_SIZE = 127;
-const int STRING_SIZE = 64;
 const int COMM_SIZE = 16;
 
 enum class Type
@@ -200,8 +199,7 @@ public:
 
   bool IsPrintableTy()
   {
-    return type != Type::none && type != Type::pointer &&
-           type != Type::stack_mode && !IsCtxAccess();
+    return type != Type::none && type != Type::stack_mode && !IsCtxAccess();
   }
 
   bool IsSigned(void) const;

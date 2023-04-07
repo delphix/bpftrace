@@ -130,6 +130,18 @@ struct DeprecatedName
 typedef std::unordered_map<std::string, std::unordered_set<std::string>>
     FuncsModulesMap;
 
+struct KConfig
+{
+  KConfig();
+  bool has_value(const std::string &name, const std::string &value) const
+  {
+    auto c = config.find(name);
+    return c != config.end() && c->second == value;
+  }
+
+  std::unordered_map<std::string, std::string> config;
+};
+
 static std::vector<DeprecatedName> DEPRECATED_LIST =
 {
 };
@@ -166,7 +178,8 @@ std::tuple<std::string, std::string> get_kernel_dirs(
     bool unpack_kheaders);
 std::vector<std::string> get_kernel_cflags(const char *uname_machine,
                                            const std::string &ksrc,
-                                           const std::string &kobj);
+                                           const std::string &kobj,
+                                           const KConfig &kconfig);
 std::string get_cgroup_path_in_hierarchy(uint64_t cgroupid,
                                          std::string base_path);
 std::vector<std::pair<std::string, std::string>> get_cgroup_hierarchy_roots();
