@@ -1421,7 +1421,43 @@ TEST(Parser, brackets)
       "   builtin: arg1\n");
 }
 
-TEST(Parser, cast)
+TEST(Parser, cast_simple_type)
+{
+  test("kprobe:sys_read { (int32)arg0; }",
+       "Program\n"
+       " kprobe:sys_read\n"
+       "  (int32)\n"
+       "   builtin: arg0\n");
+}
+
+TEST(Parser, cast_simple_type_pointer)
+{
+  test("kprobe:sys_read { (int32 *)arg0; }",
+       "Program\n"
+       " kprobe:sys_read\n"
+       "  (int32 *)\n"
+       "   builtin: arg0\n");
+}
+
+TEST(Parser, cast_sized_type)
+{
+  test("kprobe:sys_read { (str_t[1])arg0; }",
+       "Program\n"
+       " kprobe:sys_read\n"
+       "  (string[1])\n"
+       "   builtin: arg0\n");
+}
+
+TEST(Parser, cast_sized_type_pointer)
+{
+  test("kprobe:sys_read { (str_t[1] *)arg0; }",
+       "Program\n"
+       " kprobe:sys_read\n"
+       "  (string[1] *)\n"
+       "   builtin: arg0\n");
+}
+
+TEST(Parser, cast_struct)
 {
   test("kprobe:sys_read { (struct mytype)arg0; }",
       "Program\n"
@@ -1435,46 +1471,37 @@ TEST(Parser, cast)
       "   builtin: arg0\n");
 }
 
-TEST(Parser, cast_ptr)
+TEST(Parser, cast_struct_ptr)
 {
   test("kprobe:sys_read { (struct mytype*)arg0; }",
-      "Program\n"
-      " kprobe:sys_read\n"
-      "  (struct mytype*)\n"
-      "   builtin: arg0\n");
+       "Program\n"
+       " kprobe:sys_read\n"
+       "  (struct mytype *)\n"
+       "   builtin: arg0\n");
   test("kprobe:sys_read { (union mytype*)arg0; }",
-      "Program\n"
-      " kprobe:sys_read\n"
-      "  (union mytype*)\n"
-      "   builtin: arg0\n");
+       "Program\n"
+       " kprobe:sys_read\n"
+       "  (union mytype *)\n"
+       "   builtin: arg0\n");
 }
 
-TEST(Parser, cast_typedef)
+TEST(Parser, cast_multiple_pointer)
 {
-  test("kprobe:sys_read { (mytype)arg0; }",
-      "Program\n"
-      " kprobe:sys_read\n"
-      "  (mytype)\n"
-      "   builtin: arg0\n");
-}
-
-TEST(Parser, cast_ptr_typedef)
-{
-  test("kprobe:sys_read { (mytype*)arg0; }",
-      "Program\n"
-      " kprobe:sys_read\n"
-      "  (mytype*)\n"
-      "   builtin: arg0\n");
+  test("kprobe:sys_read { (int32 *****)arg0; }",
+       "Program\n"
+       " kprobe:sys_read\n"
+       "  (int32 * * * * *)\n"
+       "   builtin: arg0\n");
 }
 
 TEST(Parser, cast_or_expr1)
 {
-  test("kprobe:sys_read { (mytype)*arg0; }",
-      "Program\n"
-      " kprobe:sys_read\n"
-      "  (mytype)\n"
-      "   dereference\n"
-      "    builtin: arg0\n");
+  test("kprobe:sys_read { (struct mytype)*arg0; }",
+       "Program\n"
+       " kprobe:sys_read\n"
+       "  (struct mytype)\n"
+       "   dereference\n"
+       "    builtin: arg0\n");
 }
 
 TEST(Parser, cast_or_expr2)
@@ -1489,30 +1516,47 @@ TEST(Parser, cast_or_expr2)
 
 TEST(Parser, cast_precedence)
 {
-  test("kprobe:sys_read { (mytype)arg0.field; }",
-      "Program\n"
-      " kprobe:sys_read\n"
-      "  (mytype)\n"
-      "   .\n"
-      "    builtin: arg0\n"
-      "    field\n");
+  test("kprobe:sys_read { (struct mytype)arg0.field; }",
+       "Program\n"
+       " kprobe:sys_read\n"
+       "  (struct mytype)\n"
+       "   .\n"
+       "    builtin: arg0\n"
+       "    field\n");
 
-  test("kprobe:sys_read { (mytype*)arg0->field; }",
-      "Program\n"
-      " kprobe:sys_read\n"
-      "  (mytype*)\n"
-      "   .\n"
-      "    dereference\n"
-      "     builtin: arg0\n"
-      "    field\n");
+  test("kprobe:sys_read { (struct mytype*)arg0->field; }",
+       "Program\n"
+       " kprobe:sys_read\n"
+       "  (struct mytype *)\n"
+       "   .\n"
+       "    dereference\n"
+       "     builtin: arg0\n"
+       "    field\n");
 
-  test("kprobe:sys_read { (mytype)arg0+123; }",
-      "Program\n"
-      " kprobe:sys_read\n"
-      "  +\n"
-      "   (mytype)\n"
-      "    builtin: arg0\n"
-      "   int: 123\n");
+  test("kprobe:sys_read { (struct mytype)arg0+123; }",
+       "Program\n"
+       " kprobe:sys_read\n"
+       "  +\n"
+       "   (struct mytype)\n"
+       "    builtin: arg0\n"
+       "   int: 123\n");
+}
+
+TEST(Parser, sizeof_expression)
+{
+  test("kprobe:sys_read { sizeof(arg0); }",
+       "Program\n"
+       " kprobe:sys_read\n"
+       "  sizeof: \n"
+       "   builtin: arg0\n");
+}
+
+TEST(Parser, sizeof_type)
+{
+  test("kprobe:sys_read { sizeof(int32); }",
+       "Program\n"
+       " kprobe:sys_read\n"
+       "  sizeof: \n");
 }
 
 TEST(Parser, dereference_precedence)
