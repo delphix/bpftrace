@@ -71,7 +71,7 @@ oct_esc  [0-7]{1,3}
   <<EOF>>               yy_pop_state(yyscanner); driver.error(loc, "end of file during comment");
 }
 
-bpftrace|perf           { return Parser::make_STACK_MODE(yytext, loc); }
+bpftrace|perf|raw       { return Parser::make_STACK_MODE(yytext, loc); }
 {builtin}               { return Parser::make_BUILTIN(yytext, loc); }
 {call}                  { return Parser::make_CALL(yytext, loc); }
 {call_and_builtin}      { return Parser::make_CALL_BUILTIN(yytext, loc); }
@@ -147,6 +147,7 @@ bpftrace|perf           { return Parser::make_STACK_MODE(yytext, loc); }
 "continue"              { return Parser::make_CONTINUE(loc); }
 "break"                 { return Parser::make_BREAK(loc); }
 "sizeof"                { return Parser::make_SIZEOF(loc); }
+"offsetof"              { return Parser::make_OFFSETOF(loc); }
 
 {simple_type}           { return Parser::make_SIMPLE_TYPE(yytext, loc); }
 {sized_type}            { return Parser::make_SIZED_TYPE(yytext, loc); }
@@ -183,10 +184,10 @@ struct|union|enum       {
                             return Parser::make_STRUCT(loc);
                         }
 <STRUCT,BRACE>{
-  "*"|")"               {
+  "*"|")"|","           {
                           if (YY_START == STRUCT)
                           {
-                            // Finished parsing the typename of a cast
+                            // Finished parsing the typename of a cast or a call arg
                             // Put the cast type into a canonical form by trimming
                             // and then inserting a single space.
                             yy_pop_state(yyscanner);

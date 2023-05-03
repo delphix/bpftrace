@@ -9,7 +9,7 @@
 %define api.value.type variant
 %define parse.assert
 %define parse.trace
-%expect 3
+%expect 5
 
 %define parse.error verbose
 
@@ -103,6 +103,7 @@ void yyerror(bpftrace::Driver &driver, const char *s);
   CONTINUE   "continue"
   BREAK      "break"
   SIZEOF     "sizeof"
+  OFFSETOF   "offsetof"
 ;
 
 %token <std::string> BUILTIN "builtin"
@@ -130,6 +131,7 @@ void yyerror(bpftrace::Driver &driver, const char *s);
 %type <ast::AttachPointList *> attach_points
 %type <ast::Call *> call
 %type <ast::Sizeof *> sizeof_expr
+%type <ast::Offsetof *> offsetof_expr
 %type <ast::Expression *> and_expr addi_expr primary_expr cast_expr conditional_expr equality_expr expr logical_and_expr muli_expr
 %type <ast::Expression *> logical_or_expr map_or_var or_expr postfix_expr relational_expr shift_expr tuple_access_expr unary_expr xor_expr
 %type <ast::ExpressionList *> vargs
@@ -223,7 +225,7 @@ pointer_type:
                 type "*" { $$ = CreatePointer($1); }
                 ;
 struct_type:
-                STRUCT IDENT { $$ = CreateRecord($2, std::weak_ptr<Struct>()); }
+                STRUCT IDENT { $$ = ast::ident_to_record($2); }
                 ;
 
 probes:
@@ -418,6 +420,7 @@ postfix_expr:
         |       postfix_expr "[" expr "]" { $$ = new ast::ArrayAccess($1, $3, @2 + @4); }
         |       call                      { $$ = $1; }
         |       sizeof_expr               { $$ = $1; }
+        |       offsetof_expr             { $$ = $1; }
         |       map_or_var INCREMENT      { $$ = new ast::Unop(ast::Operator::INCREMENT, $1, true, @2); }
         |       map_or_var DECREMENT      { $$ = new ast::Unop(ast::Operator::DECREMENT, $1, true, @2); }
 /* errors */
@@ -521,11 +524,21 @@ addi_expr:
 cast_expr:
                 unary_expr                                  { $$ = $1; }
         |       LPAREN type RPAREN cast_expr                { $$ = new ast::Cast($2, $4, @1 + @3); }
+/* workaround for typedef types, see https://github.com/iovisor/bpftrace/pull/2560#issuecomment-1521783935 */
+        |       LPAREN IDENT RPAREN cast_expr               { $$ = new ast::Cast(ast::ident_to_record($2, 0), $4, @1 + @3); }
+        |       LPAREN IDENT "*" RPAREN cast_expr           { $$ = new ast::Cast(ast::ident_to_record($2, 1), $5, @1 + @4); }
+        |       LPAREN IDENT "*" "*" RPAREN cast_expr       { $$ = new ast::Cast(ast::ident_to_record($2, 2), $6, @1 + @5); }
                 ;
 
 sizeof_expr:
                 SIZEOF "(" type ")"                         { $$ = new ast::Sizeof($3, @$); }
         |       SIZEOF "(" expr ")"                         { $$ = new ast::Sizeof($3, @$); }
+                ;
+
+offsetof_expr:
+                OFFSETOF "(" struct_type "," ident ")"      { $$ = new ast::Offsetof($3, $5, @$); }
+/* For example: offsetof(*curtask, comm) */
+        |       OFFSETOF "(" expr "," ident ")"             { $$ = new ast::Offsetof($3, $5, @$); }
                 ;
 
 int:

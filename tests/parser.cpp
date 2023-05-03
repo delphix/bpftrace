@@ -1346,9 +1346,27 @@ TEST(Parser, wildcard_func)
        "  int: 1\n");
 
   std::string keywords[] = {
-    "arg0", "args", "curtask", "func", "gid" "rand", "uid",
-    "avg", "cat", "exit", "kaddr", "min", "printf", "usym",
-    "kstack", "ustack", "bpftrace", "perf", "uprobe", "kprobe",
+    "arg0",
+    "args",
+    "curtask",
+    "func",
+    "gid"
+    "rand",
+    "uid",
+    "avg",
+    "cat",
+    "exit",
+    "kaddr",
+    "min",
+    "printf",
+    "usym",
+    "kstack",
+    "ustack",
+    "bpftrace",
+    "perf",
+    "raw",
+    "uprobe",
+    "kprobe",
   };
   for(auto kw : keywords)
   {
@@ -1485,6 +1503,24 @@ TEST(Parser, cast_struct_ptr)
        "   builtin: arg0\n");
 }
 
+TEST(Parser, cast_typedef)
+{
+  test("kprobe:sys_read { (mytype)arg0; }",
+       "Program\n"
+       " kprobe:sys_read\n"
+       "  (mytype)\n"
+       "   builtin: arg0\n");
+}
+
+TEST(Parser, cast_ptr_typedef)
+{
+  test("kprobe:sys_read { (mytype*)arg0; }",
+       "Program\n"
+       " kprobe:sys_read\n"
+       "  (mytype *)\n"
+       "   builtin: arg0\n");
+}
+
 TEST(Parser, cast_multiple_pointer)
 {
   test("kprobe:sys_read { (int32 *****)arg0; }",
@@ -1557,6 +1593,33 @@ TEST(Parser, sizeof_type)
        "Program\n"
        " kprobe:sys_read\n"
        "  sizeof: \n");
+}
+
+TEST(Parser, offsetof_type)
+{
+  test("struct Foo { int x; } BEGIN { offsetof(struct Foo, x); }",
+       "struct Foo { int x; };\n"
+       "\n"
+       "Program\n"
+       " BEGIN\n"
+       "  offsetof: \n");
+}
+
+TEST(Parser, offsetof_expression)
+{
+  test("struct Foo { int x; }; "
+       "BEGIN { $foo = (struct Foo *)0; offsetof(*$foo, x); }",
+       "struct Foo { int x; };;\n"
+       "\n"
+       "Program\n"
+       " BEGIN\n"
+       "  =\n"
+       "   variable: $foo\n"
+       "   (struct Foo *)\n"
+       "    int: 0\n"
+       "  offsetof: \n"
+       "   dereference\n"
+       "    variable: $foo\n");
 }
 
 TEST(Parser, dereference_precedence)

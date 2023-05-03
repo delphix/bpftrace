@@ -227,6 +227,24 @@ private:
   Sizeof(const Sizeof &other);
 };
 
+class Offsetof : public Expression
+{
+public:
+  DEFINE_ACCEPT
+  DEFINE_LEAFCOPY(Offsetof)
+
+  Offsetof(SizedType record, std::string &field, location loc);
+  Offsetof(Expression *expr, std::string &field, location loc);
+  ~Offsetof();
+
+  SizedType record;
+  Expression *expr;
+  std::string field;
+
+private:
+  Offsetof(const Offsetof &other);
+};
+
 class Map : public Expression {
 public:
   DEFINE_ACCEPT
@@ -614,6 +632,8 @@ private:
 std::string opstr(Binop &binop);
 std::string opstr(Unop &unop);
 std::string opstr(Jump &jump);
+
+SizedType ident_to_record(const std::string &ident, int pointer_level = 0);
 
 #undef DEFINE_ACCEPT
 

@@ -105,7 +105,13 @@ void SemanticAnalyser::visit(StackMode &mode)
     mode.type.stack_type.mode = bpftrace::StackMode::bpftrace;
   } else if (mode.mode == "perf") {
     mode.type.stack_type.mode = bpftrace::StackMode::perf;
-  } else {
+  }
+  else if (mode.mode == "raw")
+  {
+    mode.type.stack_type.mode = bpftrace::StackMode::raw;
+  }
+  else
+  {
     mode.type = CreateNone();
     LOG(ERROR, mode.loc, err_) << "Unknown stack mode: '" + mode.mode + "'";
   }
@@ -1373,6 +1379,33 @@ void SemanticAnalyser::visit(Sizeof &szof)
     szof.argtype = szof.expr->type;
   }
   resolve_struct_type(szof.argtype, szof.loc);
+}
+
+void SemanticAnalyser::visit(Offsetof &ofof)
+{
+  ofof.type = CreateUInt64();
+  if (ofof.expr)
+  {
+    ofof.expr->accept(*this);
+    ofof.record = ofof.expr->type;
+  }
+  resolve_struct_type(ofof.record, ofof.loc);
+
+  if (!ofof.record.IsRecordTy())
+  {
+    LOG(ERROR, ofof.loc, err_)
+        << "offsetof() 1st argument is not of a record type.";
+  }
+  else if (!bpftrace_.structs.Has(ofof.record.GetName()))
+  {
+    LOG(ERROR, ofof.loc, err_) << "'" << ofof.record << "' does not exist.";
+  }
+  else if (!ofof.record.HasField(ofof.field))
+  {
+    LOG(ERROR, ofof.loc, err_) << "'" << ofof.record << "' "
+                               << "has no field named "
+                               << "'" << ofof.field << "'";
+  }
 }
 
 void SemanticAnalyser::check_stack_call(Call &call, bool kernel)

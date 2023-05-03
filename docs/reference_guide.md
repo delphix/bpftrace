@@ -2280,6 +2280,7 @@ Tracing block I/O sizes > 0 bytes
 - `kptr(void *p)` - Annotate as kernelspace pointer
 - `macaddr(char[6] addr)` - Convert MAC address data
 - `bswap(uint[8|16|32|64] n)` - Reverse byte order
+- `offsetof(struct, element)` - Offset of element in structure
 
 Some of these are asynchronous: the kernel queues the event, but some time later (milliseconds) it is
 processed in user-space. The asynchronous actions are: `printf()`, `time()`, and `join()`. Both `ksym()`
@@ -2692,7 +2693,7 @@ Attaching 1 probe...
 ]: 22186
 ```
 
-You can also choose a different output format. Available formats are `bpftrace` and `perf`:
+You can also choose a different output format. Available formats are `bpftrace`, `perf`, and `raw` (no symbolization):
 
 ```
 # bpftrace -e 'kprobe:do_mmap { @[kstack(perf)] = count(); }'
@@ -2704,6 +2705,20 @@ Attaching 1 probe...
 	ffffffffb3e334eb sys_mmap+27
 	ffffffffb3e03ae3 do_syscall_64+115
 	ffffffffb4800081 entry_SYSCALL_64_after_hwframe+61
+
+]: 22186
+```
+
+```
+# bpftrace -e 'kprobe:do_mmap { @[kstack(raw)] = count(); }'
+Attaching 1 probe...
+[...]
+@[
+	ffffffffb4019501
+	ffffffffb401700a
+	ffffffffb3e334eb
+	ffffffffb3e03ae3
+	ffffffffb4800081
 
 ]: 22186
 ```
@@ -2812,7 +2827,7 @@ Attaching 1 probe...
 ]: 27
 ```
 
-You can also choose a different output format. Available formats are `bpftrace` and `perf`:
+You can also choose a different output format. Available formats are `bpftrace`, `perf`, and `raw` (no symbolization):
 
 ```
 # bpftrace -e 'uprobe:bash:readline { printf("%s\n", ustack(perf)); }'
@@ -2838,6 +2853,15 @@ Attaching 1 probe...
 	5649feec4090 readline+0 (/home/mmarchini/bash/bash/bash)
 	5649fee2bfa6 yy_readline_get+451 (/home/mmarchini/bash/bash/bash)
 	5649fee2bdc6 yy_getc+13 (/home/mmarchini/bash/bash/bash)
+```
+
+```
+# bpftrace -e 'uprobe:bash:readline { printf("%s\n", ustack(raw, 3)); }'
+Attaching 1 probe...
+
+	5649feec4090
+	5649fee2bfa6
+	5649fee2bdc6
 ```
 
 Note that for these examples to work, bash had to be recompiled with frame pointers.
@@ -3300,6 +3324,33 @@ Example:
 BEGIN { print(strerror(EPERM)); }'
 Attaching 1 probe...
 Operation not permitted
+```
+
+# 35. `offsetof`: Offset of element in structure
+
+Syntax:
+- `offsetof(struct, element)`
+- `offsetof(expression, element)`
+
+Get the offset of the element in the struct.
+
+Examples:
+
+```
+#!/usr/bin/env bpftrace
+
+BEGIN
+{
+	printf("Offset of flags: %ld\n", offsetof(struct task_struct, flags));
+	printf("Offset of comm: %ld\n", offsetof(*curtask, comm));
+	exit();
+}
+```
+
+```
+Attaching 1 probe...
+Offset of flags: 44
+Offset of comm: 3216
 ```
 
 # Map Functions
