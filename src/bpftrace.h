@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -139,7 +140,7 @@ public:
   void request_finalize();
   bool is_aslr_enabled(int pid);
   std::string get_string_literal(const ast::Expression *expr) const;
-  std::optional<long> get_int_literal(const ast::Expression *expr) const;
+  std::optional<int64_t> get_int_literal(const ast::Expression *expr) const;
   std::optional<std::string> get_watchpoint_binary_path() const;
   virtual bool is_traceable_func(const std::string &func_name) const;
   std::unordered_set<std::string> get_func_modules(
@@ -195,6 +196,7 @@ public:
   bool usdt_file_activation_ = false;
   int helper_check_level_ = 0;
   uint64_t ast_max_nodes_ = 0; // Maximum AST nodes allowed for fuzzing
+  std::optional<StackMode> stack_mode_;
   std::optional<struct timespec> boottime_;
 
   static void sort_by_key(

@@ -128,6 +128,7 @@ void usage()
   std::cerr << "    BPFTRACE_VMLINUX            [default: none] vmlinux path used for kernel symbol resolution" << std::endl;
   std::cerr << "    BPFTRACE_BTF                [default: none] BTF file" << std::endl;
   std::cerr << "    BPFTRACE_STR_TRUNC_TRAILER  [default: '..'] string truncation trailer" << std::endl;
+  std::cerr << "    BPFTRACE_STACK_MODE         [default: bpftrace] Output format for ustack and kstack builtins" << std::endl;
   std::cerr << std::endl;
   std::cerr << "EXAMPLES:" << std::endl;
   std::cerr << "bpftrace -l '*sleep*'" << std::endl;
@@ -333,6 +334,21 @@ static std::optional<struct timespec> get_boottime()
 
   if (!get_bool_env_var("BPFTRACE_VERIFY_LLVM_IR", verify_llvm_ir))
     return false;
+
+  if (const char* stack_mode = std::getenv("BPFTRACE_STACK_MODE"))
+  {
+    auto found = STACK_MODE_MAP.find(stack_mode);
+    if (found != STACK_MODE_MAP.end())
+    {
+      bpftrace.stack_mode_ = found->second;
+    }
+    else
+    {
+      LOG(ERROR) << "Env var 'BPFTRACE_STACK_MODE' did not contain a valid "
+                    "StackMode: "
+                 << stack_mode;
+    }
+  }
 
   return true;
 }
@@ -668,11 +684,27 @@ Args parse_args(int argc, char* argv[])
   return args;
 }
 
+static const char* libbpf_print_level_string(enum libbpf_print_level level)
+{
+  switch (level)
+  {
+    case LIBBPF_WARN:
+      return "WARN";
+    case LIBBPF_INFO:
+      return "INFO";
+    default:
+      return "DEBUG";
+  }
+}
+
 static int libbpf_print(enum libbpf_print_level level,
                         const char* msg,
                         va_list ap)
 {
-  fprintf(stderr, "libbpf: (%d) ", level);
+  if (bt_debug == DebugLevel::kNone)
+    return 0;
+
+  fprintf(stderr, "[%s] ", libbpf_print_level_string(level));
   return vfprintf(stderr, msg, ap);
 }
 
@@ -724,8 +756,7 @@ int main(int argc, char* argv[])
       break;
   }
 
-  if (bt_debug != DebugLevel::kNone)
-    libbpf_set_print(libbpf_print);
+  libbpf_set_print(libbpf_print);
 
   BPFtrace bpftrace(std::move(output));
   bool verify_llvm_ir = false;
