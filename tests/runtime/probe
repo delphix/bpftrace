@@ -101,20 +101,31 @@ TIMEOUT 5
 WILL_FAIL
 
 NAME kprobe_offset_module
-RUN {{BPFTRACE}} -e 'kprobe:nft_trans_alloc_gfp+0x5 { printf("hit\n"); exit(); }' -c '/usr/sbin/nft add table bpftrace'
+RUN {{BPFTRACE}} -e 'kprobe:nft_trans_alloc_gfp+0x5 { printf("hit\n"); exit(); }'
+AFTER /usr/sbin/nft add table bpftrace
 EXPECT hit
+ARCH x86_64|aarch64
 TIMEOUT 5
 REQUIRES lsmod | grep '^nf_tables'
 REQUIRES /usr/sbin/nft --help
-AFTER nft delete table bpftrace
+CLEANUP /usr/sbin/nft delete table bpftrace
+
+# Local entry point to nft_trans_alloc_gfp is located at offset of 8 bytes in ppc64.
+NAME kprobe_offset_module
+RUN {{BPFTRACE}} -e 'kprobe:nft_trans_alloc_gfp+0x8 { printf("hit\n"); exit(); }'
+AFTER /usr/sbin/nft add table bpftrace
+EXPECT hit
+ARCH ppc64|ppc64le
+TIMEOUT 5
+REQUIRES lsmod | grep '^nf_tables'
+REQUIRES /usr/sbin/nft --help
+CLEANUP /usr/sbin/nft delete table bpftrace
 
 NAME kprobe_offset_module_error
-RUN {{BPFTRACE}} -e 'kprobe:nft_trans_alloc_gfp+0x1 { printf("hit\n"); exit(); }' -c '/usr/sbin/nft add table bpftrace'
+RUN {{BPFTRACE}} -e 'kprobe:nft_trans_alloc_gfp+0x1 { printf("hit\n"); exit(); }'
 EXPECT Possible attachment attempt in the middle of an instruction, try a different offset.
 TIMEOUT 5
 REQUIRES lsmod | grep '^nf_tables'
-REQUIRES /usr/sbin/nft --help
-AFTER nft delete table bpftrace
 WILL_FAIL
 
 NAME kretprobe
@@ -280,6 +291,12 @@ PROG rawtracepoint:nonsense { printf("hit"); exit(); }
 EXPECT ERROR: Probe does not exist: rawtracepoint:nonsense
 TIMEOUT 5
 WILL_FAIL
+
+NAME rawtracepoint_wildcard
+PROG rawtracepoint:sys_* { printf("SUCCESS %d\n", gid); exit(); }
+EXPECT SUCCESS [0-9][0-9]*
+AFTER ./testprogs/syscall nanosleep
+TIMEOUT 5
 
 NAME profile
 PROG profile:hz:599 { @[tid] = count(); exit();}

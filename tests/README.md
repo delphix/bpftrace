@@ -58,9 +58,10 @@ Each runtime testcase consists of multiple directives. In no particular order:
   field is required.
 * `TIMEOUT`: The timeout for the testcase (in seconds). This field is required.
 * `BEFORE`: Run the command in a shell before running bpftrace. The command
-  will be terminated after testcase is over.
-* `AFTER`: Run the command in a shell after running bpftrace. The command will
-  be terminated after the testcase is over.
+  will be terminated after testcase is over. Can be used multiple times,
+  commands will run in parallel.
+* `AFTER`: Run the command in a shell after running bpftrace (after the probes
+  are attached). The command will be terminated after the testcase is over.
 * `CLEANUP`: Run the command in a shell after test is over. This holds any
   cleanup command to free resources after test completes.
 * `MIN_KERNEL`: Skip the test unless the host's kernel version is >= the
