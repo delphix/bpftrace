@@ -167,9 +167,9 @@ public:
   std::weak_ptr<const Struct> GetStruct() const;
 
   /**
-     Required alignment for this type
+     Required alignment for this type when used inside a tuple
    */
-  ssize_t GetAlignment() const;
+  ssize_t GetInTupleAlignment() const;
 
   /**
      Dump the underlying structure for debug purposes
@@ -208,7 +208,8 @@ public:
 
   bool IsPrintableTy()
   {
-    return type != Type::none && type != Type::stack_mode && !IsCtxAccess();
+    return type != Type::none && type != Type::stack_mode &&
+           (!IsCtxAccess() || is_funcarg); // args builtin is printable
   }
 
   bool IsSigned(void) const;
@@ -551,8 +552,6 @@ private:
             funcs);
   }
 };
-
-typedef std::map<std::string, SizedType> ProbeArgs;
 
 const int RESERVED_IDS_PER_ASYNCACTION = 10000;
 

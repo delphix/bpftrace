@@ -320,8 +320,12 @@ sudo dnf install -y bison \
   make \
   git \
   gcc-c++ \
+  xxd \
+  libffi-devel \
   elfutils-libelf-devel \
+  elfutils-devel \
   zlib-devel \
+  xz-devel \
   llvm-devel \
   clang-devel \
   bcc-devel \

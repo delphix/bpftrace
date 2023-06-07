@@ -12,9 +12,15 @@ and this project adheres to
 - Rawtracepoint support wildcards and list show
   - [#2588](https://github.com/iovisor/bpftrace/pull/2588)
 #### Changed
+- Make `args` a structure (instead of a pointer)
+  - [#2578](https://github.com/iovisor/bpftrace/pull/2578)
 #### Fixed
 - Fix resolving username for malformed /etc/passwd
   - [#2631](https://github.com/iovisor/bpftrace/pull/2631)
+- Fix crashes when maps are concurrently modified
+  - [#2623](https://github.com/iovisor/bpftrace/pull/2623)
+- Fix alignment of byte arrays inside tuples
+  - [#2625](https://github.com/iovisor/bpftrace/pull/2625)
 
 
 ## [0.18.0] 2023-05-15
