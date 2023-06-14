@@ -51,6 +51,12 @@ bool bt_verbose = false;
 bool bt_verbose2 = false;
 volatile sig_atomic_t BPFtrace::exitsig_recv = false;
 volatile sig_atomic_t BPFtrace::sigusr1_recv = false;
+struct bcc_symbol_option symopts = {
+  .use_debug_file = 1,
+  .check_debug_file_crc = 1,
+  .lazy_symbolize = 0,
+  .use_symbol_type = BCC_SYM_ALL_TYPES,
+};
 
 BPFtrace::~BPFtrace()
 {
@@ -58,6 +64,12 @@ BPFtrace::~BPFtrace()
   {
     if (pair.second.second)
       bcc_free_symcache(pair.second.second, pair.second.first);
+  }
+
+  for (const auto &pair : pid_sym_)
+  {
+    if (pair.second)
+      bcc_free_symcache(pair.second, pair.first);
   }
 
   if (ksyms_)
@@ -304,6 +316,29 @@ int BPFtrace::add_probe(ast::Probe &p)
       {
         resources.probes.push_back(probe);
       }
+    }
+
+    if (resources.probes_using_usym.find(&p) !=
+            resources.probes_using_usym.end() &&
+        bcc_elf_is_exe(attach_point->target.c_str()))
+    {
+      // preload symbol table for executable to make it available even if the
+      // binary is not present at symbol resolution time
+      // note: this only makes sense with ASLR disabled, since with ASLR offsets
+      // might be different
+      if (user_symbol_cache_type_ == UserSymbolCacheType::per_program &&
+          symbol_table_cache_.find(attach_point->target) ==
+              symbol_table_cache_.end())
+        symbol_table_cache_[attach_point->target] = get_symbol_table_for_elf(
+            attach_point->target);
+
+      if (user_symbol_cache_type_ == UserSymbolCacheType::per_pid)
+        // preload symbol tables from running processes
+        // this allows symbol resolution for processes that are running at probe
+        // attach time, but not at symbol resolution time, even with ASLR
+        // enabled, since BCC symcache records the offsets
+        for (int pid : get_pids_for_program(attach_point->target))
+          pid_sym_[pid] = bcc_symcache_new(pid, &symopts);
     }
   }
 
@@ -694,11 +729,10 @@ std::vector<std::unique_ptr<IPrintable>> BPFtrace::get_arg_values(const std::vec
             resolve_ksym(*reinterpret_cast<uint64_t*>(arg_data+arg.offset))));
         break;
       case Type::usym:
-        arg_values.push_back(
-          std::make_unique<PrintableString>(
-            resolve_usym(
-              *reinterpret_cast<uint64_t*>(arg_data+arg.offset),
-              *reinterpret_cast<uint64_t*>(arg_data+arg.offset + 8))));
+        arg_values.push_back(std::make_unique<PrintableString>(resolve_usym(
+            *reinterpret_cast<uint64_t *>(arg_data + arg.offset),
+            *reinterpret_cast<uint64_t *>(arg_data + arg.offset + 8),
+            *reinterpret_cast<uint64_t *>(arg_data + arg.offset + 16))));
         break;
       case Type::inet:
         arg_values.push_back(
@@ -720,20 +754,22 @@ std::vector<std::unique_ptr<IPrintable>> BPFtrace::get_arg_values(const std::vec
               *reinterpret_cast<uint64_t*>(arg_data+arg.offset))));
         break;
       case Type::kstack:
-        arg_values.push_back(
-          std::make_unique<PrintableString>(
-            get_stack(
-              *reinterpret_cast<uint64_t*>(arg_data+arg.offset),
-              false,
-              arg.type.stack_type, 8)));
+        arg_values.push_back(std::make_unique<PrintableString>(
+            get_stack(*reinterpret_cast<int64_t *>(arg_data + arg.offset),
+                      -1,
+                      -1,
+                      false,
+                      arg.type.stack_type,
+                      8)));
         break;
       case Type::ustack:
-        arg_values.push_back(
-          std::make_unique<PrintableString>(
-            get_stack(
-              *reinterpret_cast<uint64_t*>(arg_data+arg.offset),
-              true,
-              arg.type.stack_type, 8)));
+        arg_values.push_back(std::make_unique<PrintableString>(
+            get_stack(*reinterpret_cast<int64_t *>(arg_data + arg.offset),
+                      *reinterpret_cast<int32_t *>(arg_data + arg.offset + 8),
+                      *reinterpret_cast<int32_t *>(arg_data + arg.offset + 12),
+                      true,
+                      arg.type.stack_type,
+                      8)));
         break;
       case Type::timestamp:
         arg_values.push_back(
@@ -1871,10 +1907,13 @@ std::vector<uint8_t> BPFtrace::find_empty_key(IMap &map, size_t size) const
   throw std::runtime_error("Could not find empty key");
 }
 
-std::string BPFtrace::get_stack(uint64_t stackidpid, bool ustack, StackType stack_type, int indent)
+std::string BPFtrace::get_stack(int64_t stackid,
+                                int pid,
+                                int probe_id,
+                                bool ustack,
+                                StackType stack_type,
+                                int indent)
 {
-  int32_t stackid = stackidpid & 0xffffffff;
-  int pid = stackidpid >> 32;
   auto stack_trace = std::vector<uint64_t>(stack_type.limit);
   int err = bpf_lookup_elem(maps[stack_type].value()->mapfd_,
                             &stackid,
@@ -1905,7 +1944,8 @@ std::string BPFtrace::get_stack(uint64_t stackidpid, bool ustack, StackType stac
     if (!ustack)
       sym = resolve_ksym(addr, true);
     else
-      sym = resolve_usym(addr, pid, true, stack_type.mode == StackMode::perf);
+      sym = resolve_usym(
+          addr, pid, probe_id, true, stack_type.mode == StackMode::perf);
 
     switch (stack_type.mode) {
       case StackMode::bpftrace:
@@ -2232,23 +2272,64 @@ bool BPFtrace::is_aslr_enabled(int pid)
   return false;
 }
 
-std::string BPFtrace::resolve_usym(uintptr_t addr, int pid, bool show_offset, bool show_module)
+std::string BPFtrace::resolve_usym(uintptr_t addr,
+                                   int pid,
+                                   int probe_id,
+                                   bool show_offset,
+                                   bool show_module)
 {
   struct bcc_symbol usym;
   std::ostringstream symbol;
   void *psyms = nullptr;
-  struct bcc_symbol_option symopts;
-
-  memset(&symopts, 0, sizeof(symopts));
-  symopts.use_debug_file = 1;
-  symopts.check_debug_file_crc = 1;
-  symopts.use_symbol_type = BCC_SYM_ALL_TYPES;
 
   if (resolve_user_symbols_)
   {
-    if (cache_user_symbols_)
+    std::string pid_exe = get_pid_exe(pid);
+    if (pid_exe.empty() && probe_id != -1)
     {
-      std::string pid_exe = get_pid_exe(pid);
+      // sometimes program cannot be determined from PID, typically when the
+      // process does not exist anymore; in that case, try to get program name
+      // from probe
+      // note: this fails if the probe contains a wildcard, since the probe id
+      // is not generated per match
+      auto probe_full = resolve_probe(probe_id);
+      if (probe_full.find(',') == std::string::npos &&
+          !has_wildcard(probe_full))
+      {
+        // only find program name for probes that contain one program name,
+        // to avoid incorrect symbol resolutions
+        size_t start = probe_full.find(':') + 1;
+        size_t end = probe_full.find(':', start);
+        pid_exe = probe_full.substr(start, end - start);
+      }
+    }
+    if (user_symbol_cache_type_ == UserSymbolCacheType::per_program)
+    {
+      if (!pid_exe.empty())
+      {
+        // try to resolve symbol directly from program file
+        // this might work when the process does not exist anymore, but cannot
+        // resolve all symbols, e.g. those in a dynamically linked library
+        std::map<uintptr_t, elf_symbol, std::greater<>> &symbol_table =
+            symbol_table_cache_.find(pid_exe) != symbol_table_cache_.end()
+                ? symbol_table_cache_[pid_exe]
+                : (symbol_table_cache_[pid_exe] = get_symbol_table_for_elf(
+                       pid_exe));
+        auto sym = symbol_table.lower_bound(addr);
+        // address has to be either the start of the symbol (for symbols of
+        // length 0) or in [start, end)
+        if (sym != symbol_table.end() &&
+            (addr == sym->second.start ||
+             (addr >= sym->second.start && addr < sym->second.end)))
+        {
+          symbol << sym->second.name;
+          if (show_offset)
+            symbol << "+" << addr - sym->second.start;
+          if (show_module)
+            symbol << " (" << pid_exe << ")";
+          return symbol.str();
+        }
+      }
       if (exe_sym_.find(pid_exe) == exe_sym_.end())
       {
         // not cached, create new ProcSyms cache
@@ -2260,8 +2341,23 @@ std::string BPFtrace::resolve_usym(uintptr_t addr, int pid, bool show_offset, bo
         psyms = exe_sym_[pid_exe].second;
       }
     }
+    else if (user_symbol_cache_type_ == UserSymbolCacheType::per_pid)
+    {
+      // cache user symbols per pid
+      if (pid_sym_.find(pid) == pid_sym_.end())
+      {
+        // not cached, create new ProcSyms cache
+        psyms = bcc_symcache_new(pid, &symopts);
+        pid_sym_[pid] = psyms;
+      }
+      else
+      {
+        psyms = pid_sym_[pid];
+      }
+    }
     else
     {
+      // no user symbol caching, create new bcc cache
       psyms = bcc_symcache_new(pid, &symopts);
     }
   }
@@ -2284,7 +2380,8 @@ std::string BPFtrace::resolve_usym(uintptr_t addr, int pid, bool show_offset, bo
       symbol << " ([unknown])";
   }
 
-  if (psyms && !cache_user_symbols_)
+  if (resolve_user_symbols_ &&
+      user_symbol_cache_type_ == UserSymbolCacheType::none)
     bcc_free_symcache(psyms, pid);
 
   return symbol.str();
