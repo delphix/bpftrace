@@ -89,11 +89,6 @@ std::set<std::string> ProbeMatcher::get_matches_in_stream(
   return matches;
 }
 
-std::unique_ptr<std::istream> ProbeMatcher::get_iter_symbols(void) const
-{
-  return std::make_unique<std::istringstream>("task\ntask_file\ntask_vma");
-}
-
 /*
  * Get matches of search_input (containing a wildcard) for a given probe_type.
  * probe_type determines where to take the candidate matches from.
@@ -167,7 +162,22 @@ std::set<std::string> ProbeMatcher::get_matches_for_probetype(
     }
     case ProbeType::iter:
     {
-      symbol_stream = get_iter_symbols();
+      if (!bpftrace_->has_btf_data())
+        break;
+
+      std::string ret;
+      auto iters = bpftrace_->btf_->get_all_iters();
+      for (auto& iter : iters)
+      {
+        // second check
+        if (bpftrace_->feature_->has_iter(iter))
+          ret += iter + "\n";
+        else
+          LOG(WARNING) << "The kernel contains bpf_iter__$ITER struct but "
+                          "does not support loading an iterator program "
+                          "against it. Please report this bug.";
+      }
+      symbol_stream = std::make_unique<std::istringstream>(ret);
       break;
     }
     default:
@@ -412,27 +422,25 @@ FuncParamLists ProbeMatcher::get_tracepoints_params(
 FuncParamLists ProbeMatcher::get_iters_params(
     const std::set<std::string>& iters)
 {
+  const std::string prefix = "vmlinux:bpf_iter_";
   FuncParamLists params;
+  std::set<std::string> funcs;
 
   for (auto& iter : iters)
-  {
-    if (iter == "task")
-    {
-      params[iter].push_back("struct task_struct * task");
-    }
-    else if (iter == "task_file")
-    {
-      params[iter].push_back("struct task_struct * task");
-      params[iter].push_back("int fd");
-      params[iter].push_back("struct file * file");
-    }
-    else if (iter == "task_vma")
-    {
-      params[iter].push_back("struct task_struct * task");
-      params[iter].push_back("struct vm_area_struct * vma");
-    }
-  }
+    funcs.insert(prefix + iter);
 
+  params = bpftrace_->btf_->get_params(funcs);
+  for (auto func : funcs)
+  {
+    // delete `int retval`
+    params[func].pop_back();
+    // delete `struct bpf_iter_meta * meta`
+    params[func].erase(params[func].begin());
+    // restore key value
+    auto param = params.extract(func);
+    param.key() = func.substr(prefix.size());
+    params.insert(std::move(param));
+  }
   return params;
 }
 
