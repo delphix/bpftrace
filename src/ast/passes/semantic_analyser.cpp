@@ -457,10 +457,16 @@ void SemanticAnalyser::visit(Builtin &builtin)
       auto type_name = probe_->args_typename();
       builtin.type = CreateRecord(type_name,
                                   bpftrace_.structs.Lookup(type_name));
+      if (builtin.type.GetFieldCount() == 0)
+        LOG(ERROR, builtin.loc, err_) << "Cannot read function parameters";
+
       builtin.type.MarkCtxAccess();
       builtin.type.is_funcarg = true;
       builtin.type.SetAS(type == ProbeType::uprobe ? AddrSpace::user
                                                    : AddrSpace::kernel);
+      // We'll build uprobe args struct on stack
+      if (type == ProbeType::uprobe)
+        builtin.type.is_internal = true;
     }
     else if (type != ProbeType::tracepoint) // no special action for tracepoint
     {
@@ -1525,7 +1531,7 @@ void SemanticAnalyser::visit(Map &map)
         map.vargs->at(i) = cast;
         expr = cast;
       }
-      else if (expr->type.IsCtxAccess())
+      else if (expr->type.IsPtrTy() && expr->type.IsCtxAccess())
       {
         // map functions only accepts a pointer to a element in the stack
         LOG(ERROR, map.loc, err_) << "context cannot be used as a map key";
@@ -2008,6 +2014,7 @@ void SemanticAnalyser::visit(Unop &unop)
       if (type.IsCtxAccess())
         unop.type.MarkCtxAccess();
       unop.type.is_btftype = type.is_btftype;
+      unop.type.is_internal = type.is_internal;
       unop.type.SetAS(type.GetAS());
     }
     else if (type.IsRecordTy())
@@ -2486,12 +2493,6 @@ void SemanticAnalyser::visit(AssignVarStatement &assignment)
   auto search = variable_val_[probe_].find(var_ident);
 
   auto &assignTy = assignment.expr->type;
-
-  auto *builtin = dynamic_cast<Builtin *>(assignment.expr);
-  if (builtin && builtin->ident == "args" && builtin->type.is_funcarg)
-  {
-    LOG(ERROR, assignment.loc, err_) << "args cannot be assigned to a variable";
-  }
 
   if (search != variable_val_[probe_].end())
   {
@@ -3252,8 +3253,11 @@ void SemanticAnalyser::assign_map_type(const Map &map, const SizedType &type)
 {
   const std::string &map_ident = map.ident;
 
-  if (type.IsRecordTy() && (type.is_funcarg || type.is_tparg))
-    LOG(ERROR, map.loc, err_) << "Storing args in maps is not supported";
+  if (type.IsRecordTy() && type.is_tparg)
+  {
+    LOG(ERROR, map.loc, err_)
+        << "Storing tracepoint args in maps is not supported";
+  }
 
   auto *maptype = get_map_type(map);
   if (maptype)
