@@ -178,18 +178,19 @@ int BPFtrace::add_probe(ast::Probe &p)
 
       struct symbol sym = {};
       int err = resolve_uname(attach_point->func, &sym, attach_point->target);
-      if (err < 0 || sym.address == 0)
+
+      if (attach_point->lang == "cpp")
       {
         // As the C++ language supports function overload, a given function name
         // (without parameters) could have multiple matches even when no
         // wildcards are used.
         matches = probe_matcher_->get_matches_for_ap(*attach_point);
-        attach_funcs.insert(attach_funcs.end(), matches.begin(), matches.end());
       }
-      else
-      {
-        attach_funcs.push_back(attach_point->target + ":" + attach_point->func);
-      }
+
+      if (err >= 0 && sym.address != 0)
+        matches.insert(attach_point->target + ":" + attach_point->func);
+
+      attach_funcs.insert(attach_funcs.end(), matches.begin(), matches.end());
     }
     else
     {
@@ -2137,7 +2138,8 @@ int BPFtrace::resolve_uname(const std::string &name,
   sym->name = name;
   struct bcc_symbol_option option;
   memset(&option, 0, sizeof(option));
-  option.use_symbol_type = (1 << STT_OBJECT);
+  option.use_symbol_type = (1 << STT_OBJECT | 1 << STT_FUNC |
+                            1 << STT_GNU_IFUNC);
 
   return bcc_elf_foreach_sym(path.c_str(), sym_resolve_callback, &option, sym);
 }

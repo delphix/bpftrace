@@ -39,8 +39,9 @@ static int add_symbol(const char* symname,
  */
 std::set<std::string> ProbeMatcher::get_matches_in_stream(
     const std::string& search_input,
-    bool ignore_trailing_module,
     std::istream& symbol_stream,
+    bool ignore_trailing_module,
+    bool demangle_symbols,
     const char delim)
 {
   bool start_wildcard, end_wildcard;
@@ -57,16 +58,33 @@ std::set<std::string> ProbeMatcher::get_matches_in_stream(
 
     if (!wildcard_match(line, tokens, start_wildcard, end_wildcard))
     {
-      auto fun_line = line;
-      auto prefix = fun_line.find(':') != std::string::npos
-                        ? erase_prefix(fun_line) + ":"
-                        : "";
-      if (symbol_has_cpp_mangled_signature(fun_line))
+      if (demangle_symbols)
       {
-        char* demangled_name = cxxdemangle(fun_line.c_str());
-        if (demangled_name)
+        auto fun_line = line;
+        auto prefix = fun_line.find(':') != std::string::npos
+                          ? erase_prefix(fun_line) + ":"
+                          : "";
+        if (symbol_has_cpp_mangled_signature(fun_line))
         {
-          if (!wildcard_match(prefix + demangled_name, tokens, true, true))
+          char* demangled_name = cxxdemangle(fun_line.c_str());
+          if (!demangled_name)
+            continue;
+
+          // Match against the demanled name.
+          // Since demangled_name contains function arguments, we need to remove
+          // them unless the user specified '(' in the search input (i.e. wants
+          // to match against the arguments explicitly).
+          std::string match_line = prefix + demangled_name;
+          if (std::all_of(tokens.begin(),
+                          tokens.end(),
+                          [&](const std::string& token) {
+                            return token.find("(") == std::string::npos;
+                          }))
+          {
+            match_line = match_line.substr(0, match_line.find_last_of("("));
+          }
+
+          if (!wildcard_match(match_line, tokens, start_wildcard, end_wildcard))
           {
             free(demangled_name);
           }
@@ -97,7 +115,8 @@ std::set<std::string> ProbeMatcher::get_matches_in_stream(
 std::set<std::string> ProbeMatcher::get_matches_for_probetype(
     const ProbeType& probe_type,
     const std::string& target,
-    const std::string& search_input)
+    const std::string& search_input,
+    bool demangle_symbols)
 {
   std::unique_ptr<std::istream> symbol_stream;
   bool ignore_trailing_module = false;
@@ -185,9 +204,8 @@ std::set<std::string> ProbeMatcher::get_matches_for_probetype(
   }
 
   if (symbol_stream)
-    return get_matches_in_stream(search_input,
-                                 ignore_trailing_module,
-                                 *symbol_stream);
+    return get_matches_in_stream(
+        search_input, *symbol_stream, ignore_trailing_module, demangle_symbols);
   else
     return {};
 }
@@ -206,7 +224,7 @@ std::set<std::string> ProbeMatcher::get_matches_in_set(
     stream_in.append(str + "$");
 
   std::istringstream stream(stream_in);
-  return get_matches_in_stream(search_input, false, stream, '$');
+  return get_matches_in_stream(search_input, stream, false, false, '$');
 }
 
 std::unique_ptr<std::istream> ProbeMatcher::get_symbols_from_file(
@@ -567,14 +585,15 @@ std::set<std::string> ProbeMatcher::get_matches_for_ap(
 
   return get_matches_for_probetype(probetype(attach_point.provider),
                                    attach_point.target,
-                                   search_input);
+                                   search_input,
+                                   attach_point.lang == "cpp");
 }
 
 std::set<std::string> ProbeMatcher::expand_probetype_kernel(
     const std::string& probe_type)
 {
   if (has_wildcard(probe_type))
-    return get_matches_in_stream(probe_type, false, *kernel_probe_list());
+    return get_matches_in_stream(probe_type, *kernel_probe_list());
   else
     return { probe_type };
 }
@@ -583,7 +602,7 @@ std::set<std::string> ProbeMatcher::expand_probetype_userspace(
     const std::string& probe_type)
 {
   if (has_wildcard(probe_type))
-    return get_matches_in_stream(probe_type, false, *userspace_probe_list());
+    return get_matches_in_stream(probe_type, *userspace_probe_list());
   else
     return { probe_type };
 }
