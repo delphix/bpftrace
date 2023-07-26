@@ -345,7 +345,10 @@ AttachPointParser::State AttachPointParser::kprobe_parser(bool allow_offset)
 
     auto res = stoll(offset_parts[1]);
     if (!res)
+    {
+      errs_ << "Invalid offset" << std::endl;
       return INVALID;
+    }
     ap_->func_offset = *res;
   }
   // Default case (eg kprobe:func)
@@ -440,7 +443,10 @@ AttachPointParser::State AttachPointParser::uprobe_parser(bool allow_offset,
 
     auto res = stoll(offset_parts[1]);
     if (!res)
+    {
+      errs_ << "Invalid offset" << std::endl;
       return INVALID;
+    }
     ap_->func_offset = *res;
   }
   // Default case (eg uprobe:[addr][func])
@@ -550,6 +556,14 @@ AttachPointParser::State AttachPointParser::tracepoint_parser()
 
 AttachPointParser::State AttachPointParser::profile_parser()
 {
+  if (parts_.size() == 2 && has_wildcard(parts_[1]))
+  {
+    // Wildcards are allowed for listing
+    ap_->target = parts_[1];
+    ap_->freq = 0;
+    return OK;
+  }
+
   if (parts_.size() != 3)
   {
     errs_ << ap_->provider << " probe type requires 2 arguments" << std::endl;
@@ -560,7 +574,10 @@ AttachPointParser::State AttachPointParser::profile_parser()
 
   auto res = stoull(parts_[2]);
   if (!res)
+  {
+    errs_ << "Invalid rate of " << ap_->provider << " probe";
     return INVALID;
+  }
 
   ap_->freq = *res;
   return OK;
@@ -568,6 +585,14 @@ AttachPointParser::State AttachPointParser::profile_parser()
 
 AttachPointParser::State AttachPointParser::interval_parser()
 {
+  if (parts_.size() == 2 && has_wildcard(parts_[1]))
+  {
+    // Wildcards are allowed for listing
+    ap_->target = parts_[1];
+    ap_->freq = 0;
+    return OK;
+  }
+
   if (parts_.size() != 3)
   {
     errs_ << ap_->provider << " probe type requires 2 arguments" << std::endl;
@@ -577,7 +602,10 @@ AttachPointParser::State AttachPointParser::interval_parser()
   ap_->target = parts_[1];
   auto res = stoull(parts_[2]);
   if (!res)
+  {
+    errs_ << "Invalid rate of " << ap_->provider << " probe";
     return INVALID;
+  }
 
   ap_->freq = *res;
   return OK;
@@ -601,7 +629,10 @@ AttachPointParser::State AttachPointParser::software_parser()
   {
     auto res = stoull(parts_[2]);
     if (!res)
+    {
+      errs_ << "Invalid count for " << ap_->provider << " probe";
       return INVALID;
+    }
     ap_->freq = *res;
   }
 
@@ -626,7 +657,10 @@ AttachPointParser::State AttachPointParser::hardware_parser()
   {
     auto res = stoull(parts_[2]);
     if (!res)
+    {
+      errs_ << "Invalid count for " << ap_->provider << " probe";
       return INVALID;
+    }
     ap_->freq = *res;
   }
 
@@ -646,7 +680,10 @@ AttachPointParser::State AttachPointParser::watchpoint_parser(bool async)
   {
     auto parsed = stoull(parts_[1]);
     if (!parsed)
+    {
+      errs_ << "Invalid function/address argument" << std::endl;
       return INVALID;
+    }
     ap_->address = *parsed;
   }
   else
@@ -670,13 +707,19 @@ AttachPointParser::State AttachPointParser::watchpoint_parser(bool async)
 
     auto parsed = stoull(func_arg_parts[1].substr(3));
     if (!parsed)
+    {
+      errs_ << "Invalid function argument" << std::endl;
       return INVALID;
+    }
     ap_->address = *parsed;
   }
 
   auto len_parsed = stoull(parts_[2]);
   if (!len_parsed)
+  {
+    errs_ << "Invalid length argument" << std::endl;
     return INVALID;
+  }
   ap_->len = *len_parsed;
 
   // Semantic analyser will ensure a cmd/pid was provided

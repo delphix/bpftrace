@@ -12,7 +12,6 @@ from functools import lru_cache
 import cmake_vars
 
 BPF_PATH = os.environ["BPFTRACE_RUNTIME_TEST_EXECUTABLE"]
-ENV_PATH = os.environ["PATH"]
 ATTACH_TIMEOUT = 5
 DEFAULT_TIMEOUT = 5
 
@@ -108,16 +107,12 @@ class Runner(object):
     @staticmethod
     @lru_cache(maxsize=1)
     def __get_bpffeature():
-        cmd = "bpftrace --info"
         p = subprocess.Popen(
-            cmd,
-            shell=True,
+            [f"{BPF_PATH}/bpftrace", "--info"],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            env={'PATH': "{}:{}".format(BPF_PATH, ENV_PATH)},
-            preexec_fn=os.setsid,
+            start_new_session=True,
             universal_newlines=True,
-            bufsize=1
         )
         output = p.communicate()[0]
         bpffeature = {}
@@ -177,7 +172,6 @@ class Runner(object):
                             shell=True,
                             stdout=dn,
                             stderr=dn,
-                            env={'PATH': "{}:{}".format(BPF_PATH, ENV_PATH)},
                         ) != 0:
                             print(warn("[   SKIP   ] ") + "%s.%s" % (test.suite, test.name))
                             return Runner.SKIP_REQUIREMENT_UNSATISFIED
@@ -201,7 +195,7 @@ class Runner(object):
 
             if test.befores:
                 for before in test.befores:
-                    before = subprocess.Popen(before.split(), preexec_fn=os.setsid)
+                    before = subprocess.Popen(before.split(), start_new_session=True)
                     befores.append(before)
 
                 with open(os.devnull, 'w') as dn:
@@ -253,26 +247,25 @@ class Runner(object):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 env=env,
-                preexec_fn=os.setsid,
+                start_new_session=True,
                 universal_newlines=True,
-                bufsize=1
             )
             bpftrace = p
 
+            attached = False
             signal.alarm(ATTACH_TIMEOUT)
 
             while p.poll() is None:
                 nextline = p.stdout.readline()
                 output += nextline
-                if nextline == "__BPFTRACE_NOTIFY_PROBES_ATTACHED\n":
+                if not attached and nextline == "__BPFTRACE_NOTIFY_PROBES_ATTACHED\n":
+                    attached = True
                     signal.alarm(test.timeout or DEFAULT_TIMEOUT)
-                    if not after and test.after:
-                        after = subprocess.Popen(test.after, shell=True, preexec_fn=os.setsid)
-                    break
-
-            output += p.communicate()[0]
+                    if test.after:
+                        after = subprocess.Popen(test.after, shell=True, start_new_session=True)
 
             signal.alarm(0)
+            output += p.stdout.read()
             result = re.search(test.expect, output, re.M)
 
         except (TimeoutError):
@@ -291,7 +284,7 @@ class Runner(object):
             if p:
                 if p.poll() is None:
                     os.killpg(os.getpgid(p.pid), signal.SIGTERM)
-                output += p.communicate()[0]
+                output += p.stdout.read()
                 result = re.search(test.expect, output)
 
                 if not result:

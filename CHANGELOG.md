@@ -31,7 +31,10 @@ and this project adheres to
   - [#2625](https://github.com/iovisor/bpftrace/pull/2625)
 - cmake: fix linking libbfd
   - [#2673](https://github.com/iovisor/bpftrace/pull/2673)
-
+- Allow '+' in attach point path
+  - [#2696](https://github.com/iovisor/bpftrace/pull/2696)
+- Improve listing and 'probe' builtin for several probe types
+  - [#2691](https://github.com/iovisor/bpftrace/pull/2691)
 
 ## [0.18.0] 2023-05-15
 
