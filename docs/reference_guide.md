@@ -65,10 +65,7 @@ discussion to other files in /docs, the /tools/\*\_examples.txt files, or blog p
     - [3. `@[]`: Associative Arrays](#3--associative-arrays)
     - [4. `count()`: Frequency Counting](#4-count-frequency-counting)
     - [5. `hist()`, `lhist()`: Histograms](#5-hist-lhist-histograms)
-    - [6. `nsecs`: Timestamps and Time Deltas](#6-nsecs-timestamps-and-time-deltas)
-    - [7. `kstack`: Stack Traces, Kernel](#7-kstack-stack-traces-kernel)
-    - [8. `ustack`: Stack Traces, User](#8-ustack-stack-traces-user)
-    - [9. `$1`, ..., `$N`, `$#`: Positional Parameters](#9-1--n--positional-parameters)
+    - [6. `$1`, ..., `$N`, `$#`: Positional Parameters](#6-1--n--positional-parameters)
 - [Functions](#functions)
     - [1. Builtins](#1-builtins-1)
     - [2. `printf()`: Print Formatted](#2-printf-Printing)
@@ -878,16 +875,22 @@ Attaching 1 probe...
 
 # Probes
 
-- `kprobe` - kernel function start
-- `kretprobe` - kernel function return
-- `uprobe` - user-level function start
-- `uretprobe` - user-level function return
-- `tracepoint` - kernel static tracepoints
-- `usdt` - user-level static tracepoints
-- `profile` - timed sampling
-- `interval` - timed output
-- `software` - kernel software events
-- `hardware` - processor-level events
+| Probe Name                   | Description                                  | Kernel/User Level |
+|------------------------------|----------------------------------------------|-------------------|
+| `kprobe/kretprobe`           | Kernel function start/return                 | Kernel            |
+| `uprobe/uretprobe`           | User-level function start/return             | User              |
+| `tracepoint`                 | Kernel static tracepoints                    | Kernel            |
+| `rawtracepoint`              | Kernel static tracepoints with raw arguments | Kernel            |
+| `usdt`                       | User-level static tracepoints                | User              |
+| `profile`                    | Timed sampling                               | Kernel/User       |
+| `interval`                   | Timed output                                 | Kernel/User       |
+| `software`                   | Kernel software events                       | Kernel            |
+| `hardware`                   | Processor-level events                       | Kernel            |
+| `BEGIN/END`                  | Built-in events                              | Kernel/User       |
+| `watchpoint/asyncwatchpoint` | Memory watchpoints                           | Kernel            |
+| `kfunc/kretfunc`             | Kernel functions tracing with BTF support    | Kernel            |
+| `iter`                       | Iterators tracing                            | Kernel            |
+
 
 Some probe types allow wildcards to match multiple probes, eg, `kprobe:vfs_*`. You may also specify
 multiple attach points for an action block using a comma separated list.
@@ -1901,13 +1904,13 @@ NetworkManager:1155 /var/lib/sss/mc/passwd (deleted)
 - `tid` - Thread ID (kernel pid)
 - `uid` - User ID
 - `gid` - Group ID
-- `nsecs` - Nanosecond timestamp
+- `nsecs` - Nanosecond timestamp. Alias of [`nsecs()`](#36-nsecs-timestamps-and-time-deltas)
 - `elapsed` - Nanoseconds since bpftrace initialization
 - `numaid` - NUMA Node ID
 - `cpu` - Processor ID
 - `comm` - Process name
-- `kstack` - Kernel stack trace
-- `ustack` - User stack trace
+- `kstack` - Kernel stack trace. Alias of [`kstack()`](#15-kstack-stack-traces-kernel)
+- `ustack` - User stack trace. Alias of [`ustack()`](#16-ustack-stack-traces-user)
 - `arg0`, `arg1`, ..., `argN`. - Arguments to the traced function; assumed to be 64 bits wide
 - `sarg0`, `sarg1`, ..., `sargN`. - Arguments to the traced function (for programs that store arguments
   on the stack); assumed to be 64 bits wide
@@ -2031,159 +2034,7 @@ This is provided by the count() function: see the [Count](#2-count-count) sectio
 These are provided by the hist() and lhist() functions. See the [Log2 Histogram](#8-hist-log2-histogram)
 and [Linear Histogram](#9-lhist-linear-histogram) sections.
 
-## 6. `nsecs`: Timestamps and Time Deltas
-
-Syntax: `nsecs`
-
-These are implemented using bpf_ktime_get_ns().
-
-Examples:
-
-```
-# bpftrace -e 'BEGIN { @start = nsecs; }
-    kprobe:do_nanosleep /@start != 0/ { printf("at %d ms: sleep\n", (nsecs - @start) / 1000000); }'
-Attaching 2 probes...
-at 437 ms: sleep
-at 647 ms: sleep
-at 1098 ms: sleep
-at 1438 ms: sleep
-^C
-```
-
-## 7. `kstack`: Stack Traces, Kernel
-
-Syntax: `kstack`
-
-This builtin is an alias to [`kstack()`](#15-kstack-stack-traces-kernel).
-
-Examples:
-
-```
-# bpftrace -e 'kprobe:ip_output { @[kstack] = count(); }'
-Attaching 1 probe...
-[...]
-@[
-    ip_output+1
-    tcp_transmit_skb+1308
-    tcp_write_xmit+482
-    tcp_release_cb+225
-    release_sock+64
-    tcp_sendmsg+49
-    sock_sendmsg+48
-    sock_write_iter+135
-    __vfs_write+247
-    vfs_write+179
-    sys_write+82
-    entry_SYSCALL_64_fastpath+30
-]: 1708
-@[
-    ip_output+1
-    tcp_transmit_skb+1308
-    tcp_write_xmit+482
-    __tcp_push_pending_frames+45
-    tcp_sendmsg_locked+2637
-    tcp_sendmsg+39
-    sock_sendmsg+48
-    sock_write_iter+135
-    __vfs_write+247
-    vfs_write+179
-    sys_write+82
-    entry_SYSCALL_64_fastpath+30
-]: 9048
-@[
-    ip_output+1
-    tcp_transmit_skb+1308
-    tcp_write_xmit+482
-    tcp_tasklet_func+348
-    tasklet_action+241
-    __do_softirq+239
-    irq_exit+174
-    do_IRQ+74
-    ret_from_intr+0
-    cpuidle_enter_state+159
-    do_idle+389
-    cpu_startup_entry+111
-    start_secondary+398
-    secondary_startup_64+165
-]: 11430
-```
-
-## 8. `ustack`: Stack Traces, User
-
-Syntax: `ustack`
-
-This builtin is an alias to [`ustack()`](#16-ustack-stack-traces-user).
-
-Examples:
-
-```
-# bpftrace -e 'kprobe:do_sys_open /comm == "bash"/ { @[ustack] = count(); }'
-Attaching 1 probe...
-^C
-
-@[
-    __open_nocancel+65
-    command_word_completion_function+3604
-    rl_completion_matches+370
-    bash_default_completion+540
-    attempt_shell_completion+2092
-    gen_completion_matches+82
-    rl_complete_internal+288
-    rl_complete+145
-    _rl_dispatch_subseq+647
-    _rl_dispatch+44
-    readline_internal_char+479
-    readline_internal_charloop+22
-    readline_internal+23
-    readline+91
-    yy_readline_get+152
-    yy_readline_get+429
-    yy_getc+13
-    shell_getc+469
-    read_token+251
-    yylex+192
-    yyparse+777
-    parse_command+126
-    read_command+207
-    reader_loop+391
-    main+2409
-    __libc_start_main+231
-    0x61ce258d4c544155
-]: 9
-@[
-    __open_nocancel+65
-    command_word_completion_function+3604
-    rl_completion_matches+370
-    bash_default_completion+540
-    attempt_shell_completion+2092
-    gen_completion_matches+82
-    rl_complete_internal+288
-    rl_complete+89
-    _rl_dispatch_subseq+647
-    _rl_dispatch+44
-    readline_internal_char+479
-    readline_internal_charloop+22
-    readline_internal+23
-    readline+91
-    yy_readline_get+152
-    yy_readline_get+429
-    yy_getc+13
-    shell_getc+469
-    read_token+251
-    yylex+192
-    yyparse+777
-    parse_command+126
-    read_command+207
-    reader_loop+391
-    main+2409
-    __libc_start_main+231
-    0x61ce258d4c544155
-]: 18
-```
-
-Note that for this example to work, bash had to be recompiled with frame pointers.
-
-## 9. `$1`, ..., `$N`, `$#`: Positional Parameters
+## 6. `$1`, ..., `$N`, `$#`: Positional Parameters
 
 Syntax: `$1`, `$2`, ..., `$N`, `$#`
 
@@ -2270,43 +2121,48 @@ Tracing block I/O sizes > 0 bytes
 
 ## 1. Builtins
 
-- `printf(char *fmt, ...)` - Print formatted
-- `time(char *fmt)` - Print formatted time
-- `join(char *arr[] [, char *delim])` - Print the array
-- `str(char *s [, int length])` - Returns the string pointed to by s
-- `ksym(void *p)` - Resolve kernel address
-- `usym(void *p)` - Resolve user space address
-- `kaddr(char *name)` - Resolve kernel symbol name
-- `uaddr(char *name)` - Resolve user-level symbol name
-- `reg(char *name)` - Returns the value stored in the named register
-- `system(char *fmt)` - Execute shell command
-- `exit()` - Quit bpftrace
-- `cgroupid(char *path)` - Resolve cgroup ID
-- `kstack([StackMode mode, ][int level])` - Kernel stack trace
-- `ustack([StackMode mode, ][int level])` - User stack trace
-- `ntop([int af, ]int|char[4|16] addr)` - Convert IP address data to text
-- `pton(const string *addr)` - Convert text IP address to byte array
-- `cat(char *filename)` - Print file content
-- `signal(char[] signal | u32 signal)` - Send a signal to the current task
-- `strncmp(char *s1, char *s2, int length)` - Compare first n characters of two strings
-- `strcontains(const char *haystack, const char *needle)` - Compares whether the string haystack contains the string needle.
-- `override(u64 rc)` - Override return value
-- `buf(void *d [, int length])` - Returns a hex-formatted string of the data pointed to by d
-- `sizeof(...)` - Return size of a type or expression
-- `print(...)` - Print a non-map value with default formatting
-- `strftime(char *format, int nsecs)` - Return a formatted timestamp
-- `path(struct path *path)` - Return full path
-- `uptr(void *p)` - Annotate as userspace pointer
-- `kptr(void *p)` - Annotate as kernelspace pointer
-- `macaddr(char[6] addr)` - Convert MAC address data
-- `bswap(uint[8|16|32|64] n)` - Reverse byte order
-- `offsetof(struct, element)` - Offset of element in structure
-- `nsecs([TimestampMode mode])` - Timestamps and Time Deltas
+| Function Name                                           | Description                                                      | Sync/Async/Compile Time |
+|---------------------------------------------------------|------------------------------------------------------------------|-------------------------|
+| `printf(char *fmt, ...)`                                | Print formatted                                                  | Async                   |
+| `time(char *fmt)`                                       | Print formatted time                                             | Async                   |
+| `join(char *arr[] [, char *delim])`                     | Print the array                                                  | Async                   |
+| `str(char *s [, int length])`                           | Returns the string pointed to by s                               | Sync                    |
+| `ksym(void *p)`                                         | Resolve kernel address                                           | Async                   |
+| `usym(void *p)`                                         | Resolve user space address                                       | Async                   |
+| `kaddr(char *name)`                                     | Resolve kernel symbol name                                       | Compile Time            |
+| `uaddr(char *name)`                                     | Resolve user-level symbol name                                   | Compile Time            |
+| `reg(char *name)`                                       | Returns the value stored in the named register                   | Sync                    |
+| `system(char *fmt)`                                     | Execute shell command                                            | Async                   |
+| `exit()`                                                | Quit bpftrace                                                    | Async                   |
+| `cgroupid(char *path)`                                  | Resolve cgroup ID                                                | Compile Time            |
+| `ntop([int af, ]int\|char[4\|16] addr)`                 | Convert IP address data to text                                  | Sync                    |
+| `kstack([StackMode mode, ][int level])`                 | Kernel stack trace                                               | Sync                    |
+| `ustack([StackMode mode, ][int level])`                 | User stack trace                                                 | Sync                    |
+| `cat(char *filename)`                                   | Print file content                                               | Async                   |
+| `signal(char[] signal \| u32 signal)`                   | Send a signal to the current task                                | Sync                    |
+| `strncmp(char *s1, char *s2, int length)`               | Compare first n characters of two strings                        | Sync                    |
+| `strcontains(const char *haystack, const char *needle)` | Compares whether the string haystack contains the string needle. | Sync                    |
+| `override(u64 rc)`                                      | Override return value                                            | Sync                    |
+| `buf(void *d [, int length])`                           | Returns a hex-formatted string of the data pointed to by d       | Sync                    |
+| `sizeof(...)`                                           | Return size of a type or expression                              | Sync                    |
+| `print(...)`                                            | Print a non-map value with default formatting                    | Async                   |
+| `strftime(char *format, int nsecs)`                     | Return a formatted timestamp                                     | Async                   |
+| `path(struct path *path)`                               | Return full path                                                 | Sync                    |
+| `uptr(void *p)`                                         | Annotate as userspace pointer                                    | Sync                    |
+| `kptr(void *p)`                                         | Annotate as kernelspace pointer                                  | Sync                    |
+| `macaddr(char[6] addr)`                                 | Convert MAC address data                                         | Sync                    |
+| `cgroup_path(int cgroupid, string filter)`              | Convert cgroup id to cgroup path                                 | Sync                    |
+| `bswap(uint[8\|\16\|32\|64] n)`                         | Reverse byte order                                               | Sync                    |
+| `skboutput(const string p, struct sk_buff *s, ...)`     | Write skb 's data section into a PCAP file                       | Async                   |
+| `pton(const string *addr)`                              | Convert text IP address to byte array                            | Compile Time            |
+| `strerror(uint64 error)`                                | Get error message for errno code                                 | Sync                    |
+| `offsetof(struct, element)`                             | Offset of element in structure                                   | Compile Time            |
+| `nsecs([TimestampMode mode])`                           | Timestamps and Time Deltas                                       | Sync                    |
 
 Some of these are asynchronous: the kernel queues the event, but some time later (milliseconds) it is
 processed in user-space. The asynchronous actions are: `printf()`, `time()`, and `join()`. Both `ksym()`
 and `usym()`, as well as the variables `kstack` and `ustack`, record addresses synchronously, but then do
-symbol translation asynchronously.
+symbol translation asynchronously. See the *Invocation Mode* section in the bpftrace(8) manpage for more information.
 
 A selection of these is discussed in the following sections.
 
@@ -3378,10 +3234,12 @@ Offset of comm: 3216
 
 Syntax: `nsecs([TimestampMode mode])`
 
-Get the nanoseconds of the specified clock. Three time types are currently supported, namely
-- boot: nsecs() or nsecs(boot) is to get nanoseconds since the system boot
-- tai: nsecs(tai) is to get nanoseconds of CLOCK_TAI through bpf_ktime_get_tai_ns helper function
-- sw_tai: nsecs(sw_tai) is to get nanoseconds of CLOCK_TAI, but it is obtained through the "triple vdso sandwich" method
+Returns a timestamp in nanoseconds, as given by the requested kernel clock. Defaults to `boot` if no clock is explicitly requested.
+
+- `nsecs(monotonic)` - nanosecond timestamp since boot, exclusive of time the system spent suspended (CLOCK_MONOTONIC)
+- `nsecs(boot)` - nanoseconds since boot, inclusive of time the system spent suspended (CLOCK_BOOTTIME)
+- `nsecs(tai)` - TAI timestamp in nanoseconds (CLOCK_TAI)
+- `nsecs(sw_tai)` - approximation of TAI timestamp in nanoseconds, is obtained through the "triple vdso sandwich" method. For older kernels without direct TAI timestamp access in BPF.
 
 Examples:
 
@@ -3457,6 +3315,7 @@ END
 
 Some of these are asynchronous: the kernel queues the event, but some time later (milliseconds) it is
 processed in user-space. The asynchronous actions are: `print()` on maps, `clear()`, and `zero()`.
+See the *Invocation Mode* section in the bpftrace(8) manpage for more information.
 
 ## 2. `count()`: Count
 

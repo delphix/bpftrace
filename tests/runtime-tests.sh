@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 if [[ $EUID -ne 0 ]]; then
     >&2 echo "Must be run as root"
@@ -17,4 +17,4 @@ echo "bpftrace --info:"
 echo "===================="
 "${BPFTRACE_RUNTIME_TEST_EXECUTABLE}/bpftrace" --info
 
-python3 runtime/engine/main.py "$@"
+python3 -u runtime/engine/main.py "$@"

@@ -57,7 +57,8 @@ void test(BPFtrace &bpftrace,
           bool mock_has_features,
           Driver &driver,
           const std::string &input,
-          int expected_result = 0,
+          int expected_result,
+          std::string_view expected_error = {},
           bool safe_mode = true,
           bool has_child = false)
 {
@@ -79,46 +80,86 @@ void test(BPFtrace &bpftrace,
   // Override to mockbpffeature.
   bpftrace.feature_ = std::make_unique<MockBPFfeature>(mock_has_features);
   ast::SemanticAnalyser semantics(driver.root.get(), bpftrace, out, has_child);
-  EXPECT_EQ(expected_result, semantics.analyse()) << msg.str() + out.str();
+  ASSERT_EQ(expected_result, semantics.analyse()) << msg.str() + out.str();
+  if (expected_error.data())
+  {
+    if (!expected_error.empty() && expected_error[0] == '\n')
+      expected_error.remove_prefix(1); // Remove initial '\n'
+    EXPECT_EQ(out.str(), expected_error);
+  }
 }
 
 void test(BPFtrace &bpftrace,
-    const std::string &input,
-    int expected_result=0,
-    bool safe_mode = true)
+          const std::string &input,
+          int expected_result,
+          bool safe_mode = true)
 {
   Driver driver(bpftrace);
-  test(bpftrace, true, driver, input, expected_result, safe_mode);
+  test(bpftrace, true, driver, input, expected_result, {}, safe_mode, false);
 }
 
-void test(Driver &driver,
-    const std::string &input,
-    int expected_result=0,
-    bool safe_mode = true)
+void test(Driver &driver, const std::string &input, int expected_result)
 {
   auto bpftrace = get_mock_bpftrace();
-  test(*bpftrace, true, driver, input, expected_result, safe_mode);
+  test(*bpftrace, true, driver, input, expected_result, {}, true, false);
 }
 
 void test(MockBPFfeature &feature,
           const std::string &input,
-          int expected_result = 0,
+          int expected_result,
           bool safe_mode = true)
 {
   auto bpftrace = get_mock_bpftrace();
   Driver driver(*bpftrace);
   bool mock_has_features = feature.has_features_;
-  test(*bpftrace, mock_has_features, driver, input, expected_result, safe_mode);
+  test(*bpftrace,
+       mock_has_features,
+       driver,
+       input,
+       expected_result,
+       {},
+       safe_mode,
+       false);
 }
 
 void test(const std::string &input,
-          int expected_result = 0,
-          bool safe_mode = true,
+          int expected_result,
+          bool safe_mode,
           bool has_child = false)
 {
   auto bpftrace = get_mock_bpftrace();
   Driver driver(*bpftrace);
-  test(*bpftrace, true, driver, input, expected_result, safe_mode, has_child);
+  test(*bpftrace,
+       true,
+       driver,
+       input,
+       expected_result,
+       {},
+       safe_mode,
+       has_child);
+}
+
+void test(const std::string &input, int expected_result)
+{
+  auto bpftrace = get_mock_bpftrace();
+  Driver driver(*bpftrace);
+  test(*bpftrace, true, driver, input, expected_result, {}, true, false);
+}
+
+void test(const std::string &input,
+          int expected_result,
+          std::string_view expected_error)
+{
+  auto bpftrace = get_mock_bpftrace();
+  Driver driver(*bpftrace);
+  test(*bpftrace,
+       true,
+       driver,
+       input,
+       expected_result,
+       expected_error,
+       true,
+       false);
 }
 
 TEST(semantic_analyser, builtin_variables)
@@ -578,6 +619,10 @@ TEST(semantic_analyser, call_strftime)
   test("kprobe:f { @[strftime(\"%M:%S\", nsecs)] = 1; }", 0);
   test("kprobe:f { printf(\"%s\", strftime(\"%M:%S\", nsecs)); }", 0);
   test("kprobe:f { strncmp(\"str\", strftime(\"%M:%S\", nsecs), 10); }", 10);
+
+  test("kprobe:f { strftime(\"%M:%S\", nsecs(monotonic)); }", 10);
+  test("kprobe:f { strftime(\"%M:%S\", nsecs(boot)); }", 0);
+  test("kprobe:f { strftime(\"%M:%S\", nsecs(tai)); }", 0);
 }
 
 TEST(semantic_analyser, call_str)
@@ -1907,7 +1952,9 @@ TEST(semantic_analyser, signed_int_modulo_warnings)
 TEST(semantic_analyser, map_as_lookup_table)
 {
   // Initializing a map should not lead to usage issues
-  test("BEGIN { @[0] = \"abc\"; @[1] = \"def\" } kretprobe:f { printf(\"%s\\n\", @[retval])}");
+  test("BEGIN { @[0] = \"abc\"; @[1] = \"def\" } kretprobe:f { "
+       "printf(\"%s\\n\", @[retval])}",
+       0);
 }
 
 TEST(semantic_analyser, cast_sign)
@@ -2710,11 +2757,16 @@ TEST(semantic_analyser, string_size)
 TEST(semantic_analyser, call_nsecs)
 {
   test("BEGIN { $ns = nsecs(); }", 0);
+  test("BEGIN { $ns = nsecs(monotonic); }", 0);
   test("BEGIN { $ns = nsecs(boot); }", 0);
   MockBPFfeature hasfeature(true);
   test(hasfeature, "BEGIN { $ns = nsecs(tai); }", 0);
   test("BEGIN { $ns = nsecs(sw_tai); }", 0);
-  test("BEGIN { $ns = nsecs(xxx); }", 1);
+  test("BEGIN { $ns = nsecs(xxx); }", 1, R"(
+stdin:1:15-24: ERROR: Invalid timestamp mode: xxx
+BEGIN { nsecs(xxx); }
+        ~~~~~~~~~~
+)");
 }
 
 class semantic_analyser_btf : public test_btf
