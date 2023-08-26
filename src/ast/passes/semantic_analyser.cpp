@@ -2355,12 +2355,51 @@ void SemanticAnalyser::visit(Cast &cast)
 
   if (!cast.type.IsIntTy() && !cast.type.IsPtrTy() &&
       !(cast.type.IsPtrTy() && !cast.type.GetElementTy()->IsIntTy() &&
-        !cast.type.GetElementTy()->IsRecordTy()))
+        !cast.type.GetElementTy()->IsRecordTy()) &&
+      // we support casting integers to int arrays
+      !(cast.type.IsArrayTy() && cast.type.GetElementTy()->IsIntTy()))
   {
     LOG(ERROR, cast.loc, err_) << "Cannot cast to \"" << cast.type << "\"";
   }
-  if (cast.type.IsIntTy() && !rhs.IsIntTy() && !rhs.IsPtrTy() &&
-      !rhs.IsCtxAccess())
+
+  if (cast.type.IsArrayTy())
+  {
+    if (cast.type.GetElementTy()->IsBoolTy())
+    {
+      LOG(ERROR, cast.loc, err_) << "Bit arrays are not supported";
+      return;
+    }
+
+    if (cast.type.GetNumElements() == 0)
+    {
+      if (cast.type.GetElementTy()->GetSize() == 0)
+        LOG(ERROR, cast.loc, err_) << "Could not determine size of the array";
+      else
+      {
+        if (rhs.GetSize() % cast.type.GetElementTy()->GetSize() != 0)
+        {
+          LOG(ERROR, cast.loc, err_)
+              << "Cannot determine array size: the element size is "
+                 "incompatible with the cast integer size";
+        }
+
+        // cast to unsized array (e.g. int8[]), determine size from RHS
+        auto num_elems = rhs.GetSize() / cast.type.GetElementTy()->GetSize();
+        cast.type = CreateArray(num_elems, *cast.type.GetElementTy());
+      }
+    }
+
+    if (rhs.IsIntTy())
+      cast.type.is_internal = true;
+  }
+
+  if ((cast.type.IsIntTy() && !rhs.IsIntTy() && !rhs.IsPtrTy() &&
+       !rhs.IsCtxAccess() && !(rhs.IsArrayTy())) ||
+      // casting from/to int arrays must respect the size
+      (cast.type.IsArrayTy() &&
+       (!rhs.IsIntTy() || cast.type.GetSize() != rhs.GetSize())) ||
+      (rhs.IsArrayTy() &&
+       (!cast.type.IsIntTy() || cast.type.GetSize() != rhs.GetSize())))
   {
     LOG(ERROR, cast.loc, err_)
         << "Cannot cast from \"" << rhs << "\" to \"" << cast.type << "\"";

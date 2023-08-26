@@ -2101,10 +2101,45 @@ void CodegenLLVM::visit(Cast &cast)
   auto scoped_del = accept(cast.expr);
   if (cast.type.IsIntTy())
   {
-    expr_ = b_.CreateIntCast(expr_,
-                             b_.getIntNTy(8 * cast.type.GetSize()),
-                             cast.type.IsSigned(),
-                             "cast");
+    auto int_ty = b_.GetType(cast.type);
+    if (cast.expr->type.IsArrayTy())
+    {
+      // we need to read the array into the integer
+      Value *array = expr_;
+      if (cast.expr->type.is_internal || cast.expr->type.IsCtxAccess() ||
+          cast.expr->type.is_btftype)
+      {
+        // array is on the stack - just cast the pointer
+        if (array->getType()->isIntegerTy())
+          array = b_.CreateIntToPtr(array, int_ty->getPointerTo());
+        else
+          array = b_.CreatePointerCast(array, int_ty->getPointerTo());
+      }
+      else
+      {
+        // array is in memory - need to proberead
+        auto buf = b_.CreateAllocaBPF(cast.type);
+        b_.CreateProbeRead(
+            ctx_, buf, cast.type, array, cast.loc, cast.expr->type.GetAS());
+        array = buf;
+      }
+      expr_ = b_.CreateLoad(int_ty, array, true);
+    }
+    else
+    {
+      expr_ = b_.CreateIntCast(expr_,
+                               b_.getIntNTy(cast.type.GetIntBitWidth()),
+                               cast.type.IsSigned(),
+                               "cast");
+    }
+  }
+  else if (cast.type.IsArrayTy() && cast.expr->type.IsIntTy())
+  {
+    // We need to store the cast integer on stack and reinterpret the pointer to
+    // it to an array pointer.
+    auto v = b_.CreateAllocaBPF(expr_->getType());
+    b_.CreateStore(expr_, v);
+    expr_ = b_.CreatePointerCast(v, b_.GetType(cast.type)->getPointerTo());
   }
 }
 
