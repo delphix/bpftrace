@@ -9,6 +9,16 @@ and this project adheres to
 ## Unreleased
 
 #### Added
+#### Changed
+#### Deprecated
+#### Removed
+#### Fixed
+#### Docs
+#### Tools
+
+## [0.19.0] 2023-09-19
+
+#### Added
 - Rawtracepoint support wildcards and list show
   - [#2588](https://github.com/iovisor/bpftrace/pull/2588)
 - Support all iterators
@@ -21,6 +31,8 @@ and this project adheres to
   - [#2686](https://github.com/iovisor/bpftrace/pull/2686)
 - Support targeting all running processes for USDTs
   - [#2734](https://github.com/iovisor/bpftrace/pull/2734)
+- Support targeting all running processes for uprobes/uretprobes
+  - [#2757](https://github.com/iovisor/bpftrace/pull/2757)
 #### Changed
 - Make `args` a structure (instead of a pointer)
   - [#2578](https://github.com/iovisor/bpftrace/pull/2578)
