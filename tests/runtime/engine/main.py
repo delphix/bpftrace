@@ -2,6 +2,7 @@
 
 import argparse
 from datetime import timedelta
+import math
 import os
 import re
 import time
@@ -35,6 +36,7 @@ def main(test_filter, run_aot_tests):
         total_tests += len(suite_tests)
 
     failed_tests = []
+    timeouted_tests = []
 
 
     print(ok("[==========]") + " Running %d tests from %d test cases.\n" % (total_tests, len(test_suite)))
@@ -49,13 +51,14 @@ def main(test_filter, run_aot_tests):
                 skipped_tests.append((fname, test, status))
             if Runner.failed(status):
                 failed_tests.append("%s.%s" % (fname, test.name))
+            if Runner.timeouted(status):
+                timeouted_tests.append("%s.%s" % (fname, test.name))
         # TODO(mmarchini) elapsed time per test suite and per test (like gtest)
         print(ok("[----------]") + " %d tests from %s\n" % (len(tests), fname))
     elapsed = time.time() - start_time
     total_tests -= len(skipped_tests)
 
-    # TODO(mmarchini) pretty print time
-    print(ok("[==========]") + " %d tests from %d test cases ran. (%s total)" % (total_tests, len(test_suite), elapsed))
+    print(ok("[==========]") + " %d tests from %d test cases ran. (%s ms total)" % (total_tests, len(test_suite), math.ceil(elapsed * 1000)))
     print(ok("[  PASSED  ]") + " %d tests." % (total_tests - len(failed_tests)))
 
     if skipped_tests:
@@ -63,10 +66,12 @@ def main(test_filter, run_aot_tests):
         for test_suite, test, status in skipped_tests:
             print(warn("[   SKIP   ]") + " %s.%s (%s)" % (test_suite, test.name, Runner.skip_reason(test, status)))
 
-    if failed_tests:
-        print(fail("[  FAILED  ]") + " %d tests, listed below:" % len(failed_tests))
+    if failed_tests or timeouted_tests:
+        print(fail("[  FAILED  ]") + " %d tests, listed below:" % (len(failed_tests) + len(timeouted_tests)))
         for failed_test in failed_tests:
             print(fail("[  FAILED  ]") + " %s" % failed_test)
+        for timeouted_test in timeouted_tests:
+            print(fail("[  TIMEOUT ]") + " %s" % timeouted_test)
 
     if failed_tests:
         exit(1)
