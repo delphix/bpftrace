@@ -17,6 +17,7 @@ add_library(runtime
   attached_probe.cpp
   bpffeature.cpp
   bpftrace.cpp
+  bpfprogram.cpp
   btf.cpp
   child.cpp
   disasm.cpp
@@ -31,7 +32,6 @@ add_library(runtime
   probe_matcher.cpp
   procmon.cpp
   printf.cpp
-  relocator.cpp
   resolve_cgroupid.cpp
   required_resources.cpp
   struct.cpp
