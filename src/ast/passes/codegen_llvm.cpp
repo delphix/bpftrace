@@ -461,26 +461,59 @@ void CodegenLLVM::visit(Call &call)
   {
     Map &map = *call.map;
     auto [key, scoped_key_deleter] = getMapKey(map);
-    Value *oldval = b_.CreateMapLookupElem(ctx_, map, key, call.loc);
-    AllocaInst *newval = b_.CreateAllocaBPF(map.type, map.ident + "_val");
+    CallInst *lookup = b_.CreateMapLookup(map, key);
+    SizedType &type = map.type;
 
-    Function *parent = b_.GetInsertBlock()->getParent();
     auto scoped_del = accept(call.vargs->front());
     // promote int to 64-bit
     expr_ = b_.CreateIntCast(expr_,
                              b_.getInt64Ty(),
                              call.vargs->front()->type.IsSigned());
-    BasicBlock *lt = BasicBlock::Create(module_->getContext(), "min.lt", parent);
-    BasicBlock *ge = BasicBlock::Create(module_->getContext(), "min.ge", parent);
-    b_.CreateCondBr(b_.CreateICmpSGE(expr_, oldval), ge, lt);
+
+    Function *parent = b_.GetInsertBlock()->getParent();
+    BasicBlock *lookup_success_block = BasicBlock::Create(module_->getContext(),
+                                                          "lookup_success",
+                                                          parent);
+    BasicBlock *lookup_failure_block = BasicBlock::Create(module_->getContext(),
+                                                          "lookup_failure",
+                                                          parent);
+    BasicBlock *lookup_merge_block = BasicBlock::Create(module_->getContext(),
+                                                        "lookup_merge",
+                                                        parent);
+
+    AllocaInst *value = b_.CreateAllocaBPF(type, "lookup_elem_val");
+    Value *condition = b_.CreateICmpNE(
+        b_.CreateIntCast(lookup, b_.getInt8PtrTy(), true),
+        ConstantExpr::getCast(Instruction::IntToPtr,
+                              b_.getInt64(0),
+                              b_.getInt8PtrTy()),
+        "map_lookup_cond");
+    b_.CreateCondBr(condition, lookup_success_block, lookup_failure_block);
+
+    b_.SetInsertPoint(lookup_success_block);
+
+    auto *cast = b_.CreatePointerCast(lookup, value->getType(), "cast");
+    BasicBlock *ge = BasicBlock::Create(module_->getContext(),
+                                        "max.ge",
+                                        parent);
+    b_.CreateCondBr(b_.CreateICmpSGE(expr_,
+                                     b_.CreateLoad(b_.getInt64Ty(), cast)),
+                    ge,
+                    lookup_merge_block);
 
     b_.SetInsertPoint(ge);
-    b_.CreateStore(expr_, newval);
-    b_.CreateMapUpdateElem(ctx_, map, key, newval, call.loc);
-    b_.CreateBr(lt);
+    b_.CreateStore(expr_, cast);
 
-    b_.SetInsertPoint(lt);
-    b_.CreateLifetimeEnd(newval);
+    b_.CreateBr(lookup_merge_block);
+
+    b_.SetInsertPoint(lookup_failure_block);
+
+    b_.CreateMapElemInit(ctx_, map, key, expr_, call.loc);
+
+    b_.CreateBr(lookup_merge_block);
+    b_.SetInsertPoint(lookup_merge_block);
+    b_.CreateLifetimeEnd(value);
+
     expr_ = nullptr;
   }
   else if (call.func == "avg" || call.func == "stats")
@@ -490,25 +523,17 @@ void CodegenLLVM::visit(Call &call)
     Map &map = *call.map;
 
     AllocaInst *count_key = getHistMapKey(map, b_.getInt64(0));
-    Value *count_old = b_.CreateMapLookupElem(ctx_, map, count_key, call.loc);
-    AllocaInst *count_new = b_.CreateAllocaBPF(map.type, map.ident + "_num");
-    b_.CreateStore(b_.CreateAdd(count_old, b_.getInt64(1)), count_new);
-    b_.CreateMapUpdateElem(ctx_, map, count_key, count_new, call.loc);
+    b_.CreateMapElemAdd(ctx_, map, count_key, b_.getInt64(1), call.loc);
     b_.CreateLifetimeEnd(count_key);
-    b_.CreateLifetimeEnd(count_new);
 
     AllocaInst *total_key = getHistMapKey(map, b_.getInt64(1));
-    Value *total_old = b_.CreateMapLookupElem(ctx_, map, total_key, call.loc);
-    AllocaInst *total_new = b_.CreateAllocaBPF(map.type, map.ident + "_val");
     auto scoped_del = accept(call.vargs->front());
     // promote int to 64-bit
     expr_ = b_.CreateIntCast(expr_,
                              b_.getInt64Ty(),
                              call.vargs->front()->type.IsSigned());
-    b_.CreateStore(b_.CreateAdd(expr_, total_old), total_new);
-    b_.CreateMapUpdateElem(ctx_, map, total_key, total_new, call.loc);
+    b_.CreateMapElemAdd(ctx_, map, total_key, expr_, call.loc);
     b_.CreateLifetimeEnd(total_key);
-    b_.CreateLifetimeEnd(total_new);
 
     expr_ = nullptr;
   }
@@ -525,15 +550,8 @@ void CodegenLLVM::visit(Call &call)
                              call.vargs->front()->type.IsSigned());
     Value *log2 = b_.CreateCall(log2_func_, expr_, "log2");
     AllocaInst *key = getHistMapKey(map, log2);
-
-    Value *oldval = b_.CreateMapLookupElem(ctx_, map, key, call.loc);
-    AllocaInst *newval = b_.CreateAllocaBPF(map.type, map.ident + "_val");
-    b_.CreateStore(b_.CreateAdd(oldval, b_.getInt64(1)), newval);
-    b_.CreateMapUpdateElem(ctx_, map, key, newval, call.loc);
-
-    // oldval can only be an integer so won't be in memory and doesn't need lifetime end
+    b_.CreateMapElemAdd(ctx_, map, key, b_.getInt64(1), call.loc);
     b_.CreateLifetimeEnd(key);
-    b_.CreateLifetimeEnd(newval);
     expr_ = nullptr;
   }
   else if (call.func == "lhist")
@@ -572,15 +590,9 @@ void CodegenLLVM::visit(Call &call)
                                   "linear");
 
     AllocaInst *key = getHistMapKey(map, linear);
+    b_.CreateMapElemAdd(ctx_, map, key, b_.getInt64(1), call.loc);
 
-    Value *oldval = b_.CreateMapLookupElem(ctx_, map, key, call.loc);
-    AllocaInst *newval = b_.CreateAllocaBPF(map.type, map.ident + "_val");
-    b_.CreateStore(b_.CreateAdd(oldval, b_.getInt64(1)), newval);
-    b_.CreateMapUpdateElem(ctx_, map, key, newval, call.loc);
-
-    // oldval can only be an integer so won't be in memory and doesn't need lifetime end
     b_.CreateLifetimeEnd(key);
-    b_.CreateLifetimeEnd(newval);
     expr_ = nullptr;
   }
   else if (call.func == "delete")
