@@ -13,12 +13,16 @@ and this project adheres to
   - [#2769](https://github.com/iovisor/bpftrace/pull/2769)
 - Emit better errors messages for invalid attachpoints
   - [#2781](https://github.com/iovisor/bpftrace/pull/2781)
+- Add support for uprobe_multi link
+  - [#2810](https://github.com/iovisor/bpftrace/pull/2810)
 #### Changed
 #### Deprecated
 #### Removed
 #### Fixed
 - Fix JSON output for cgroup_path
   - [#2793](https://github.com/iovisor/bpftrace/pull/2793)
+- Fix silent truncation of 64-bit values in hist()
+  - [#2822](https://github.com/iovisor/bpftrace/pull/2822)
 #### Docs
 #### Tools
 - Update runqlen.bt to remove `runnable_weight` field from cfs_rq struct.
