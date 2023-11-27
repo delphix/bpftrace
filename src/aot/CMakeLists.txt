@@ -20,7 +20,11 @@ endif(LIBPCAP_FOUND)
 
 # Linking
 if(STATIC_LINKING)
-  target_link_options(bpftrace-aotrt  BEFORE PRIVATE "-static-libgcc" "-static-libstdc++")
+  if(STATIC_LIBC)
+    target_link_options(bpftrace-aotrt BEFORE PRIVATE "-static")
+  else()
+    target_link_options(bpftrace-aotrt  BEFORE PRIVATE "-static-libgcc" "-static-libstdc++")
+  endif(STATIC_LIBC)
 endif(STATIC_LINKING)
 
 # ASAN

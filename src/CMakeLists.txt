@@ -118,7 +118,11 @@ target_compile_definitions(libbpftrace PRIVATE ${BPFTRACE_FLAGS})
 
 # Linking
 if(STATIC_LINKING)
-  target_link_options(${BPFTRACE} BEFORE PRIVATE "-static-libgcc" "-static-libstdc++")
+  if(STATIC_LIBC)
+    target_link_options(${BPFTRACE} BEFORE PRIVATE "-static")
+  else()
+    target_link_options(${BPFTRACE} BEFORE PRIVATE "-static-libgcc" "-static-libstdc++")
+  endif(STATIC_LIBC)
 endif(STATIC_LINKING)
 
 
@@ -165,7 +169,7 @@ else()
   target_link_libraries(runtime ${LIBBCC_LIBRARIES})
 endif()
 
-if(STATIC_LINKING)
+if(STATIC_BPF_BCC)
   # These are not part of the static libbcc so have to be added separate
   target_link_libraries(runtime ${LIBBCC_BPF_LIBRARIES})
   target_link_libraries(runtime ${LIBBPF_LIBRARIES})
@@ -176,7 +180,7 @@ if(STATIC_LINKING)
   target_link_libraries(runtime LIBELF)
 else()
   target_link_libraries(runtime ${LIBELF_LIBRARIES})
-endif(STATIC_LINKING)
+endif(STATIC_BPF_BCC)
 
 if (LIBDW_FOUND)
   if(STATIC_LINKING)
@@ -242,6 +246,9 @@ if (STATIC_LINKING)
     target_link_libraries(runtime "-Wl,-Bdynamic" "-lrt" "-lpthread" "-ldl" "-lm")
     target_link_libraries(runtime "-Wl,-Bstatic" "-lz")
   endif()
+elseif(STATIC_BPF_BCC)
+  # partial static build, libbpf needs zlib, bcc needs liblzma
+  target_link_libraries(runtime "-lz" "-llzma")
 endif()
 
 unset(MAIN_SRC)

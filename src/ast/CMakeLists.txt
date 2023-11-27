@@ -28,9 +28,7 @@ add_dependencies(ast_defs parser)
 
 target_compile_definitions(ast PRIVATE ${BPFTRACE_FLAGS})
 
-if(STATIC_LINKING)
-  include(Util)
-
+if (STATIC_LINKING)
   set(clang_libs
       clangAST
       clangAnalysis
@@ -59,30 +57,34 @@ if(STATIC_LINKING)
       orcjit
       ${LLVM_TARGETS_TO_BUILD})
 
-  llvm_map_components_to_libnames(llvm_libs ${llvm_lib_names})
 
-  # It's extremely unclear why the clang static libraries export link
-  # dependencies on the llvm and clang shared libraries. Regardless, we need
-  # this hack to remove them.
-  unlink_transitive_dependency("${CLANG_EXPORTED_TARGETS}" "LLVM")
-  unlink_transitive_dependency("${CLANG_EXPORTED_TARGETS}" "$<LINK_ONLY:clang-cpp>")
-
-  if(TARGET libclang_static)
-    target_link_libraries(ast libclang_static)
+  if(EMBED_USE_LLVM)
+    target_link_libraries(ast "-Wl,--start-group" ${CLANG_EMBEDDED_CMAKE_TARGETS} ${LLVM_EMBEDDED_CMAKE_TARGETS} "-Wl,--end-group")
   else()
-    # old LLVM versions don't export libclang_static in ClangTargets.cmake; fall back to
-    # libclang.a in that case
-    target_link_libraries(ast libclang.a)
+    llvm_map_components_to_libnames(llvm_libs ${llvm_lib_names})
+
+    if(TARGET libclang_static)
+      target_link_libraries(ast libclang_static)
+    else()
+      # old LLVM versions don't export libclang_static in ClangTargets.cmake; fall back to
+      # libclang.a in that case
+      target_link_libraries(ast libclang.a)    
+    endif()
+
+    target_link_libraries(ast ${clang_libs})
+    target_link_libraries(ast ${llvm_libs})
   endif()
 
-  target_link_libraries(ast ${clang_libs})
-  target_link_libraries(ast ${llvm_libs})
+  if(STATIC_LIBC)
+    unlink_transitive_dependency("${CLANG_EXPORTED_TARGETS}" "LLVM")
+  endif()
+
 else()
   find_library(found_LLVM LLVM HINTS ${LLVM_LIBRARY_DIRS})
   if(found_LLVM)
     target_link_libraries(ast LLVM)
   else()
-    llvm_map_components_to_libnames(_llvm_libs bpfcodegen ipo irreader mcjit orcjit)
+    llvm_map_components_to_libnames(_llvm_libs bpfcodegen ipo irreader mcjit orcjit ${LLVM_TARGETS_TO_BUILD})
     llvm_expand_dependencies(llvm_libs ${_llvm_libs})
     target_link_libraries(ast ${llvm_libs})
   endif()

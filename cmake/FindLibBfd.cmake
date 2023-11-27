@@ -79,7 +79,10 @@ if(STATIC_LINKING OR LIBBFD_STATIC)
     list(APPEND CMAKE_REQUIRED_LIBRARIES ${LIBZSTD_LIBRARIES})
   endif(LIBZSTD_FOUND)
 
-  set(CMAKE_REQUIRED_FLAGS "-Wl,--start-group -Wl,-Bdynamic -Wl,-Bdynamic -lpthread -Wl,-Bdynamic -ldl")
+  if(NOT STATIC_LIBC)
+    set(CMAKE_REQUIRED_FLAGS
+      "-Wl,--start-group -Wl,-Bdynamic -Wl,-Bdynamic -lpthread -Wl,-Bdynamic -ldl")
+  endif()
 endif()
 INCLUDE(CheckCXXSourceCompiles)
 CHECK_CXX_SOURCE_COMPILES("

@@ -10,21 +10,43 @@
 #  set (LibBpf_FIND_QUIETLY TRUE)
 #endif (LIBBPF_LIBRARIES AND LIBBPF_INCLUDE_DIRS)
 
-find_path (LIBBPF_INCLUDE_DIRS
-  NAMES
-    bpf/bpf.h
-    bpf/btf.h
-    bpf/libbpf.h
-  PATHS
-    ENV CPATH)
+if (USE_SYSTEM_BPF_BCC)
+  find_path (LIBBPF_INCLUDE_DIRS
+    NAMES
+      bpf/bpf.h
+      bpf/btf.h
+      bpf/libbpf.h
+    PATHS
+      ENV CPATH)
 
-find_library (LIBBPF_LIBRARIES
-  NAMES
-    bpf
-  PATHS
-    ENV LIBRARY_PATH
-    ENV LD_LIBRARY_PATH)
-set(LIBBPF_ERROR_MESSAGE "Please install the libbpf development package")
+  find_library (LIBBPF_LIBRARIES
+    NAMES
+      bpf
+    PATHS
+      ENV LIBRARY_PATH
+      ENV LD_LIBRARY_PATH)
+  set(LIBBPF_ERROR_MESSAGE "Please install the libbpf development package")
+else()
+  # Use static linking with vendored libbpf
+  set(SAVED_CMAKE_FIND_LIBRARY_SUFFIXES ${CMAKE_FIND_LIBRARY_SUFFIXES})
+  set(CMAKE_FIND_LIBRARY_SUFFIXES ".a")
+  set(SAVED_CMAKE_PREFIX_PATH ${CMAKE_PREFIX_PATH})
+  set(CMAKE_PREFIX_PATH ${BPF_BCC_PREFIX_PATH})
+  find_path (LIBBPF_INCLUDE_DIRS
+    NAMES
+      bpf/bpf.h
+      bpf/btf.h
+      bpf/libbpf.h
+    NO_CMAKE_SYSTEM_PATH)
+
+  find_library (LIBBPF_LIBRARIES
+    NAMES
+      bpf
+    NO_CMAKE_SYSTEM_PATH)
+  set(CMAKE_PREFIX_PATH ${SAVED_CMAKE_PREFIX_PATH})
+  set(LIBBPF_ERROR_MESSAGE "Please run ${CMAKE_SOURCE_DIR}/build-libs.sh from the build folder first")
+  set(CMAKE_FIND_LIBRARY_SUFFIXES ${SAVED_CMAKE_FIND_LIBRARY_SUFFIXES})
+endif()
 
 include (FindPackageHandleStandardArgs)
 
