@@ -97,7 +97,6 @@
                 # Release flags
                 cmakeFlags = [
                   "-DCMAKE_BUILD_TYPE=Release"
-                  "-DUSE_SYSTEM_BPF_BCC=ON"
                 ];
               };
 
@@ -113,6 +112,8 @@
                   findutils
                   gawk
                   gnugrep
+                  kmod
+                  nftables
                   procps
                   python3
                   strace

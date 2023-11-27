@@ -4,6 +4,61 @@ This document features basic guidelines and recommendations on how to do
 bpftrace development. Please read it carefully before submitting pull requests
 to simplify reviewing and to speed up the merge process.
 
+## Building
+
+The project supports the following recommended build workflows. Please choose
+the one that works the best for you.
+
+### Nix build
+
+Nix is the most convenient way to build and test bpftrace. Nix will manage
+all of bpftrace's build and runtime dependencies. It also has the advantage
+of being used by the CI, so you are more likely to shake out errors before
+submitting your change and seeing the CI fail.
+
+The Nix build is documented in [nix.md](./nix.md).
+
+### Distro build
+
+The "distro build" is the more traditional way to build bpftrace. It relies on
+you installing all of bpftrace's build and runtime dependencies on your host
+and then calling into `cmake`.
+
+Please be aware that bpftrace has strict dependencies on new versions of
+`libbpf` and `bcc`. They are two of bpftrace's most important dependencies and
+we plan on tracking their upstream quite closely over time.
+
+As a result, while the distro build should work well on distros with newer
+packages, developers on distros that lag more behind (for example Debian) may
+want to consider using the Nix build. Or manually building and installing
+`bcc` and `libbpf`.
+
+The distro build is documented in [INSTALL.md](../INSTALL.md#generic-build-process).
+
+### Vagrant build
+
+We also provide tentative support for building and testing using Vagrant. The boxes
+we define in our [`Vagrantfile`](../Vagrantfile) should contain all the necessary
+dependencies to build and run bpftrace. Please be aware we do not have _too_ many
+folks using the vagrant workflow, so it may be a little out of date.
+
+This is useful if the host you're developing on does not run linux.
+
+Make sure you have the `vbguest` plugin installed - it is required to correctly
+install the shared file system driver on the ubuntu boxes:
+
+```
+$ vagrant plugin install vagrant-vbguest
+```
+
+Start VM:
+
+```
+$ vagrant status
+$ vagrant up $YOUR_CHOICE
+$ vagrant ssh $YOUR_CHOICE
+```
+
 ## [Tests](../tests/README.md)
 
 Every contribution should (1) not break the existing tests and (2) introduce new
@@ -11,18 +66,8 @@ tests if relevant. See existing tests for inspiration on how to write new ones. 
 
 ## Continuous integration
 
-CI executes the above tests in a matrix of different environments:
-
-- Standard (dynamically linked) bpftrace built on NixOS with different versions
-  of LLVM.
-- bpftrace with all dependencies, except for libc, statically linked. Uses
-  Ubuntu 20.04, LLVM 12, and is linked dynamically to two different versions of
-  libc.
-- bpftrace with all dependencies, including libc, statically linked. Uses
-  Alpine and LLVM 10.
-
-The first matrix is defined in `.github/workflows/ci.yml` and the latter two in
-`.github/workflows/embedded.yml`.
+CI executes the above tests in a matrix of different LLVM versions on NixOS.
+The jobs are defined in `.github/workflows/ci.yml`.
 
 ### Running the CI
 
@@ -33,8 +78,8 @@ allow you to run the CI against your testing branches.
 ### Debugging CI failures
 
 It may often happen that tests pass on your local setup but fail in one of the
-CI environments (especially the embedded ones). In such a case, it is useful to
-reproduce the environment to debug the issue.
+CI environments. In such a case, it is useful to reproduce the environment to
+debug the issue.
 
 To reproduce the NixOS jobs (from `.github/workflows/ci.yml`):
 
@@ -53,13 +98,6 @@ $ NIX_TARGET=.#bpftrace-llvm11  \
   RUNTIME_TEST_DISABLE="probe.kprobe_offset_fail_size,usdt.usdt probes - file based semaphore activation multi process" \
   ./.github/include/ci.py
 ```
-
-To reproduce the embedded jobs (from `.github/workflows/embedded.yml`):
-
-See the job file (`.github/workflows/*.yml`) for exact `docker build` and
-`docker run` commands.  Note: the images use `docker/build.sh` as the
-entrypoint so you may want to override it (`--entrypoint=`) and build bpftrace
-manually in the container.
 
 ### Known issues
 

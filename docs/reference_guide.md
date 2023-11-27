@@ -28,7 +28,7 @@ discussion to other files in /docs, the /tools/\*\_examples.txt files, or blog p
     - [2. `/.../`: Filtering](#2--filtering)
     - [3. `//`, `/*`: Comments](#3---comments)
     - [4. Literals](#4-literals)
-    - [5. `->`: C Struct Navigation](#5---c-struct-navigation)
+    - [5. `.`, `->`: C Struct Navigation](#5---c-struct-navigation)
     - [6. `struct`: Struct Declaration](#6-struct-struct-declaration)
     - [7. `? :`: ternary operators](#7---ternary-operators)
     - [8. `if () {...} else {...}`: if-else statements](#8-if---else--if-else-statements)
@@ -703,7 +703,7 @@ Attaching 1 probe...
  String literals are enclosed in double quotes, e.g. `"a string"`.
 
 
-## 5. `->`: C Struct Navigation
+## 5. `.`, `->`: C Struct Navigation
 
 tracepoint example:
 
@@ -1788,11 +1788,14 @@ Syntax:
 
 ```
 kfunc[:module]:function
+fentry[:module]:function
 kretfunc[:module]:function
+fexit[:module]:function
 ```
 
 These are kernel function probes implemented via eBPF trampolines which allows
 kernel code to call into BPF programs with practically zero overhead.
+`kfunc` and `kretfunc` are aliased as `fentry` and `fexit` to match how these are referenced in the kernel.
 
 If no kernel module is given, all loaded modules are searched for the given function.
 
@@ -1825,7 +1828,9 @@ Syntax:
 
 ```
 kfunc[:module]:function      args.NAME  ...
+fentry[:module]:function      args.NAME  ...
 kretfunc[:module]:function   args.NAME ... retval
+fexit[:module]:function   args.NAME ... retval
 ```
 
 Arguments can be accessed as the fields of the builtin `args` structure.

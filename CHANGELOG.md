@@ -15,9 +15,15 @@ and this project adheres to
   - [#2781](https://github.com/iovisor/bpftrace/pull/2781)
 - Add support for uprobe_multi link
   - [#2810](https://github.com/iovisor/bpftrace/pull/2810)
+- Attach BTF to generated BPF programs
+  - [#2804](https://github.com/iovisor/bpftrace/pull/2804)
+- Add fentry/fexit aliases for kfunc/kretfunc
+  - [#2844](https://github.com/iovisor/bpftrace/pull/2844)
 #### Changed
 #### Deprecated
 #### Removed
+- Remove snapcraft support
+  - [#2832](https://github.com/iovisor/bpftrace/pull/2832)
 #### Fixed
 - Fix JSON output for cgroup_path
   - [#2793](https://github.com/iovisor/bpftrace/pull/2793)
@@ -29,6 +35,8 @@ and this project adheres to
 #### Tools
 - Update runqlen.bt to remove `runnable_weight` field from cfs_rq struct.
   - [#2790](https://github.com/iovisor/bpftrace/pull/2790)
+- Update mdflush.bt to use blkdev.h instead of genhd.h for non-BTF builds.
+  - [#2849](https://github.com/iovisor/bpftrace/pull/2849)
 
 ## [0.19.0] 2023-09-19
 
@@ -56,6 +64,9 @@ and this project adheres to
   - [#2657](https://github.com/iovisor/bpftrace/pull/2657)
 - uprobe: improve C++ probes listing
   - [#2693](https://github.com/iovisor/bpftrace/pull/2693)
+#### Removed
+- Delete embedded build support and surrounding infra
+  - [#2742](https://github.com/iovisor/bpftrace/pull/2742)
 #### Fixed
 - Fix resolving username for malformed /etc/passwd
   - [#2631](https://github.com/iovisor/bpftrace/pull/2631)

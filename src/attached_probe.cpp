@@ -310,6 +310,9 @@ AttachedProbe::~AttachedProbe()
       LOG(FATAL) << "invalid attached probe type \""
                  << probetypeName(probe_.type) << "\" at destructor";
   }
+  if (btf_fd_ != -1)
+    close(btf_fd_);
+
   if (err)
     LOG(ERROR) << "failed to detach probe: " << probe_.name;
 
@@ -350,29 +353,21 @@ std::string AttachedProbe::eventname() const
     case ProbeType::kretprobe:
     case ProbeType::rawtracepoint:
       offset_str << std::hex << offset_;
-      return eventprefix() + sanitise(probe_.attach_point) + "_" +
-             offset_str.str() + index_str;
+      return eventprefix() + sanitise_bpf_program_name(probe_.attach_point) +
+             "_" + offset_str.str() + index_str;
     case ProbeType::special:
     case ProbeType::uprobe:
     case ProbeType::uretprobe:
     case ProbeType::usdt:
       offset_str << std::hex << offset_;
-      return eventprefix() + sanitise(probe_.path) + "_" + offset_str.str() + index_str;
+      return eventprefix() + sanitise_bpf_program_name(probe_.path) + "_" +
+             offset_str.str() + index_str;
     case ProbeType::tracepoint:
       return probe_.attach_point;
     default:
       LOG(FATAL) << "invalid eventname probe \"" << probetypeName(probe_.type)
                  << "\"";
   }
-}
-
-std::string AttachedProbe::sanitise(const std::string &str)
-{
-  /*
-   * Characters such as "." in event names are rejected by the kernel,
-   * so sanitize:
-   */
-  return std::regex_replace(str, std::regex("[^A-Za-z0-9_]"), "_");
 }
 
 static int sym_name_cb(const char *symname, uint64_t start,
@@ -730,7 +725,7 @@ void AttachedProbe::load_prog(BPFfeature &feature)
     // start the name after the probe type, after ':'
     if (auto last_colon = name.rfind(':'); last_colon != std::string::npos)
       name = name.substr(last_colon + 1);
-    name = sanitise(name);
+    name = sanitise_bpf_program_name(name);
 
     auto prog_type = progtype(probe_.type);
     if (probe_.type == ProbeType::special && !feature.has_raw_tp_special())
@@ -812,13 +807,28 @@ void AttachedProbe::load_prog(BPFfeature &feature)
         if (bt_debug == DebugLevel::kNone)
           silencer.silence();
 
-        progfd_ = bpf_prog_load(static_cast<::bpf_prog_type>(prog_type),
-                                name.c_str(),
-                                license,
-                                reinterpret_cast<const struct bpf_insn *>(
-                                    insns.data()),
-                                insns.size() / sizeof(struct bpf_insn),
-                                &opts);
+        LIBBPF_OPTS(bpf_btf_load_opts,
+                    btf_opts,
+                    .log_buf = log_buf.get(),
+                    .log_level = static_cast<__u32>(log_level),
+                    .log_size = static_cast<__u32>(log_buf_size), );
+
+        auto &btf = prog_.getBTF();
+        btf_fd_ = bpf_btf_load(btf.data(), btf.size(), &btf_opts);
+
+        opts.prog_btf_fd = btf_fd_;
+
+        // Don't attempt to load the program if the BTF load failed.
+        // This will fall back to the error handling for failed program load,
+        // which is more robust.
+        if (btf_fd_ >= 0)
+          progfd_ = bpf_prog_load(static_cast<::bpf_prog_type>(prog_type),
+                                  name.c_str(),
+                                  license,
+                                  reinterpret_cast<const struct bpf_insn *>(
+                                      insns.data()),
+                                  insns.size() / sizeof(struct bpf_insn),
+                                  &opts);
       }
 
       if (opts.attach_prog_fd > 0)
