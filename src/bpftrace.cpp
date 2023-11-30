@@ -173,19 +173,57 @@ int BPFtrace::add_probe(ast::Probe &p)
           feature_->has_uprobe_multi() && has_wildcard(attach_point->func) &&
           !p.need_expansion && attach_funcs.size())
       {
-        Probe probe;
-        probe.attach_point = attach_point->func;
-        probe.path = attach_point->target;
-        probe.type = probetype(attach_point->provider);
-        probe.log_size = log_size_;
-        probe.orig_name = p.name();
-        probe.name = attach_point->name(attach_point->target,
-                                        attach_point->func);
-        probe.index = p.index();
-        probe.funcs = attach_funcs;
+        if (!has_wildcard(attach_point->target))
+        {
+          Probe probe;
+          probe.attach_point = attach_point->func;
+          probe.path = attach_point->target;
+          probe.type = probetype(attach_point->provider);
+          probe.log_size = log_size_;
+          probe.orig_name = p.name();
+          probe.name = attach_point->name(attach_point->target,
+                                          attach_point->func);
+          probe.index = p.index();
+          probe.funcs = attach_funcs;
 
-        resources.probes.push_back(probe);
-        continue;
+          resources.probes.push_back(probe);
+          continue;
+        }
+        else
+        {
+          // If we have a wildcard in the target path, we need to generate one
+          // probe per expanded target.
+          std::unordered_map<std::string, Probe> target_map;
+          for (const auto &func : attach_funcs)
+          {
+            std::string func_id = func;
+            std::string target = erase_prefix(func_id);
+            auto found = target_map.find(target);
+            if (found != target_map.end())
+            {
+              found->second.funcs.push_back(func);
+            }
+            else
+            {
+              Probe probe;
+              probe.attach_point = attach_point->func;
+              probe.path = target;
+              probe.type = probetype(attach_point->provider);
+              probe.log_size = log_size_;
+              probe.orig_name = p.name();
+              probe.name = attach_point->name(attach_point->target,
+                                              attach_point->func);
+              probe.index = p.index();
+              probe.funcs.push_back(func);
+              target_map.insert({ { target, probe } });
+            }
+          }
+          for (auto &pair : target_map)
+          {
+            resources.probes.push_back(std::move(pair.second));
+          }
+          continue;
+        }
       }
     }
     else if ((probetype(attach_point->provider) == ProbeType::uprobe ||
@@ -1006,6 +1044,13 @@ std::vector<std::unique_ptr<AttachedProbe>> BPFtrace::attach_probe(
 
       return ret;
     }
+    else if (probe.type == ProbeType::uprobe ||
+             probe.type == ProbeType::uretprobe)
+    {
+      ret.emplace_back(std::make_unique<AttachedProbe>(
+          probe, std::move(*program), pid, *feature_, *btf_, safe_mode_));
+      return ret;
+    }
     else if (probe.type == ProbeType::watchpoint ||
              probe.type == ProbeType::asyncwatchpoint)
     {
@@ -1085,10 +1130,6 @@ int BPFtrace::run_special_probe(std::string name,
   {
     if ((*probe).attach_point == name)
     {
-      // This is only necessary for uprobe fallback case but it doesn't hurt
-      // to set for raw_tp
-      probe->pid = getpid();
-
       auto aps = attach_probe(*probe, bytecode);
       if (aps.size() != 1)
         return -1;
