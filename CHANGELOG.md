@@ -25,6 +25,8 @@ and this project adheres to
   - [#2830](https://github.com/iovisor/bpftrace/pull/2830)
 - New builtin for getting the number of map elements
   - [#2840](https://github.com/iovisor/bpftrace/pull/2840)
+- Add more helpful error messages for map operations
+  - [#2905](https://github.com/iovisor/bpftrace/pull/2905)
 #### Changed
 #### Deprecated
 #### Removed
@@ -43,6 +45,8 @@ and this project adheres to
   - [#2869](https://github.com/iovisor/bpftrace/pull/2869)
 - Fix retval for kretfunc/fexit
   - [#2864](https://github.com/iovisor/bpftrace/pull/2864)
+- Fix attachment/listing of wildcarded module kfuncs
+  - [#2914](https://github.com/iovisor/bpftrace/pull/2914)
 #### Docs
 #### Tools
 - Add PPID field to `execsnoop.bt`
