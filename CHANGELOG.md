@@ -47,12 +47,19 @@ and this project adheres to
   - [#2864](https://github.com/iovisor/bpftrace/pull/2864)
 - Fix attachment/listing of wildcarded module kfuncs
   - [#2914](https://github.com/iovisor/bpftrace/pull/2914)
+- Fix uprobe attachment across container boundary
+  - [#2662](https://github.com/iovisor/bpftrace/pull/2662)
 #### Docs
+- Fix one-liner tutorial for systems with BTF
+  - [#2919](https://github.com/iovisor/bpftrace/pull/2919)
+  - [#2924](https://github.com/iovisor/bpftrace/pull/2924)
 #### Tools
 - Add PPID field to `execsnoop.bt`
   - [#2876](https://github.com/iovisor/bpftrace/pull/2876)
 - Use `strftime` instead of `elapsed` in `execsnoop.bt`
   - [#2904](https://github.com/iovisor/bpftrace/pull/2904)
+- Use `strftime` instead of `elapsed` in `threadsnoop.bt`
+  - [#2917](https://github.com/iovisor/bpftrace/pull/2917)
 - Update runqlen.bt to remove `runnable_weight` field from cfs_rq struct.
   - [#2790](https://github.com/iovisor/bpftrace/pull/2790)
 - Update mdflush.bt to use blkdev.h instead of genhd.h for non-BTF builds.
