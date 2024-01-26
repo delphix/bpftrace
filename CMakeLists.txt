@@ -1,11 +1,11 @@
-cmake_minimum_required(VERSION 3.13.0)
+cmake_minimum_required(VERSION 3.14)
 project(bpftrace)
 
 cmake_policy(SET CMP0057 NEW)
 
 # bpftrace version number components.
 set(bpftrace_VERSION_MAJOR 0)
-set(bpftrace_VERSION_MINOR 19)
+set(bpftrace_VERSION_MINOR 20)
 set(bpftrace_VERSION_PATCH 0)
 
 include(GNUInstallDirs)
@@ -190,10 +190,6 @@ else()
   include_directories(SYSTEM ${LLVM_INCLUDE_DIRS})
   add_definitions(${LLVM_DEFINITIONS})
 endif()
-
-add_definitions(-DLLVM_VERSION_MAJOR=${LLVM_VERSION_MAJOR})
-add_definitions(-DLLVM_VERSION_MINOR=${LLVM_VERSION_MINOR})
-add_definitions(-DLLVM_VERSION_PATCH=${LLVM_VERSION_PATCH})
 
 if(EMBED_USE_LLVM)
   include(embed_clang)
