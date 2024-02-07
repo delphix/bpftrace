@@ -159,7 +159,7 @@ OPTIONS:
     -h             show this help message
     -I DIR         add the specified DIR to the search path for include files.
     --include FILE adds an implicit #include which is read before the source file is preprocessed.
-    -l [search]    list probes
+    -l [search]    list kernel probes or probes in a program
     -p PID         enable USDT probes or search for uprobes/uretprobes in PID address space
     -c 'CMD'       run CMD and enable USDT probes on resulting process
     -q             keep messages quiet
@@ -175,6 +175,7 @@ ENVIRONMENT:
     BPFTRACE_DEBUG_OUTPUT               [default: 0] outputs bpftrace's runtime debug messages to the trace_pipe
     BPFTRACE_KERNEL_BUILD               [default: /lib/modules/$(uname -r)] kernel build directory
     BPFTRACE_KERNEL_SOURCE              [default: /lib/modules/$(uname -r)] kernel headers directory
+    BPFTRACE_LAZY_SYMBOLICATION         [default: 0] symbolicate lazily/on-demand
     BPFTRACE_LOG_SIZE                   [default: 1000000] log size in bytes
     BPFTRACE_MAX_BPF_PROGS              [default: 512] max number of generated BPF programs
     BPFTRACE_MAX_CAT_BYTES              [default: 10k] maximum bytes read by cat builtin
@@ -281,7 +282,9 @@ iscsid is sleeping.
 
 ## 4. `-l`: Listing Probes
 
-Probes from the tracepoint and kprobe libraries can be listed with `-l`.
+Probe listing is the method to discover which probes are supported by the current system.
+Listing supports the same syntax as normal attachment does and alternatively can be 
+combined with `-e` or filename args to see all the probes that a program would attach to.
 
 ```
 # bpftrace -l | more
@@ -308,6 +311,15 @@ tracepoint:syscalls:sys_exit_nanosleep
 kprobe:nanosleep_copyout
 kprobe:hrtimer_nanosleep
 [...]
+```
+
+Seeing the probes a program would attach to:
+```
+# bpftrace -l -e 'kprobe:xprt_switch_get { exit(); } tracepoint:xdp:mem_* { exit(); }'
+kprobe:xprt_switch_get
+tracepoint:xdp:mem_connect
+tracepoint:xdp:mem_disconnect
+tracepoint:xdp:mem_return_failed
 ```
 
 The `-v` option when listing tracepoints will show their arguments for use from the args builtin. For
@@ -481,14 +493,14 @@ bpftrace v0.8-90-g585e-dirty
 Most of these can also be set via the [config block](#17-config---config-block) directly in a script 
 (before any probes).
 
-### 9.1 `BPFTRACE_BTF`
+### `BPFTRACE_BTF`
 
 Default: None
 
 The path to a BTF file. By default, bpftrace searches several locations to find a BTF file.
 See src/btf.cpp for the details.
 
-### 9.2 `BPFTRACE_CACHE_USER_SYMBOLS`
+### `BPFTRACE_CACHE_USER_SYMBOLS`
 
 Default: PER_PROGRAM if ASLR disabled or `-c` option given, PER_PID otherwise.
 
@@ -496,7 +508,7 @@ Default: PER_PROGRAM if ASLR disabled or `-c` option given, PER_PID otherwise.
 -* PER_PID - each process has its own cache. This is accurate for processes with ASLR enabled, and enables bpftrace to preload caches for processes running at probe attachment time. If there are many processes running, it will consume a lot of a memory.
 -* NONE - caching disabled. This saves the most memory, but at the cost of speed.
 
-### 9.3 `BPFTRACE_CPP_DEMANGLE`
+### `BPFTRACE_CPP_DEMANGLE`
 
 Default: 1
 
@@ -504,32 +516,38 @@ C++ symbol demangling in userspace stack traces is enabled by default.
 
 This feature can be turned off by setting the value of this environment variable to `0`.
 
-### 9.4 `BPFTRACE_DEBUG_OUTPUT`
+### `BPFTRACE_DEBUG_OUTPUT`
 
 Default: 0
 
 Outputs bpftrace's runtime debug messages to the trace_pipe. This feature can be turned on by setting
 the value of this environment variable to `1`.
 
-### 9.5 `BPFTRACE_KERNEL_BUILD`
+### `BPFTRACE_KERNEL_BUILD`
 
 Default: `/lib/modules/$(uname -r)`
 
 Only used with `BPFTRACE_KERNEL_SOURCE` if it is out-of-tree Linux kernel build.
 
-### 9.6 `BPFTRACE_KERNEL_SOURCE`
+### `BPFTRACE_KERNEL_SOURCE`
 
 Default: `/lib/modules/$(uname -r)`
 
 bpftrace requires kernel headers for certain features, which are searched for in this directory.
 
-### 9.7 `BPFTRACE_LOG_SIZE`
+### `BPFTRACE_LAZY_SYMBOLICATION`
+
+Default: 0
+
+For user space symbols, symbolicate lazily/on-demand (1) or symbolicate everything ahead of time (0).
+
+### `BPFTRACE_LOG_SIZE`
 
 Default: 1000000
 
 Log size in bytes.
 
-### 9.8 `BPFTRACE_MAX_BPF_PROGS`
+### `BPFTRACE_MAX_BPF_PROGS`
 
 Default: 512
 
@@ -537,13 +555,13 @@ This is the maximum number of BPF programs (functions) that bpftrace can generat
 The main purpose of this limit is to prevent bpftrace from hanging since generating a lot of probes
 takes a lot of resources (and it should not happen often).
 
-### 9.9 `BPFTRACE_MAX_CAT_BYTES`
+### `BPFTRACE_MAX_CAT_BYTES`
 
 Default: 10k
 
 Maximum bytes read by cat builtin.
 
-### 9.10 `BPFTRACE_MAX_MAP_KEYS`
+### `BPFTRACE_MAX_MAP_KEYS`
 
 Default: 4096
 
@@ -551,7 +569,7 @@ This is the maximum number of keys that can be stored in a map. Increasing the v
 memory and increase startup times. There are some cases where you will want to: for example, sampling
 stack traces, recording timestamps for each page, etc.
 
-### 9.11 `BPFTRACE_MAX_PROBES`
+### `BPFTRACE_MAX_PROBES`
 
 Default: 512
 
@@ -559,7 +577,7 @@ This is the maximum number of probes that bpftrace can attach to. Increasing the
 memory, increase startup times and can incur high performance overhead or even freeze or crash the
 system.
 
-### 9.12 `BPFTRACE_MAX_STRLEN`
+### `BPFTRACE_MAX_STRLEN`
 
 Default: 64
 
@@ -570,15 +588,15 @@ Make this larger if you wish to read bigger strings with str().
 Beware that the BPF stack is small (512 bytes), and that you pay the toll again inside printf() (whilst
 it composes a perf event output buffer). So in practice you can only grow this to about 200 bytes.
 
-Support for even larger strings is [being discussed](https://github.com/iovisor/bpftrace/issues/305).
+Support for even larger strings is [being discussed](https://github.com/bpftrace/bpftrace/issues/305).
 
-### 9.13 `BPFTRACE_MAX_TYPE_RES_ITERATIONS`
+### `BPFTRACE_MAX_TYPE_RES_ITERATIONS`
 
 Default: 0
 
 Maximum should be the number of levels of nested field accesses for tracepoint args. 0 is unlimited.
 
-### 9.14 `BPFTRACE_PERF_RB_PAGES`
+### `BPFTRACE_PERF_RB_PAGES`
 
 Default: 64
 
@@ -588,20 +606,20 @@ If you're getting a lot of dropped events bpftrace may not be processing events 
 fast enough. It may be useful to bump the value higher so more events can be queued up. The tradeoff
 is that bpftrace will use more memory.
 
-### 9.15 `BPFTRACE_STACK_MODE`
+### `BPFTRACE_STACK_MODE`
 
 Default: bpftrace
 
 Output format for ustack and kstack builtins. Available modes/formats: `bpftrace`, `perf`, and `raw`.
 This can be overwritten at the call site.
 
-### 9.16 `BPFTRACE_STR_TRUNC_TRAILER`
+### `BPFTRACE_STR_TRUNC_TRAILER`
 
 Default: `..`
 
 Trailer to add to strings that were truncated. Set to empty string to disable truncation trailers.
 
-### 9.17 `BPFTRACE_VMLINUX`
+### `BPFTRACE_VMLINUX`
 
 Default: None
 
@@ -1009,8 +1027,8 @@ characters in attach point definitions.
 Syntax:
 
 ```
-kprobe:function_name[+offset]
-kretprobe:function_name
+kprobe[:module]:function[+offset]
+kretprobe[:module]:function[+offset]
 ```
 
 These use kprobes (a Linux kernel capability). `kprobe` instruments the beginning of a function's
@@ -1060,8 +1078,8 @@ In this case, linux kernel still checks instruction alignment.
 The default vmlinux path can be overridden using the environment variable `BPFTRACE_VMLINUX`.
 
 Examples in situ:
-[(kprobe) search /tools](https://github.com/iovisor/bpftrace/search?q=kprobe%3A+path%3Atools&type=Code)
-[(kretprobe) /tools](https://github.com/iovisor/bpftrace/search?q=kretprobe%3A+path%3Atools&type=Code)
+[(kprobe) search /tools](https://github.com/bpftrace/bpftrace/search?q=kprobe%3A+path%3Atools&type=Code)
+[(kretprobe) /tools](https://github.com/bpftrace/bpftrace/search?q=kretprobe%3A+path%3Atools&type=Code)
 
 ## 2. `kprobe`/`kretprobe`: Dynamic Tracing, Kernel-Level Arguments
 
@@ -1145,11 +1163,23 @@ open path: interrupts
 [...]
 ```
 
+You can optionally specify a kernel module, either to include BTF data from that
+module, or to specify that the traced function should come from that module.
+```
+# cat kvm.bt
+
+kprobe:kvm:x86_emulate_insn
+{
+  $ctxt = (struct x86_emulate_ctxt *) arg0;
+  printf("eip = 0x%lx\n", $ctxt->eip);
+}
+```
+
 See [BTF Support](#btf-support) for more details.
 
 Examples in situ:
-[(kprobe) search /tools](https://github.com/iovisor/bpftrace/search?q=kprobe%3A+path%3Atools&type=Code)
-[(kretprobe) /tools](https://github.com/iovisor/bpftrace/search?q=kretprobe%3A+path%3Atools&type=Code)
+[(kprobe) search /tools](https://github.com/bpftrace/bpftrace/search?q=kprobe%3A+path%3Atools&type=Code)
+[(kretprobe) /tools](https://github.com/bpftrace/bpftrace/search?q=kretprobe%3A+path%3Atools&type=Code)
 
 ## 3. `uprobe`/`uretprobe`: Dynamic Tracing, User-Level
 
@@ -1270,8 +1300,8 @@ adding probe
 ```
 
 Examples in situ:
-[(uprobe) search /tools](https://github.com/iovisor/bpftrace/search?q=uprobe%3A+path%3Atools&type=Code)
-[(uretprobe) /tools](https://github.com/iovisor/bpftrace/search?q=uretprobe%3A+path%3Atools&type=Code)
+[(uprobe) search /tools](https://github.com/bpftrace/bpftrace/search?q=uprobe%3A+path%3Atools&type=Code)
+[(uretprobe) /tools](https://github.com/bpftrace/bpftrace/search?q=uretprobe%3A+path%3Atools&type=Code)
 
 ## 4. `uprobe`/`uretprobe`: Dynamic Tracing, User-Level Arguments
 
@@ -1354,8 +1384,8 @@ prompt: [user@localhost ~]$
 ```
 
 Examples in situ:
-[(uprobe) search /tools](https://github.com/iovisor/bpftrace/search?q=uprobe%3A+path%3Atools&type=Code)
-[(uretprobe) /tools](https://github.com/iovisor/bpftrace/search?q=uretprobe%3A+path%3Atools&type=Code)
+[(uprobe) search /tools](https://github.com/bpftrace/bpftrace/search?q=uprobe%3A+path%3Atools&type=Code)
+[(uretprobe) /tools](https://github.com/bpftrace/bpftrace/search?q=uretprobe%3A+path%3Atools&type=Code)
 
 ## 5. `tracepoint`: Static Tracing, Kernel-Level
 
@@ -1376,7 +1406,7 @@ block I/O created by 28941
 ```
 
 Examples in situ:
-[search /tools](https://github.com/iovisor/bpftrace/search?q=tracepoint%3A+path%3Atools&type=Code)
+[search /tools](https://github.com/bpftrace/bpftrace/search?q=tracepoint%3A+path%3Atools&type=Code)
 
 ## 6. `tracepoint`: Static Tracing, Kernel-Level Arguments
 
@@ -1419,7 +1449,7 @@ Apart from the `filename` member, we can also print `flags`, `mode`, and more. A
 listed first, the members are specific to the tracepoint.
 
 Examples in situ:
-[search /tools](https://github.com/iovisor/bpftrace/search?q=tracepoint%3A+path%3Atools&type=Code)
+[search /tools](https://github.com/bpftrace/bpftrace/search?q=tracepoint%3A+path%3Atools&type=Code)
 
 ## 7. `rawtracepoint`: Static Tracing, Kernel-Level
 
@@ -1612,7 +1642,7 @@ Attaching 2 probes...
 This prints the rate of syscalls per second.
 
 Examples in situ:
-[search /tools](https://github.com/iovisor/bpftrace/search?q=interval+extension%3Abt+path%3Atools&type=Code)
+[search /tools](https://github.com/bpftrace/bpftrace/search?q=interval+extension%3Abt+path%3Atools&type=Code)
 
 ## 13. `software`: Pre-defined Software Events
 
@@ -1716,8 +1746,8 @@ These are special built-in events provided by the bpftrace runtime. `BEGIN` is t
 probes are attached. `END` is triggered after all other probes are detached.
 
 Examples in situ:
-[(BEGIN) search /tools](https://github.com/iovisor/bpftrace/search?q=BEGIN+extension%3Abt+path%3Atools&type=Code)
-[(END) search /tools](https://github.com/iovisor/bpftrace/search?q=END+extension%3Abt+path%3Atools&type=Code)
+[(BEGIN) search /tools](https://github.com/bpftrace/bpftrace/search?q=BEGIN+extension%3Abt+path%3Atools&type=Code)
+[(END) search /tools](https://github.com/bpftrace/bpftrace/search?q=END+extension%3Abt+path%3Atools&type=Code)
 
 ## 16. `watchpoint`/`asyncwatchpoint`: Memory watchpoints
 
@@ -2058,7 +2088,7 @@ bpftrace supports global & per-thread variables (via BPF maps), and scratch vari
 
 Examples:
 
-### 2.1. Global
+### Global
 
 Syntax: `@name`
 
@@ -2078,7 +2108,7 @@ at 1648 ms: sleep
 @start: 4064438886907216
 ```
 
-### 2.2. Per-Thread:
+### Per-Thread:
 
 These can be implemented as an associative array keyed on the thread ID. For example, `@start[tid]`:
 
@@ -2095,7 +2125,7 @@ slept for 2002 ms
 [...]
 ```
 
-### 2.3. Scratch:
+### Scratch:
 
 Syntax: `$name`
 
@@ -2363,7 +2393,7 @@ Syntax: `str(char *s [, int length])`
 
 Returns the string pointed to by s. `length` can be used to limit the size of the read, and/or introduce
 a null-terminator. By default, the string will have size 64 bytes (tuneable using [env var
-`BPFTRACE_MAX_STRLEN`](#912-bpftrace_max_strlen)).
+`BPFTRACE_MAX_STRLEN`](#bpftrace_max_strlen)).
 
 Examples:
 
@@ -2466,7 +2496,7 @@ Supported Probe Types:
 - u(ret)probes
 - USDT
 
-**Does not work with ASLR, see issue [#75](https://github.com/iovisor/bpftrace/issues/75)**
+**Does not work with ASLR, see issue [#75](https://github.com/bpftrace/bpftrace/issues/75)**
 
 The `uaddr` function returns the address of the specified symbol. This lookup
 happens during program compilation and cannot be used dynamically.
@@ -3008,7 +3038,7 @@ Syntax: `buf(void *d [, int length])`
 Returns a hex-formatted string of the data pointed to by `d` that is safe to print. Because the
 length of the buffer cannot always be inferred, the `length` parameter may be provided to
 limit the number of bytes that are read. By default, the maximum number of bytes is 64, but this can
-be tuned using the [`BPFTRACE_MAX_STRLEN`](#912-bpftrace_max_strlen) environment variable.
+be tuned using the [`BPFTRACE_MAX_STRLEN`](#bpftrace_max_strlen) environment variable.
 
 Bytes with values >=32 and <=126 are printed using their ASCII character, other
 bytes are printed in hex form (e.g. `\x00`).
@@ -3385,7 +3415,7 @@ sw_tai precision: -99ns
 
 Maps are special BPF data types that can be used to store counts, statistics, and histograms. They are
 also used for some variable types as discussed in the previous section, whenever `@` is used:
-[globals](#21-global), [per thread variables](#22-per-thread), and [associative
+[globals](#global), [per thread variables](#per-thread), and [associative
 arrays](#3--associative-arrays).
 
 When bpftrace exits, all maps are printed. For example (the `count()` function is covered in the sections
@@ -3621,7 +3651,7 @@ k can be 0..5, defaults to 0.
 
 Examples:
 
-### 8.1. Power-Of-2:
+### Power-Of-2:
 
 ```
 # bpftrace -e 'kretprobe:vfs_read { @bytes = hist(retval); }'
@@ -3645,7 +3675,7 @@ Attaching 1 probe...
 [2K, 4K)               2 |                                                    |
 ```
 
-### 8.2. Power-Of-2 By Key:
+### Power-Of-2 By Key:
 
 ```
 # bpftrace -e 'kretprobe:do_sys_open { @bytes[comm] = hist(retval); }'
@@ -3672,7 +3702,7 @@ Attaching 1 probe... ^C
 [4, 8)                21 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
 ```
 
-### 8.3 Fine-grained Power-Of-2
+### Fine-grained Power-Of-2
 
 Using a second argument $k=3$ we create $2^3 = 8$ buckets for each power of 2.
 This results in a finer grained subdivision such as the one below:

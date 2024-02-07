@@ -31,12 +31,13 @@
 #include "types.h"
 #include "utils.h"
 
+#include <bcc/bcc_syms.h>
+
 namespace bpftrace {
 
 const int timeout_ms = 100;
 
-struct symbol
-{
+struct symbol {
   std::string name;
   uint64_t start;
   uint64_t size;
@@ -51,17 +52,11 @@ extern bool bt_quiet;
 extern bool bt_verbose;
 extern bool bt_verbose2;
 
-enum class DebugLevel
-{
-  kNone,
-  kDebug,
-  kFullDebug
-};
+enum class DebugLevel { kNone, kDebug, kFullDebug };
 
 inline DebugLevel operator++(DebugLevel &level, int)
 {
-  switch (level)
-  {
+  switch (level) {
     case DebugLevel::kNone:
       level = DebugLevel::kDebug;
       break;
@@ -78,10 +73,11 @@ inline DebugLevel operator++(DebugLevel &level, int)
   return level;
 }
 
-class WildcardException : public std::exception
-{
+class WildcardException : public std::exception {
 public:
-  WildcardException(const std::string &msg) : msg_(msg) {}
+  WildcardException(const std::string &msg) : msg_(msg)
+  {
+  }
 
   const char *what() const noexcept override
   {
@@ -92,8 +88,7 @@ private:
   std::string msg_;
 };
 
-class BPFtrace
-{
+class BPFtrace {
 public:
   BPFtrace(std::unique_ptr<Output> o = std::make_unique<TextOutput>(std::cout),
            BPFnofeature no_feature = BPFnofeature(),
@@ -128,14 +123,14 @@ public:
                         StackType stack_type,
                         int indent = 0);
   std::string resolve_buf(char *buf, size_t size);
-  std::string resolve_ksym(uintptr_t addr, bool show_offset=false);
-  std::string resolve_usym(uintptr_t addr,
+  std::string resolve_ksym(uint64_t addr, bool show_offset = false);
+  std::string resolve_usym(uint64_t addr,
                            int pid,
                            int probe_id,
                            bool show_offset = false,
                            bool show_module = false);
-  std::string resolve_inet(int af, const uint8_t* inet) const;
-  std::string resolve_uid(uintptr_t addr) const;
+  std::string resolve_inet(int af, const uint8_t *inet) const;
+  std::string resolve_uid(uint64_t addr) const;
   std::string resolve_timestamp(uint32_t mode,
                                 uint32_t strftime_id,
                                 uint64_t nsecs);
@@ -146,10 +141,13 @@ public:
   std::string resolve_mac_address(const uint8_t *mac_addr) const;
   std::string resolve_cgroup_path(uint64_t cgroup_path_id,
                                   uint64_t cgroup_id) const;
-  virtual std::string extract_func_symbols_from_path(const std::string &path) const;
+  virtual std::string extract_func_symbols_from_path(
+      const std::string &path) const;
   std::string resolve_probe(uint64_t probe_id) const;
   uint64_t resolve_cgroupid(const std::string &path) const;
-  std::vector<std::unique_ptr<IPrintable>> get_arg_values(const std::vector<Field> &args, uint8_t* arg_data);
+  std::vector<std::unique_ptr<IPrintable>> get_arg_values(
+      const std::vector<Field> &args,
+      uint8_t *arg_data);
   void add_param(const std::string &param);
   std::string get_param(size_t index, bool is_str) const;
   size_t num_params() const;
@@ -228,7 +226,7 @@ private:
   int run_special_probe(std::string name,
                         const BpfBytecode &bytecode,
                         void (*trigger)(void));
-  void* ksyms_{nullptr};
+  void *ksyms_{ nullptr };
   // note: exe_sym_ is used when layout is same for all instances of program
   std::map<std::string, std::pair<int, void *>> exe_sym_; // exe -> (pid, cache)
   std::map<int, void *> pid_sym_;                         // pid -> cache
@@ -266,6 +264,7 @@ private:
   int print_map_stats(IMap &map, uint32_t top, uint32_t div);
   static uint64_t read_address_from_output(std::string output);
   std::vector<uint8_t> find_empty_key(IMap &map, size_t size) const;
+  struct bcc_symbol_option &get_symbol_opts();
   bool has_iter_ = false;
   int epollfd_ = -1;
   struct ring_buffer *ringbuf_ = nullptr;

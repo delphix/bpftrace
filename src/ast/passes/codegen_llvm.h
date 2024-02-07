@@ -18,6 +18,7 @@
 #include "format_string.h"
 #include "location.hh"
 #include "map.h"
+#include "required_resources.h"
 
 namespace bpftrace {
 namespace ast {
@@ -26,8 +27,7 @@ using namespace llvm;
 
 using CallArgs = std::vector<std::tuple<FormatString, std::vector<Field>>>;
 
-class CodegenLLVM : public Visitor
-{
+class CodegenLLVM : public Visitor {
 public:
   explicit CodegenLLVM(Node *root, BPFtrace &bpftrace);
 
@@ -36,7 +36,7 @@ public:
   void visit(String &string) override;
   void visit(Identifier &identifier) override;
   void visit(Builtin &builtin) override;
-  void visit(StackMode &) override { };
+  void visit(StackMode &) override{};
   void visit(Call &call) override;
   void visit(Sizeof &szof) override;
   void visit(Offsetof &ofof) override;
@@ -62,20 +62,30 @@ public:
   void visit(Program &program) override;
   AllocaInst *getHistMapKey(Map &map, Value *log2);
   int getNextIndexForProbe();
-  Value      *createLogicalAnd(Binop &binop);
-  Value      *createLogicalOr(Binop &binop);
+  Value *createLogicalAnd(Binop &binop);
+  Value *createLogicalOr(Binop &binop);
 
   // Exists to make calling from a debugger easier
   void DumpIR(void);
   void DumpIR(std::ostream &out);
   void DumpIR(const std::string filename);
-  void createFormatStringCall(Call &call, int &id, CallArgs &call_args,
-                              const std::string &call_name, AsyncAction async_action);
+  void createFormatStringCall(Call &call,
+                              int &id,
+                              CallArgs &call_args,
+                              const std::string &call_name,
+                              AsyncAction async_action);
 
   void createPrintMapCall(Call &call);
   void createPrintNonMapCall(Call &call, int &id);
 
+  void createMapDefinition(const std::string &name,
+                           libbpf::bpf_map_type map_type,
+                           uint64_t max_entries,
+                           const MapKey &key,
+                           const SizedType &value_type);
+
   void generate_ir(void);
+  void generate_maps(const RequiredResources &resources);
   void optimize(void);
   bool verify(void);
   BpfBytecode emit(void);
@@ -86,8 +96,7 @@ public:
 
 private:
   static constexpr char LLVMTargetTriple[] = "bpf-pc-linux";
-  class ScopedExprDeleter
-  {
+  class ScopedExprDeleter {
   public:
     explicit ScopedExprDeleter(std::function<void()> deleter)
     {
@@ -266,8 +275,7 @@ private:
   std::vector<std::tuple<BasicBlock *, BasicBlock *>> loops_;
   std::unordered_map<std::string, bool> probe_names_;
 
-  enum class State
-  {
+  enum class State {
     INIT,
     IR,
     OPT,

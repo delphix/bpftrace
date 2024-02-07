@@ -56,8 +56,7 @@ public:                                                                        \
 
 class BPFfeature;
 
-class BPFnofeature
-{
+class BPFnofeature {
 public:
   BPFnofeature() : kprobe_multi_(false), uprobe_multi_(false)
   {
@@ -70,8 +69,7 @@ protected:
   friend class BPFfeature;
 };
 
-class BPFfeature
-{
+class BPFfeature {
 public:
   BPFfeature(BPFnofeature& no_feature) : no_feature_(no_feature)
   {
@@ -110,7 +108,7 @@ public:
   DEFINE_MAP_TEST(array, libbpf::BPF_MAP_TYPE_ARRAY);
   DEFINE_MAP_TEST(hash, libbpf::BPF_MAP_TYPE_HASH);
   DEFINE_MAP_TEST(percpu_array, libbpf::BPF_MAP_TYPE_PERCPU_ARRAY);
-  DEFINE_MAP_TEST(percpu_hash, libbpf::BPF_MAP_TYPE_ARRAY);
+  DEFINE_MAP_TEST(percpu_hash, libbpf::BPF_MAP_TYPE_PERCPU_HASH);
   DEFINE_MAP_TEST(stack_trace, libbpf::BPF_MAP_TYPE_STACK_TRACE);
   DEFINE_MAP_TEST(perf_event_array, libbpf::BPF_MAP_TYPE_PERF_EVENT_ARRAY);
   DEFINE_MAP_TEST(ringbuf, libbpf::BPF_MAP_TYPE_RINGBUF);

@@ -11,9 +11,13 @@ namespace bpftrace {
 
 class BPFtrace;
 
-class MapKey
-{
+class MapKey {
 public:
+  MapKey() = default;
+  explicit MapKey(std::vector<SizedType> &&args) : args_(std::move(args))
+  {
+  }
+
   std::vector<SizedType> args_;
 
   bool operator!=(const MapKey &k) const;
