@@ -37,6 +37,7 @@
 #include "ast/codegen_helper.h"
 #include "ast/elf_parser.h"
 #include "ast/signal_bt.h"
+#include "bpfmap.h"
 #include "log.h"
 #include "tracepoint_format_parser.h"
 #include "types.h"
@@ -205,7 +206,7 @@ void CodegenLLVM::visit(Builtin &builtin)
 
     auto type = CreateUInt64();
     auto start = b_.CreateMapLookupElem(
-        ctx_, to_string(MapManager::Type::Elapsed), key, type, builtin.loc);
+        ctx_, to_string(MapType::Elapsed), key, type, builtin.loc);
     expr_ = b_.CreateGetNs(TimestampMode::boot, builtin.loc);
     expr_ = b_.CreateSub(expr_, start);
     // start won't be on stack, no need to LifeTimeEnd it
@@ -553,8 +554,7 @@ void CodegenLLVM::visit(Call &call)
     auto &arg = *call.vargs->at(0);
     auto &map = static_cast<Map &>(arg);
     auto [key, scoped_key_deleter] = getMapKey(map);
-    auto imap = *bpftrace_.maps.Lookup(map.ident);
-    if (!imap->is_clearable()) {
+    if (!is_bpf_map_clearable(map_types_[map.ident])) {
       // store zero instead of calling bpf_map_delete_elem()
       AllocaInst *val = b_.CreateAllocaBPF(map.type, map.ident + "_zero");
       b_.CreateStore(Constant::getNullValue(b_.GetType(map.type)), val);
@@ -913,8 +913,7 @@ void CodegenLLVM::visit(Call &call)
       auto size = std::get<1>(ids);
 
       // and load it from the map
-      Value *map_data = b_.GetMapVar(
-          to_string(MapManager::Type::MappedPrintfData));
+      Value *map_data = b_.GetMapVar(to_string(MapType::MappedPrintfData));
       Value *fmt = b_.CreateAdd(map_data, b_.getInt64(idx));
 
       // and finally the seq_printf call
@@ -939,8 +938,7 @@ void CodegenLLVM::visit(Call &call)
     auto idx = std::get<0>(ids);
     auto size = std::get<1>(ids);
 
-    Value *map_data = b_.GetMapVar(
-        to_string(MapManager::Type::MappedPrintfData));
+    Value *map_data = b_.GetMapVar(to_string(MapType::MappedPrintfData));
     Value *fmt = b_.CreateAdd(map_data, b_.getInt64(idx));
 
     std::vector<Value *> values;
@@ -1037,7 +1035,10 @@ void CodegenLLVM::visit(Call &call)
                                        elements.at(0)),
                      aa_ptr);
 
-    auto id = bpftrace_.maps[map.ident].value()->id;
+    int id = bpftrace_.resources.maps_info.at(map.ident).id;
+    if (id == -1) {
+      LOG(FATAL) << "map id for map \"" << map.ident << "\" not found";
+    }
     auto *ident_ptr = b_.CreateGEP(event_struct,
                                    buf,
                                    { b_.getInt64(0), b_.getInt32(1) });
@@ -3187,7 +3188,10 @@ void CodegenLLVM::createPrintMapCall(Call &call)
       b_.getInt64(asyncactionint(AsyncAction::print)),
       b_.CreateGEP(print_struct, buf, { b_.getInt64(0), b_.getInt32(0) }));
 
-  auto id = bpftrace_.maps[map.ident].value()->id;
+  int id = bpftrace_.resources.maps_info.at(map.ident).id;
+  if (id == -1) {
+    LOG(FATAL) << "map id for map \"" << map.ident << "\" not found";
+  }
   auto *ident_ptr = b_.CreateGEP(print_struct,
                                  buf,
                                  { b_.getInt64(0), b_.getInt32(1) });
@@ -3280,6 +3284,7 @@ void CodegenLLVM::createMapDefinition(const std::string &name,
                                       const MapKey &key,
                                       const SizedType &value_type)
 {
+  map_types_.emplace(name, map_type);
   auto var_name = bpf_map_name(name);
   auto debuginfo = debug_.createMapEntry(
       var_name, map_type, max_entries, key, value_type);
@@ -3330,17 +3335,13 @@ void CodegenLLVM::createMapDefinition(const std::string &name,
 void CodegenLLVM::generate_maps(const RequiredResources &resources)
 {
   // User-defined maps
-  for (auto &map_val : resources.map_vals) {
-    const std::string &name = map_val.first;
-
-    const SizedType &val_type = map_val.second;
-    auto key = resources.map_keys.find(name);
-    if (key == resources.map_keys.end())
-      LOG(FATAL) << "map key for \"" << name << "\" not found";
+  for (const auto &[name, info] : resources.maps_info) {
+    const auto &val_type = info.value_type;
+    const auto &key = info.key;
 
     auto max_entries = bpftrace_.config_.get(ConfigKeyInt::max_map_keys);
     auto map_type = libbpf::BPF_MAP_TYPE_UNSPEC;
-    if (val_type.IsCountTy() && key->second.args_.empty()) {
+    if (val_type.IsCountTy() && key.args_.empty()) {
       max_entries = 1;
       map_type = libbpf::BPF_MAP_TYPE_PERCPU_ARRAY;
     } else if (bpftrace_.feature_->has_map_percpu_hash() &&
@@ -3353,7 +3354,7 @@ void CodegenLLVM::generate_maps(const RequiredResources &resources)
       map_type = libbpf::BPF_MAP_TYPE_HASH;
     }
 
-    createMapDefinition(name, map_type, max_entries, key->second, val_type);
+    createMapDefinition(name, map_type, max_entries, key, val_type);
   }
 
   // bpftrace internal maps
@@ -3390,7 +3391,7 @@ void CodegenLLVM::generate_maps(const RequiredResources &resources)
   if (resources.needs_join_map) {
     auto value_size = 8 + 8 + bpftrace_.join_argnum_ * bpftrace_.join_argsize_;
     SizedType value_type = CreateArray(value_size, CreateInt8());
-    createMapDefinition(to_string(MapManager::Type::Join),
+    createMapDefinition(to_string(MapType::Join),
                         libbpf::BPF_MAP_TYPE_PERCPU_ARRAY,
                         1,
                         MapKey({ CreateInt32() }),
@@ -3398,7 +3399,7 @@ void CodegenLLVM::generate_maps(const RequiredResources &resources)
   }
 
   if (resources.needs_elapsed_map) {
-    createMapDefinition(to_string(MapManager::Type::Elapsed),
+    createMapDefinition(to_string(MapType::Elapsed),
                         libbpf::BPF_MAP_TYPE_HASH,
                         1,
                         MapKey(),
@@ -3413,7 +3414,7 @@ void CodegenLLVM::generate_maps(const RequiredResources &resources)
     value_size = (value_size / ptr_size + 1) * ptr_size;
     SizedType value_type = CreateArray(value_size, CreateInt8());
 
-    createMapDefinition(to_string(MapManager::Type::MappedPrintfData),
+    createMapDefinition(to_string(MapType::MappedPrintfData),
                         libbpf::BPF_MAP_TYPE_ARRAY,
                         1,
                         MapKey({ CreateInt32() }),
@@ -3422,7 +3423,7 @@ void CodegenLLVM::generate_maps(const RequiredResources &resources)
 
   if (!bpftrace_.feature_->has_map_ringbuf() ||
       resources.needs_perf_event_map) {
-    createMapDefinition(to_string(MapManager::Type::PerfEvent),
+    createMapDefinition(to_string(MapType::PerfEvent),
                         libbpf::BPF_MAP_TYPE_PERF_EVENT_ARRAY,
                         get_online_cpus().size(),
                         MapKey({ CreateInt32() }),
@@ -3431,7 +3432,7 @@ void CodegenLLVM::generate_maps(const RequiredResources &resources)
 
   if (bpftrace_.feature_->has_map_ringbuf()) {
     auto entries = bpftrace_.config_.get(ConfigKeyInt::perf_rb_pages) * 4096;
-    createMapDefinition(to_string(MapManager::Type::Ringbuf),
+    createMapDefinition(to_string(MapType::Ringbuf),
                         libbpf::BPF_MAP_TYPE_RINGBUF,
                         entries,
                         MapKey(),
@@ -3439,7 +3440,7 @@ void CodegenLLVM::generate_maps(const RequiredResources &resources)
 
     int loss_cnt_key_size = sizeof(bpftrace_.rb_loss_cnt_key_) * 8;
     int loss_cnt_val_size = sizeof(bpftrace_.rb_loss_cnt_val_) * 8;
-    createMapDefinition(to_string(MapManager::Type::RingbufLossCounter),
+    createMapDefinition(to_string(MapType::RingbufLossCounter),
                         libbpf::BPF_MAP_TYPE_ARRAY,
                         1,
                         MapKey({ CreateInt(loss_cnt_key_size) }),
@@ -3552,7 +3553,7 @@ BpfBytecode CodegenLLVM::emit(void)
   assert(!output.empty());
 
   state_ = State::DONE;
-  return elf::parseBpfBytecodeFromElfObject(output.data());
+  return elf::parseBpfBytecodeFromElfObject(output.data(), output.size());
 }
 
 BpfBytecode CodegenLLVM::compile(void)

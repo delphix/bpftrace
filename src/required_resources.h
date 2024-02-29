@@ -13,7 +13,6 @@
 #include "format_string.h"
 #include "location.hh"
 #include "mapkey.h"
-#include "mapmanager.h"
 #include "struct.h"
 #include "types.h"
 
@@ -31,12 +30,37 @@ struct LinearHistogramArgs {
   long max = -1;
   long step = -1;
 
+  bool operator==(const LinearHistogramArgs &other)
+  {
+    return min == other.min && max == other.max && step == other.step;
+  }
+  bool operator!=(const LinearHistogramArgs &other)
+  {
+    return !(*this == other);
+  }
+
 private:
   friend class cereal::access;
   template <typename Archive>
   void serialize(Archive &archive)
   {
     archive(min, max, step);
+  }
+};
+
+struct MapInfo {
+  MapKey key;
+  SizedType value_type;
+  std::optional<LinearHistogramArgs> lhist_args;
+  std::optional<int> hist_bits_arg;
+  int id = -1;
+
+private:
+  friend class cereal::access;
+  template <typename Archive>
+  void serialize(Archive &archive)
+  {
+    archive(key, value_type, lhist_args, hist_bits_arg, id);
   }
 };
 
@@ -48,16 +72,6 @@ private:
 // script on another host.
 class RequiredResources {
 public:
-  // Create maps in `maps` based on stored metadata
-  //
-  // If `fake` is set, then `FakeMap`s will be created. This is useful for:
-  // * allocating map IDs for codegen, because there's no need to prematurely
-  //   create resources that may not get used (debug mode, AOT codepath, etc.)
-  // * unit tests, as unit tests should not make system state changes
-  //
-  // Returns 0 on success, number of maps that failed to be created otherwise
-  int create_maps(BPFtrace &bpftrace, bool fake);
-
   // `save_state()` serializes `RequiredResources` and writes results into
   // `out`. `load_state()` does the reverse: takes serialized data and loads it
   // into the current instance.
@@ -76,7 +90,7 @@ public:
   // mapped_printf_args stores seq_printf, debugf arguments
   std::vector<std::tuple<FormatString, std::vector<Field>>> mapped_printf_args;
   // mapped_printf_ids stores the starting indices and length of each format
-  // string in the data map of MapManager::Type::MappedPrintfData
+  // string in the data map of MapType::MappedPrintfData
   std::vector<std::tuple<int, int>> mapped_printf_ids;
   std::vector<std::string> join_args;
   std::vector<std::string> time_args;
@@ -97,10 +111,7 @@ public:
   std::vector<std::string> probe_ids;
 
   // Map metadata
-  std::map<std::string, SizedType> map_vals;
-  std::map<std::string, LinearHistogramArgs> lhist_args;
-  std::map<std::string, int> hist_bits_arg;
-  std::map<std::string, MapKey> map_keys;
+  std::map<std::string, MapInfo> maps_info;
   std::unordered_set<StackType> stackid_maps;
   bool needs_join_map = false;
   bool needs_elapsed_map = false;
@@ -119,13 +130,6 @@ public:
   std::unordered_set<ast::Probe *> probes_using_usym;
 
 private:
-  template <typename T>
-  int create_maps_impl(BPFtrace &bpftrace, bool fake);
-  template <typename T>
-  std::unique_ptr<T> prepareFormatStringDataMap(
-      const std::vector<std::tuple<FormatString, std::vector<Field>>> &args,
-      int *ret);
-
   friend class cereal::access;
   template <typename Archive>
   void serialize(Archive &archive)
@@ -142,10 +146,7 @@ private:
             // helper_error_info,
             printf_args,
             probe_ids,
-            map_vals,
-            lhist_args,
-            hist_bits_arg,
-            map_keys,
+            maps_info,
             stackid_maps,
             needs_join_map,
             needs_elapsed_map,

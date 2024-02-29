@@ -112,14 +112,14 @@ void ResourceAnalyser::visit(Call &call)
     resources_.join_args.push_back(delim);
     resources_.needs_join_map = true;
   } else if (call.func == "hist") {
-    auto &r = resources_.hist_bits_arg;
-
+    auto &map_info = resources_.maps_info[call.map->ident];
     int bits = static_cast<Integer *>(call.vargs->at(1))->n;
-    if (r.find(call.map->ident) != r.end() && (r[call.map->ident]) != bits) {
+
+    if (map_info.hist_bits_arg.has_value() && *map_info.hist_bits_arg != bits) {
       LOG(ERROR, call.loc, err_) << "Different bits in a single hist, had "
-                                 << r[call.map->ident] << " now " << bits;
+                                 << *map_info.hist_bits_arg << " now " << bits;
     } else {
-      r[call.map->ident] = bits;
+      map_info.hist_bits_arg = bits;
     }
   } else if (call.func == "lhist") {
     Expression &min_arg = *call.vargs->at(1);
@@ -135,15 +135,13 @@ void ResourceAnalyser::visit(Call &call)
       .step = step.n,
     };
 
-    if (resources_.lhist_args.find(call.map->ident) !=
-            resources_.lhist_args.end() &&
-        (resources_.lhist_args[call.map->ident].min != args.min ||
-         resources_.lhist_args[call.map->ident].max != args.max ||
-         resources_.lhist_args[call.map->ident].step != args.step)) {
+    auto &map_info = resources_.maps_info[call.map->ident];
+
+    if (map_info.lhist_args.has_value() && *map_info.lhist_args != args) {
       LOG(ERROR, call.loc, err_)
           << "Different lhist bounds in a single map unsupported";
     } else {
-      resources_.lhist_args[call.map->ident] = args;
+      map_info.lhist_args = args;
     }
   } else if (call.func == "time") {
     if (call.vargs && call.vargs->size() > 0)
@@ -175,6 +173,16 @@ void ResourceAnalyser::visit(Call &call)
     resources_.needs_perf_event_map = true;
   }
 
+  if (call.func == "print" || call.func == "clear" || call.func == "zero") {
+    auto &arg = *call.vargs->at(0);
+    if (arg.is_map) {
+      auto &name = static_cast<Map &>(arg).ident;
+      auto &map_info = resources_.maps_info[name];
+      if (map_info.id == -1)
+        map_info.id = next_map_id_++;
+    }
+  }
+
   if (uses_usym_table(call.func)) {
     // mark probe as using usym, so that the symbol table can be pre-loaded
     // and symbols resolved even when unavailable at resolution time
@@ -186,8 +194,9 @@ void ResourceAnalyser::visit(Map &map)
 {
   Visitor::visit(map);
 
-  resources_.map_vals[map.ident] = map.type;
-  resources_.map_keys[map.ident] = map.key_type;
+  auto &map_info = resources_.maps_info[map.ident];
+  map_info.value_type = map.type;
+  map_info.key = map.key_type;
 }
 
 void ResourceAnalyser::prepare_mapped_printf_ids()
@@ -216,11 +225,6 @@ Pass CreateResourcePass()
     if (!pass_result.has_value())
       return PassResult::Error("Resource", 1);
     ctx.b.resources = pass_result.value();
-
-    // Create fake maps so that codegen has access to map IDs
-    //
-    // At runtime we will replace the fake maps with real maps
-    ctx.b.resources.create_maps(ctx.b, true);
 
     return PassResult::Success();
   };

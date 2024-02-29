@@ -17,7 +17,6 @@
 #include "bpftrace.h"
 #include "format_string.h"
 #include "location.hh"
-#include "map.h"
 #include "required_resources.h"
 
 namespace bpftrace {
@@ -262,6 +261,8 @@ private:
   uint64_t watchpoint_id_ = 0;
   int cgroup_path_id_ = 0;
   int skb_output_id_ = 0;
+
+  std::unordered_map<std::string, libbpf::bpf_map_type> map_types_;
 
   Function *linear_func_ = nullptr;
   Function *log2_func_ = nullptr;

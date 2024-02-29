@@ -13,29 +13,29 @@ else()
   endif ()
 endif()
 
+add_library(required_resources required_resources.cpp)
+add_dependencies(required_resources parser)
+
 add_library(runtime
   attached_probe.cpp
   bpffeature.cpp
   bpftrace.cpp
   bpfbytecode.cpp
+  bpfmap.cpp
   bpfprogram.cpp
   btf.cpp
   child.cpp
   config.cpp
   disasm.cpp
   dwarf_parser.cpp
-  fake_map.cpp
   format_string.cpp
-  imap.cpp
   log.cpp
-  map.cpp
   mapkey.cpp
   output.cpp
   probe_matcher.cpp
   procmon.cpp
   printf.cpp
   resolve_cgroupid.cpp
-  required_resources.cpp
   struct.cpp
   tracefs.cpp
   debugfs.cpp
@@ -95,8 +95,8 @@ if (KERNEL_HEADERS_DIR)
   target_compile_definitions(runtime PUBLIC KERNEL_HEADERS_DIR="${KERNEL_HEADERS_DIR}")
 endif()
 
-add_custom_command(
-  OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/version.h
+# This is run on every build to ensure the version string is always up-to-date
+add_custom_target(version_h
   COMMAND ${CMAKE_COMMAND}
     -DVERSION_H_IN=${CMAKE_CURRENT_SOURCE_DIR}/version.h.in
     -DVERSION_H=${CMAKE_CURRENT_BINARY_DIR}/version.h
@@ -105,10 +105,12 @@ add_custom_command(
     -Dbpftrace_VERSION_PATCH=${bpftrace_VERSION_PATCH}
     -P ${CMAKE_SOURCE_DIR}/cmake/Version.cmake
 )
-add_custom_target(version_h DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/version.h)
 add_dependencies(${BPFTRACE} version_h)
 add_dependencies(libbpftrace version_h)
 
+target_include_directories(required_resources PRIVATE ${CMAKE_BINARY_DIR})
+target_include_directories(required_resources PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_compile_definitions(required_resources PRIVATE ${BPFTRACE_FLAGS})
 target_include_directories(runtime PRIVATE ${CMAKE_BINARY_DIR})
 target_include_directories(runtime PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_compile_definitions(runtime PRIVATE ${BPFTRACE_FLAGS})

@@ -30,6 +30,7 @@
 #include <bpf/libbpf.h>
 
 #include "ast/async_event_types.h"
+#include "bpfmap.h"
 #include "bpfprogram.h"
 #include "bpftrace.h"
 #include "log.h"
@@ -410,13 +411,13 @@ void perf_event_printer(void *cb_cookie, void *data, int size)
     return;
   } else if (printf_id == asyncactionint(AsyncAction::print)) {
     auto print = static_cast<AsyncEvent::Print *>(data);
-    IMap *map = *bpftrace->maps[print->mapid];
+    auto &map = bpftrace->bytecode_.getMap(print->mapid);
 
-    err = bpftrace->print_map(*map, print->top, print->div);
+    err = bpftrace->print_map(map, print->top, print->div);
 
     if (err)
       throw std::runtime_error("Could not print map with ident \"" +
-                               map->name_ + "\", err=" + std::to_string(err));
+                               map.name() + "\", err=" + std::to_string(err));
     return;
   } else if (printf_id == asyncactionint(AsyncAction::print_non_map)) {
     auto print = static_cast<AsyncEvent::PrintNonMap *>(data);
@@ -432,18 +433,20 @@ void perf_event_printer(void *cb_cookie, void *data, int size)
     return;
   } else if (printf_id == asyncactionint(AsyncAction::clear)) {
     auto mapevent = static_cast<AsyncEvent::MapEvent *>(data);
-    IMap *map = *bpftrace->maps[mapevent->mapid];
-    err = bpftrace->clear_map(*map);
+    auto &map = bpftrace->bytecode_.getMap(mapevent->mapid);
+
+    err = bpftrace->clear_map(map);
     if (err)
       throw std::runtime_error("Could not clear map with ident \"" +
-                               map->name_ + "\", err=" + std::to_string(err));
+                               map.name() + "\", err=" + std::to_string(err));
     return;
   } else if (printf_id == asyncactionint(AsyncAction::zero)) {
     auto mapevent = static_cast<AsyncEvent::MapEvent *>(data);
-    IMap *map = *bpftrace->maps[mapevent->mapid];
-    err = bpftrace->zero_map(*map);
+    auto &map = bpftrace->bytecode_.getMap(mapevent->mapid);
+
+    err = bpftrace->zero_map(map);
     if (err)
-      throw std::runtime_error("Could not zero map with ident \"" + map->name_ +
+      throw std::runtime_error("Could not zero map with ident \"" + map.name() +
                                "\", err=" + std::to_string(err));
     return;
   } else if (printf_id == asyncactionint(AsyncAction::time)) {
@@ -904,11 +907,9 @@ std::vector<std::unique_ptr<AttachedProbe>> BPFtrace::attach_probe(
                                               probe.index,
                                               usdt_location_idx);
 
-  auto program = BpfProgram::CreateFromBytecode(bytecode, name, maps);
+  auto program = BpfProgram::CreateFromBytecode(bytecode, name);
   if (!program) {
-    auto orig_program = BpfProgram::CreateFromBytecode(bytecode,
-                                                       orig_name,
-                                                       maps);
+    auto orig_program = BpfProgram::CreateFromBytecode(bytecode, orig_name);
     if (orig_program)
       program.emplace(std::move(*orig_program));
   }
@@ -1109,10 +1110,28 @@ int BPFtrace::run(BpfBytecode bytecode)
   if (err)
     return err;
 
-  // Clear fake maps and replace with real maps
-  maps = {};
-  if (resources.create_maps(*this, false))
+  bytecode.set_map_ids(resources);
+  if (bytecode.create_maps())
     return 1;
+
+  if (bytecode.hasMap(MapType::MappedPrintfData)) {
+    const auto &map = bytecode.getMap(MapType::MappedPrintfData);
+    uint32_t idx = 0;
+    std::vector<uint8_t> formats(map.value_size(), 0);
+    for (auto &arg : resources.mapped_printf_args) {
+      auto str = std::get<0>(arg).c_str();
+      auto len = std::get<0>(arg).size();
+      memcpy(&formats.data()[idx], str, len);
+      idx += len + 1;
+    }
+
+    // store the data in map
+    uint32_t id = 0;
+    if (bpf_update_elem(map.fd, &id, formats.data(), 0) < 0) {
+      perror("Failed to write printf data to data map");
+      return -1;
+    }
+  }
 
   bytecode_ = std::move(bytecode);
   bytecode_.fixupBTF(*feature_);
@@ -1121,16 +1140,14 @@ int BPFtrace::run(BpfBytecode bytecode)
   if (err)
     return err;
 
-  if (maps.Has(MapManager::Type::Elapsed)) {
+  if (bytecode_.hasMap(MapType::Elapsed)) {
     struct timespec ts;
     clock_gettime(CLOCK_BOOTTIME, &ts);
     auto nsec = 1000000000ULL * ts.tv_sec + ts.tv_nsec;
     uint64_t key = 0;
 
-    if (bpf_update_elem(maps[MapManager::Type::Elapsed].value()->mapfd_,
-                        &key,
-                        &nsec,
-                        0) < 0) {
+    if (bpf_update_elem(bytecode_.getMap(MapType::Elapsed).fd, &key, &nsec, 0) <
+        0) {
       perror("Failed to write start time to elapsed map");
       return -1;
     }
@@ -1275,7 +1292,7 @@ int BPFtrace::setup_perf_events()
     int reader_fd = perf_reader_fd((perf_reader *)reader);
 
     bpf_update_elem(
-        maps[MapManager::Type::PerfEvent].value()->mapfd_, &cpu, &reader_fd, 0);
+        bytecode_.getMap(MapType::PerfEvent).fd, &cpu, &reader_fd, 0);
     if (epoll_ctl(epollfd_, EPOLL_CTL_ADD, reader_fd, &ev) == -1) {
       LOG(ERROR) << "Failed to add perf reader to epoll";
       return -1;
@@ -1286,16 +1303,12 @@ int BPFtrace::setup_perf_events()
 
 int BPFtrace::setup_ringbuf()
 {
-  ringbuf_ = static_cast<struct ring_buffer *>(
-      ring_buffer__new(maps[MapManager::Type::Ringbuf].value()->mapfd_,
-                       ringbuf_printer,
-                       this,
-                       nullptr));
-  if (bpf_update_elem(
-          maps[MapManager::Type::RingbufLossCounter].value()->mapfd_,
-          const_cast<uint32_t *>(&rb_loss_cnt_key_),
-          const_cast<uint64_t *>(&rb_loss_cnt_val_),
-          0)) {
+  ringbuf_ = static_cast<struct ring_buffer *>(ring_buffer__new(
+      bytecode_.getMap(MapType::Ringbuf).fd, ringbuf_printer, this, nullptr));
+  if (bpf_update_elem(bytecode_.getMap(MapType::RingbufLossCounter).fd,
+                      const_cast<uint32_t *>(&rb_loss_cnt_key_),
+                      const_cast<uint64_t *>(&rb_loss_cnt_val_),
+                      0)) {
     LOG(ERROR) << "fail to init ringbuf loss counter";
     return -1;
   }
@@ -1398,10 +1411,9 @@ int BPFtrace::poll_perf_events()
 void BPFtrace::handle_ringbuf_loss()
 {
   uint64_t current_value = 0;
-  if (bpf_lookup_elem(
-          maps[MapManager::Type::RingbufLossCounter].value()->mapfd_,
-          const_cast<uint32_t *>(&rb_loss_cnt_key_),
-          &current_value)) {
+  if (bpf_lookup_elem(bytecode_.getMap(MapType::RingbufLossCounter).fd,
+                      const_cast<uint32_t *>(&rb_loss_cnt_key_),
+                      &current_value)) {
     LOG(ERROR) << "fail to get ringbuf loss counter";
   }
   if (current_value) {
@@ -1417,11 +1429,11 @@ void BPFtrace::handle_ringbuf_loss()
 
 int BPFtrace::print_maps()
 {
-  for (auto &mapmap : maps) {
-    if (!mapmap->is_printable())
+  for (auto &map : bytecode_.maps()) {
+    if (!map.second.is_printable())
       continue;
 
-    int err = print_map(*mapmap.get(), 0, 0);
+    int err = print_map(map.second, 0, 0);
     if (err)
       return err;
   }
@@ -1430,21 +1442,16 @@ int BPFtrace::print_maps()
 }
 
 // clear a map
-int BPFtrace::clear_map(IMap &map)
+int BPFtrace::clear_map(const BpfMap &map)
 {
   if (!map.is_clearable())
     return zero_map(map);
 
   std::vector<uint8_t> old_key;
   try {
-    if (map.type_.IsHistTy() || map.type_.IsLhistTy() ||
-        map.type_.IsStatsTy() || map.type_.IsAvgTy())
-      // hist maps have 8 extra bytes for the bucket number
-      old_key = find_empty_key(map, map.key_.size() + 8);
-    else
-      old_key = find_empty_key(map, map.key_.size());
+    old_key = find_empty_key(map);
   } catch (std::runtime_error &e) {
-    LOG(ERROR) << "failed to get key for map '" << map.name_
+    LOG(ERROR) << "failed to get key for map '" << map.name()
                << "': " << e.what();
     return -2;
   }
@@ -1452,13 +1459,13 @@ int BPFtrace::clear_map(IMap &map)
 
   // snapshot keys, then operate on them
   std::vector<std::vector<uint8_t>> keys;
-  while (bpf_get_next_key(map.mapfd_, old_key.data(), key.data()) == 0) {
+  while (bpf_get_next_key(map.fd, old_key.data(), key.data()) == 0) {
     keys.push_back(key);
     old_key = key;
   }
 
   for (auto &key : keys) {
-    int err = bpf_delete_elem(map.mapfd_, key.data());
+    int err = bpf_delete_elem(map.fd, key.data());
     if (err && err != -ENOENT) {
       LOG(ERROR) << "failed to look up elem: " << err;
       return -1;
@@ -1469,19 +1476,14 @@ int BPFtrace::clear_map(IMap &map)
 }
 
 // zero a map
-int BPFtrace::zero_map(IMap &map)
+int BPFtrace::zero_map(const BpfMap &map)
 {
-  uint32_t nvalues = map.is_per_cpu_type() ? ncpus_ : 1;
+  uint64_t nvalues = map.is_per_cpu_type() ? ncpus_ : 1;
   std::vector<uint8_t> old_key;
   try {
-    if (map.type_.IsHistTy() || map.type_.IsLhistTy() ||
-        map.type_.IsStatsTy() || map.type_.IsAvgTy())
-      // hist maps have 8 extra bytes for the bucket number
-      old_key = find_empty_key(map, map.key_.size() + 8);
-    else
-      old_key = find_empty_key(map, map.key_.size());
+    old_key = find_empty_key(map);
   } catch (std::runtime_error &e) {
-    LOG(ERROR) << "failed to get key for map '" << map.name_
+    LOG(ERROR) << "failed to get key for map '" << map.name()
                << "': " << e.what();
     return -2;
   }
@@ -1489,15 +1491,15 @@ int BPFtrace::zero_map(IMap &map)
 
   // snapshot keys, then operate on them
   std::vector<std::vector<uint8_t>> keys;
-  while (bpf_get_next_key(map.mapfd_, old_key.data(), key.data()) == 0) {
+  while (bpf_get_next_key(map.fd, old_key.data(), key.data()) == 0) {
     keys.push_back(key);
     old_key = key;
   }
 
-  int value_size = map.type_.GetSize() * nvalues;
+  int value_size = map.value_size() * nvalues;
   std::vector<uint8_t> zero(value_size, 0);
   for (auto &key : keys) {
-    int err = bpf_update_elem(map.mapfd_, key.data(), zero.data(), BPF_EXIST);
+    int err = bpf_update_elem(map.fd, key.data(), zero.data(), BPF_EXIST);
 
     if (err && err != -ENOENT) {
       LOG(ERROR) << "failed to look up elem: " << err;
@@ -1508,19 +1510,21 @@ int BPFtrace::zero_map(IMap &map)
   return 0;
 }
 
-int BPFtrace::print_map(IMap &map, uint32_t top, uint32_t div)
+int BPFtrace::print_map(const BpfMap &map, uint32_t top, uint32_t div)
 {
-  if (map.type_.IsHistTy() || map.type_.IsLhistTy())
+  const auto &map_info = resources.maps_info.at(map.name());
+  const auto &value_type = map_info.value_type;
+  if (value_type.IsHistTy() || value_type.IsLhistTy())
     return print_map_hist(map, top, div);
-  else if (map.type_.IsAvgTy() || map.type_.IsStatsTy())
+  else if (value_type.IsAvgTy() || value_type.IsStatsTy())
     return print_map_stats(map, top, div);
 
-  uint32_t nvalues = map.is_per_cpu_type() ? ncpus_ : 1;
+  uint64_t nvalues = map.is_per_cpu_type() ? ncpus_ : 1;
   std::vector<uint8_t> old_key;
   try {
-    old_key = find_empty_key(map, map.key_.size());
+    old_key = find_empty_key(map);
   } catch (std::runtime_error &e) {
-    LOG(ERROR) << "failed to get key for map '" << map.name_
+    LOG(ERROR) << "failed to get key for map '" << map.name()
                << "': " << e.what();
     return -2;
   }
@@ -1529,11 +1533,9 @@ int BPFtrace::print_map(IMap &map, uint32_t top, uint32_t div)
   std::vector<std::pair<std::vector<uint8_t>, std::vector<uint8_t>>>
       values_by_key;
 
-  while (bpf_get_next_key(map.mapfd_, old_key.data(), key.data()) == 0) {
-    int value_size = map.type_.GetSize();
-    value_size *= nvalues;
-    auto value = std::vector<uint8_t>(value_size);
-    int err = bpf_lookup_elem(map.mapfd_, key.data(), value.data());
+  while (bpf_get_next_key(map.fd, old_key.data(), key.data()) == 0) {
+    auto value = std::vector<uint8_t>(map.value_size() * nvalues);
+    int err = bpf_lookup_elem(map.fd, key.data(), value.data());
     if (err == -ENOENT) {
       // key was removed by the eBPF program during bpf_get_next_key() and
       // bpf_lookup_elem(), let's skip this key
@@ -1548,8 +1550,8 @@ int BPFtrace::print_map(IMap &map, uint32_t top, uint32_t div)
     old_key = key;
   }
 
-  if (map.type_.IsCountTy() || map.type_.IsSumTy() || map.type_.IsIntTy()) {
-    bool is_signed = map.type_.IsSigned();
+  if (value_type.IsCountTy() || value_type.IsSumTy() || value_type.IsIntTy()) {
+    bool is_signed = value_type.IsSigned();
     std::sort(values_by_key.begin(),
               values_by_key.end(),
               [&](auto &a, auto &b) {
@@ -1559,18 +1561,18 @@ int BPFtrace::print_map(IMap &map, uint32_t top, uint32_t div)
                 return reduce_value<uint64_t>(a.second, nvalues) <
                        reduce_value<uint64_t>(b.second, nvalues);
               });
-  } else if (map.type_.IsMinTy()) {
+  } else if (value_type.IsMinTy()) {
     std::sort(
         values_by_key.begin(), values_by_key.end(), [&](auto &a, auto &b) {
           return min_value(a.second, nvalues) < min_value(b.second, nvalues);
         });
-  } else if (map.type_.IsMaxTy()) {
+  } else if (value_type.IsMaxTy()) {
     std::sort(
         values_by_key.begin(), values_by_key.end(), [&](auto &a, auto &b) {
           return max_value(a.second, nvalues) < max_value(b.second, nvalues);
         });
   } else {
-    sort_by_key(map.key_.args_, values_by_key);
+    sort_by_key(map_info.key.args_, values_by_key);
   };
 
   if (div == 0)
@@ -1579,19 +1581,19 @@ int BPFtrace::print_map(IMap &map, uint32_t top, uint32_t div)
   return 0;
 }
 
-int BPFtrace::print_map_hist(IMap &map, uint32_t top, uint32_t div)
+int BPFtrace::print_map_hist(const BpfMap &map, uint32_t top, uint32_t div)
 {
   // A hist-map adds an extra 8 bytes onto the end of its key for storing
   // the bucket number.
   // e.g. A map defined as: @x[1, 2] = @hist(3);
   // would actually be stored with the key: [1, 2, 3]
 
-  uint32_t nvalues = map.is_per_cpu_type() ? ncpus_ : 1;
+  uint64_t nvalues = map.is_per_cpu_type() ? ncpus_ : 1;
   std::vector<uint8_t> old_key;
   try {
-    old_key = find_empty_key(map, map.key_.size() + 8);
+    old_key = find_empty_key(map);
   } catch (std::runtime_error &e) {
-    LOG(ERROR) << "failed to get key for map '" << map.name_
+    LOG(ERROR) << "failed to get key for map '" << map.name()
                << "': " << e.what();
     return -2;
   }
@@ -1599,16 +1601,16 @@ int BPFtrace::print_map_hist(IMap &map, uint32_t top, uint32_t div)
 
   std::map<std::vector<uint8_t>, std::vector<uint64_t>> values_by_key;
 
-  while (bpf_get_next_key(map.mapfd_, old_key.data(), key.data()) == 0) {
-    auto key_prefix = std::vector<uint8_t>(map.key_.size());
-    uint64_t bucket = read_data<uint64_t>(key.data() + map.key_.size());
+  const auto &map_info = resources.maps_info.at(map.name());
+  while (bpf_get_next_key(map.fd, old_key.data(), key.data()) == 0) {
+    auto key_prefix = std::vector<uint8_t>(map_info.key.size());
+    uint64_t bucket = read_data<uint64_t>(key.data() + map_info.key.size());
 
-    for (size_t i = 0; i < map.key_.size(); i++)
+    for (size_t i = 0; i < map_info.key.size(); i++)
       key_prefix.at(i) = key.at(i);
 
-    int value_size = map.type_.GetSize() * nvalues;
-    auto value = std::vector<uint8_t>(value_size);
-    int err = bpf_lookup_elem(map.mapfd_, key.data(), value.data());
+    auto value = std::vector<uint8_t>(map.value_size() * nvalues);
+    int err = bpf_lookup_elem(map.fd, key.data(), value.data());
     if (err == -ENOENT) {
       // key was removed by the eBPF program during bpf_get_next_key() and
       // bpf_lookup_elem(), let's skip this key
@@ -1620,7 +1622,7 @@ int BPFtrace::print_map_hist(IMap &map, uint32_t top, uint32_t div)
 
     if (values_by_key.find(key_prefix) == values_by_key.end()) {
       // New key - create a list of buckets for it
-      if (map.type_.IsHistTy())
+      if (map_info.value_type.IsHistTy())
         values_by_key[key_prefix] = std::vector<uint64_t>(65 * 32);
       else
         values_by_key[key_prefix] = std::vector<uint64_t>(1002);
@@ -1650,17 +1652,17 @@ int BPFtrace::print_map_hist(IMap &map, uint32_t top, uint32_t div)
   return 0;
 }
 
-int BPFtrace::print_map_stats(IMap &map, uint32_t top, uint32_t div)
+int BPFtrace::print_map_stats(const BpfMap &map, uint32_t top, uint32_t div)
 {
-  uint32_t nvalues = map.is_per_cpu_type() ? ncpus_ : 1;
+  uint64_t nvalues = map.is_per_cpu_type() ? ncpus_ : 1;
   // stats() and avg() maps add an extra 8 bytes onto the end of their key for
   // storing the bucket number.
 
   std::vector<uint8_t> old_key;
   try {
-    old_key = find_empty_key(map, map.key_.size() + 8);
+    old_key = find_empty_key(map);
   } catch (std::runtime_error &e) {
-    LOG(ERROR) << "failed to get key for map '" << map.name_
+    LOG(ERROR) << "failed to get key for map '" << map.name()
                << "': " << e.what();
     return -2;
   }
@@ -1668,16 +1670,16 @@ int BPFtrace::print_map_stats(IMap &map, uint32_t top, uint32_t div)
 
   std::map<std::vector<uint8_t>, std::vector<int64_t>> values_by_key;
 
-  while (bpf_get_next_key(map.mapfd_, old_key.data(), key.data()) == 0) {
-    auto key_prefix = std::vector<uint8_t>(map.key_.size());
-    uint64_t bucket = read_data<uint64_t>(key.data() + map.key_.size());
+  const auto &map_key = resources.maps_info.at(map.name()).key;
+  while (bpf_get_next_key(map.fd, old_key.data(), key.data()) == 0) {
+    auto key_prefix = std::vector<uint8_t>(map_key.size());
+    uint64_t bucket = read_data<uint64_t>(key.data() + map_key.size());
 
-    for (size_t i = 0; i < map.key_.size(); i++)
+    for (size_t i = 0; i < map_key.size(); i++)
       key_prefix.at(i) = key.at(i);
 
-    int value_size = map.type_.GetSize() * nvalues;
-    auto value = std::vector<uint8_t>(value_size);
-    int err = bpf_lookup_elem(map.mapfd_, key.data(), value.data());
+    auto value = std::vector<uint8_t>(map.value_size() * nvalues);
+    int err = bpf_lookup_elem(map.fd, key.data(), value.data());
     if (err == -ENOENT) {
       // key was removed by the eBPF program during bpf_get_next_key() and
       // bpf_lookup_elem(), let's skip this key
@@ -1735,28 +1737,26 @@ std::optional<std::string> BPFtrace::get_watchpoint_binary_path() const
   }
 }
 
-std::vector<uint8_t> BPFtrace::find_empty_key(IMap &map, size_t size) const
+std::vector<uint8_t> BPFtrace::find_empty_key(const BpfMap &map) const
 {
   // 4.12 and above kernel supports passing NULL to BPF_MAP_GET_NEXT_KEY
   // to get first key of the map. For older kernels, the call will fail.
-  if (size == 0)
-    size = 8;
-  auto key = std::vector<uint8_t>(size);
-  uint32_t nvalues = map.is_per_cpu_type() ? ncpus_ : 1;
-  int value_size = map.type_.GetSize() * nvalues;
+  auto key = std::vector<uint8_t>(map.key_size());
+  uint64_t nvalues = map.is_per_cpu_type() ? ncpus_ : 1;
+  int value_size = map.value_size() * nvalues;
   auto value = std::vector<uint8_t>(value_size);
 
-  if (bpf_lookup_elem(map.mapfd_, key.data(), value.data()))
+  if (bpf_lookup_elem(map.fd, key.data(), value.data()))
     return key;
 
   for (auto &elem : key)
     elem = 0xff;
-  if (bpf_lookup_elem(map.mapfd_, key.data(), value.data()))
+  if (bpf_lookup_elem(map.fd, key.data(), value.data()))
     return key;
 
   for (auto &elem : key)
     elem = 0x55;
-  if (bpf_lookup_elem(map.mapfd_, key.data(), value.data()))
+  if (bpf_lookup_elem(map.fd, key.data(), value.data()))
     return key;
 
   throw std::runtime_error("Could not find empty key");
@@ -1770,7 +1770,7 @@ std::string BPFtrace::get_stack(int64_t stackid,
                                 int indent)
 {
   auto stack_trace = std::vector<uint64_t>(stack_type.limit);
-  int err = bpf_lookup_elem(maps[stack_type].value()->mapfd_,
+  int err = bpf_lookup_elem(bytecode_.getMap(stack_type.name()).fd,
                             &stackid,
                             stack_trace.data());
   if (err) {

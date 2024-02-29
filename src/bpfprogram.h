@@ -1,7 +1,6 @@
 #pragma once
 
 #include "bpfbytecode.h"
-#include "mapmanager.h"
 
 #include <cstdint>
 #include <optional>
@@ -17,8 +16,7 @@ class BpfProgram {
 public:
   static std::optional<BpfProgram> CreateFromBytecode(
       const BpfBytecode &bytecode,
-      const std::string &name,
-      MapManager &maps);
+      const std::string &name);
 
   void assemble();
 
@@ -32,9 +30,7 @@ public:
   BpfProgram &operator=(BpfProgram &&) = delete;
 
 private:
-  explicit BpfProgram(const BpfBytecode &bytecode,
-                      const std::string &name,
-                      MapManager &bpftrace);
+  explicit BpfProgram(const BpfBytecode &bytecode, const std::string &name);
 
   void relocateInsns();
   void relocateSection(const std::string &relsecname, bpf_insn *);
@@ -44,7 +40,6 @@ private:
                            size_t insn_offset);
 
   const BpfBytecode &bytecode_;
-  MapManager &maps_;
   std::string name_;
   std::vector<uint8_t> code_;
   // Offset in code_ where the .text begins (if .text was appended)
