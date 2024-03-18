@@ -10,15 +10,14 @@
 #if LLVM_VERSION_MAJOR <= 16
 #include <llvm-c/Transforms/IPO.h>
 #endif
+#include <llvm/CodeGen/UnreachableBlockElim.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/GlobalVariable.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/Metadata.h>
 #include <llvm/IR/Verifier.h>
-#if LLVM_VERSION_MAJOR >= 14
 #include <llvm/Passes/PassBuilder.h>
-#endif
 #include <llvm/Transforms/IPO.h>
 #if LLVM_VERSION_MAJOR <= 16
 #include <llvm/Transforms/IPO/PassManagerBuilder.h>
@@ -74,7 +73,11 @@ CodegenLLVM::CodegenLLVM(Node *root, BPFtrace &bpftrace)
                                   Optional<Reloc::Model>()
 #endif
                                       ));
+#if LLVM_VERSION_MAJOR >= 18
+  target_machine_->setOptLevel(llvm::CodeGenOptLevel::Aggressive);
+#else
   target_machine_->setOptLevel(llvm::CodeGenOpt::Aggressive);
+#endif
 
   module_->setTargetTriple(LLVMTargetTriple);
   module_->setDataLayout(target_machine_->createDataLayout());
@@ -381,10 +384,10 @@ void CodegenLLVM::visit(Call &call)
 
     AllocaInst *value = b_.CreateAllocaBPF(type, "lookup_elem_val");
     Value *condition = b_.CreateICmpNE(
-        b_.CreateIntCast(lookup, b_.getInt8PtrTy(), true),
+        b_.CreateIntCast(lookup, b_.GET_PTR_TY(), true),
         ConstantExpr::getCast(Instruction::IntToPtr,
                               b_.getInt64(0),
-                              b_.getInt8PtrTy()),
+                              b_.GET_PTR_TY()),
         "map_lookup_cond");
     b_.CreateCondBr(condition, lookup_success_block, lookup_failure_block);
 
@@ -438,10 +441,10 @@ void CodegenLLVM::visit(Call &call)
 
     AllocaInst *value = b_.CreateAllocaBPF(type, "lookup_elem_val");
     Value *condition = b_.CreateICmpNE(
-        b_.CreateIntCast(lookup, b_.getInt8PtrTy(), true),
+        b_.CreateIntCast(lookup, b_.GET_PTR_TY(), true),
         ConstantExpr::getCast(Instruction::IntToPtr,
                               b_.getInt64(0),
-                              b_.getInt8PtrTy()),
+                              b_.GET_PTR_TY()),
         "map_lookup_cond");
     b_.CreateCondBr(condition, lookup_success_block, lookup_failure_block);
 
@@ -551,17 +554,18 @@ void CodegenLLVM::visit(Call &call)
     b_.CreateLifetimeEnd(key);
     expr_ = nullptr;
   } else if (call.func == "delete") {
-    auto &arg = *call.vargs->at(0);
-    auto &map = static_cast<Map &>(arg);
-    auto [key, scoped_key_deleter] = getMapKey(map);
-    if (!is_bpf_map_clearable(map_types_[map.ident])) {
-      // store zero instead of calling bpf_map_delete_elem()
-      AllocaInst *val = b_.CreateAllocaBPF(map.type, map.ident + "_zero");
-      b_.CreateStore(Constant::getNullValue(b_.GetType(map.type)), val);
-      b_.CreateMapUpdateElem(ctx_, map, key, val, call.loc);
-      b_.CreateLifetimeEnd(val);
-    } else {
-      b_.CreateMapDeleteElem(ctx_, map, key, call.loc);
+    for (const auto &arg : *call.vargs) {
+      auto &map = static_cast<Map &>(*arg);
+      auto [key, scoped_key_deleter] = getMapKey(map);
+      if (!is_bpf_map_clearable(map_types_[map.ident])) {
+        // store zero instead of calling bpf_map_delete_elem()
+        AllocaInst *val = b_.CreateAllocaBPF(map.type, map.ident + "_zero");
+        b_.CreateStore(Constant::getNullValue(b_.GetType(map.type)), val);
+        b_.CreateMapUpdateElem(ctx_, map, key, val, call.loc);
+        b_.CreateLifetimeEnd(val);
+      } else {
+        b_.CreateMapDeleteElem(ctx_, map, key, call.loc);
+      }
     }
     expr_ = nullptr;
   } else if (call.func == "str") {
@@ -687,7 +691,7 @@ void CodegenLLVM::visit(Call &call)
                                     ? Instruction::BitCast
                                     : Instruction::IntToPtr,
                                 expr_,
-                                b_.getInt8PtrTy()),
+                                b_.GET_PTR_TY()),
                   call.loc);
     expr_ = buf;
     expr_deleter_ = [this, buf]() { b_.CreateLifetimeEnd(buf); };
@@ -879,7 +883,8 @@ void CodegenLLVM::visit(Call &call)
     expr_ = b_.CreateRegisterRead(ctx_, offset, call.func + "_" + reg_name);
   } else if (call.func == "printf") {
     // We overload printf call for iterator probe's seq_printf helper.
-    if (probetype(current_attach_point_->provider) == ProbeType::iter) {
+    if (!inside_subprog_ &&
+        probetype(current_attach_point_->provider) == ProbeType::iter) {
       auto nargs = call.vargs->size() - 1;
 
       int ptr_size = sizeof(unsigned long);
@@ -918,9 +923,9 @@ void CodegenLLVM::visit(Call &call)
 
       // and finally the seq_printf call
       b_.CreateSeqPrintf(ctx_,
-                         b_.CreateIntToPtr(fmt, b_.getInt8PtrTy()),
+                         b_.CreateIntToPtr(fmt, b_.GET_PTR_TY()),
                          b_.getInt32(size),
-                         b_.CreatePointerCast(data, b_.getInt8PtrTy()),
+                         b_.CreatePointerCast(data, b_.GET_PTR_TY()),
                          b_.getInt32(data_size),
                          call.loc);
 
@@ -948,7 +953,7 @@ void CodegenLLVM::visit(Call &call)
       values.push_back(expr_);
     }
 
-    b_.CreateTracePrintk(b_.CreateIntToPtr(fmt, b_.getInt8PtrTy()),
+    b_.CreateTracePrintk(b_.CreateIntToPtr(fmt, b_.GET_PTR_TY()),
                          b_.getInt32(size),
                          values,
                          call.loc);
@@ -1884,7 +1889,7 @@ void CodegenLLVM::visit(FieldAccess &acc)
         // `is_data_loc` should only be set if field access is on `args` which
         // has to be a ctx access
         assert(type.IsCtxAccess());
-        assert(ctx_->getType() == b_.getInt8PtrTy());
+        assert(ctx_->getType() == b_.GET_PTR_TY());
         // Parser needs to have rewritten field to be a u64
         assert(field.type.IsIntTy());
         assert(field.type.GetIntBitWidth() == 64);
@@ -2017,6 +2022,39 @@ void CodegenLLVM::compareStructure(SizedType &our_type, llvm::Type *llvm_type)
   }
 }
 
+/*
+ * createTuple
+ *
+ * Constructs a tuple on the stack from the provided values.
+ */
+AllocaInst *CodegenLLVM::createTuple(
+    const SizedType &tuple_type,
+    const std::vector<std::pair<llvm::Value *, const location *>> &vals,
+    const std::string &name)
+{
+  auto tuple_ty = b_.GetType(tuple_type);
+  size_t tuple_size = datalayout().getTypeAllocSize(tuple_ty);
+  AllocaInst *buf = b_.CreateAllocaBPF(tuple_ty, name);
+  b_.CREATE_MEMSET(buf, b_.getInt8(0), tuple_size, 1);
+
+  for (size_t i = 0; i < vals.size(); ++i) {
+    auto [val, loc] = vals[i];
+    SizedType &type = tuple_type.GetField(i).type;
+
+    Value *dst = b_.CreateGEP(tuple_ty,
+                              buf,
+                              { b_.getInt32(0), b_.getInt32(i) });
+
+    if (onStack(type))
+      b_.CREATE_MEMCPY(dst, val, type.GetSize(), 1);
+    else if (type.IsArrayTy() || type.IsRecordTy())
+      b_.CreateProbeRead(ctx_, dst, type, val, *loc);
+    else
+      b_.CreateStore(val, dst);
+  }
+  return buf;
+}
+
 void CodegenLLVM::visit(Tuple &tuple)
 {
   // Store elements on stack
@@ -2024,24 +2062,15 @@ void CodegenLLVM::visit(Tuple &tuple)
 
   compareStructure(tuple.type, tuple_ty);
 
-  size_t tuple_size = datalayout().getTypeAllocSize(tuple_ty);
-  AllocaInst *buf = b_.CreateAllocaBPF(tuple_ty, "tuple");
-  b_.CREATE_MEMSET(buf, b_.getInt8(0), tuple_size, 1);
-  for (size_t i = 0; i < tuple.elems->size(); ++i) {
-    Expression *elem = tuple.elems->at(i);
-    auto scoped_del = accept(elem);
+  std::vector<std::pair<llvm::Value *, const location *>> vals;
+  std::vector<ScopedExprDeleter> scoped_dels;
+  vals.reserve(tuple.elems->size());
 
-    Value *dst = b_.CreateGEP(tuple_ty,
-                              buf,
-                              { b_.getInt32(0), b_.getInt32(i) });
-
-    if (onStack(elem->type))
-      b_.CREATE_MEMCPY(dst, expr_, elem->type.GetSize(), 1);
-    else if (elem->type.IsArrayTy() || elem->type.IsRecordTy())
-      b_.CreateProbeRead(ctx_, dst, elem->type, expr_, elem->loc);
-    else
-      b_.CreateStore(expr_, dst);
+  for (Expression *elem : *tuple.elems) {
+    scoped_dels.emplace_back(std::move(accept(elem)));
+    vals.push_back({ expr_, &elem->loc });
   }
+  AllocaInst *buf = createTuple(tuple.type, vals, "tuple");
 
   expr_ = buf;
   expr_deleter_ = [this, buf]() { b_.CreateLifetimeEnd(buf); };
@@ -2220,7 +2249,11 @@ void CodegenLLVM::visit(Jump &jump)
   switch (jump.ident) {
     case JumpType::RETURN:
       // return can be used outside of loops
-      createRet();
+      if (jump.return_value) {
+        auto scoped_del = accept(jump.return_value);
+        createRet(expr_);
+      } else
+        createRet();
       break;
     case JumpType::BREAK:
       b_.CreateBr(std::get<1>(loops_.back()));
@@ -2292,6 +2325,15 @@ void CodegenLLVM::visit(While &while_block)
 
   b_.SetInsertPoint(while_end);
   loops_.pop_back();
+}
+
+void CodegenLLVM::visit(For &f)
+{
+  auto &map = static_cast<Map &>(*f.expr);
+
+  Value *ctx = b_.getInt64(0);
+  b_.CreateForEachMapElem(
+      ctx_, map, createForEachMapCallback(*f.decl, *f.stmts), ctx, f.loc);
 }
 
 void CodegenLLVM::visit(Predicate &pred)
@@ -2378,11 +2420,59 @@ void CodegenLLVM::generateProbe(Probe &probe,
         func_type, section_name, current_attach_point_->address, index);
 }
 
+void CodegenLLVM::visit(Subprog &subprog)
+{
+  std::vector<llvm::Type *> arg_types;
+  // First argument is for passing ctx pointer for output, rest are proper
+  // arguments to the function
+  arg_types.push_back(b_.getInt8PtrTy());
+  std::transform(subprog.args->begin(),
+                 subprog.args->end(),
+                 std::back_inserter(arg_types),
+                 [this](SubprogArg *arg) { return b_.GetType(arg->type); });
+  FunctionType *func_type = FunctionType::get(b_.GetType(subprog.return_type),
+                                              arg_types,
+                                              0);
+
+  Function *func = Function::Create(
+      func_type, Function::InternalLinkage, subprog.name(), module_.get());
+  BasicBlock *entry = BasicBlock::Create(module_->getContext(), "entry", func);
+  b_.SetInsertPoint(entry);
+
+  variables_.clear();
+  ctx_ = func->arg_begin();
+  inside_subprog_ = true;
+
+  int arg_index = 0;
+  for (SubprogArg *arg : *subprog.args) {
+    auto alloca = b_.CreateAllocaBPF(b_.GetType(arg->type), arg->name());
+    b_.CreateStore(func->getArg(arg_index + 1), alloca);
+    variables_.insert({ arg->name(), alloca });
+    ++arg_index;
+  }
+
+  for (Statement *stmt : *subprog.stmts) {
+    auto scoped_del = accept(stmt);
+  }
+  if (subprog.return_type.IsVoidTy())
+    createRet();
+
+  FunctionPassManager fpm;
+  FunctionAnalysisManager fam;
+  llvm::PassBuilder pb;
+  pb.registerFunctionAnalyses(fam);
+  fpm.addPass(UnreachableBlockElimPass());
+  fpm.run(*func, fam);
+}
+
 void CodegenLLVM::createRet(Value *value)
 {
   // If value is explicitly provided, use it
   if (value) {
     b_.CreateRet(value);
+    return;
+  } else if (inside_subprog_) {
+    b_.CreateRetVoid();
     return;
   }
 
@@ -2422,9 +2512,9 @@ void CodegenLLVM::createRet(Value *value)
 void CodegenLLVM::visit(Probe &probe)
 {
   FunctionType *func_type = FunctionType::get(b_.getInt64Ty(),
-                                              { b_.getInt8PtrTy() }, // struct
-                                                                     // pt_regs
-                                                                     // *ctx
+                                              { b_.GET_PTR_TY() }, // struct
+                                                                   // pt_regs
+                                                                   // *ctx
                                               false);
 
   // Probe has at least one attach point (required by the parser)
@@ -2436,6 +2526,7 @@ void CodegenLLVM::visit(Probe &probe)
 
   bool generated = false;
   current_attach_point_ = attach_point;
+  inside_subprog_ = false;
 
   /*
    * Most of the time, we can take a probe like kprobe:do_f* and build a
@@ -2585,6 +2676,9 @@ void CodegenLLVM::visit(Probe &probe)
 
 void CodegenLLVM::visit(Program &program)
 {
+  if (program.functions)
+    for (Subprog *subprog : *program.functions)
+      auto scoped_del = accept(subprog);
   for (Probe *probe : *program.probes)
     auto scoped_del = accept(probe);
 }
@@ -3536,7 +3630,9 @@ void CodegenLLVM::emit(raw_pwrite_stream &stream)
 {
   legacy::PassManager PM;
 
-#if LLVM_VERSION_MAJOR >= 10
+#if LLVM_VERSION_MAJOR >= 18
+  auto type = CodeGenFileType::ObjectFile;
+#elif LLVM_VERSION_MAJOR >= 10
   auto type = llvm::CGFT_ObjectFile;
 #else
   auto type = llvm::TargetMachine::CGFT_ObjectFile;
@@ -3779,7 +3875,7 @@ Function *CodegenLLVM::createMapLenCallback()
   auto saved_ip = b_.saveIP();
 
   std::array<llvm::Type *, 4> args = {
-    b_.getInt8PtrTy(), b_.getInt8PtrTy(), b_.getInt8PtrTy(), b_.getInt8PtrTy()
+    b_.GET_PTR_TY(), b_.GET_PTR_TY(), b_.GET_PTR_TY(), b_.GET_PTR_TY()
   };
 
   FunctionType *callback_type = FunctionType::get(b_.getInt64Ty(), args, false);
@@ -3806,6 +3902,67 @@ Function *CodegenLLVM::createMapLenCallback()
 
   b_.restoreIP(saved_ip);
 
+  return callback;
+}
+
+Function *CodegenLLVM::createForEachMapCallback(
+    const Variable &decl,
+    const std::vector<Statement *> &stmts)
+{
+  /*
+   * Create a callback function suitable for passing to bpf_for_each_map_elem,
+   * of the form:
+   *
+   *   static int cb(struct map *map, void *key, void *value, void *ctx)
+   *   {
+   *     $decl = (key, value);
+   *     [stmts...]
+   *   }
+   */
+
+  auto saved_ip = b_.saveIP();
+
+  std::array<llvm::Type *, 4> args = {
+    b_.getInt8PtrTy(), b_.getInt8PtrTy(), b_.getInt8PtrTy(), b_.getInt8PtrTy()
+  };
+  FunctionType *callback_type = FunctionType::get(b_.getInt64Ty(), args, false);
+  Function *callback = Function::Create(callback_type,
+                                        Function::LinkageTypes::InternalLinkage,
+                                        "map_for_each_cb",
+                                        module_.get());
+  callback->setDSOLocal(true);
+  callback->setVisibility(llvm::GlobalValue::DefaultVisibility);
+  callback->setSection(".text");
+  debug_.createFunctionDebugInfo(*callback);
+
+  auto *bb = BasicBlock::Create(module_->getContext(), "", callback);
+  b_.SetInsertPoint(bb);
+
+  auto &key_type = decl.type.GetField(0).type;
+  Value *key = callback->getArg(1);
+  if (!onStack(key_type)) {
+    key = b_.CreateLoad(b_.GetType(key_type), key, "key");
+  }
+
+  auto &val_type = decl.type.GetField(1).type;
+  Value *val = callback->getArg(2);
+  if (!onStack(val_type)) {
+    val = b_.CreateLoad(b_.GetType(val_type), val, "val");
+  }
+
+  // Create decl variable for use in this iteration of the loop
+  variables_[decl.ident] = createTuple(
+      decl.type, { { key, &decl.loc }, { val, &decl.loc } }, decl.ident);
+
+  for (Statement *stmt : stmts) {
+    auto scoped_del = accept(stmt);
+  }
+  b_.CreateRet(b_.getInt64(0));
+
+  // Decl variable is not valid beyond this for loop
+  variables_.erase(decl.ident);
+
+  b_.restoreIP(saved_ip);
   return callback;
 }
 

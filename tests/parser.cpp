@@ -2167,6 +2167,155 @@ TEST(Parser, keywords_as_identifiers)
   }
 }
 
+TEST(Parser, subprog_probe_mixed)
+{
+  test("i:s:1 {} fn f1(): void {} i:s:1 {} fn f2(): void {}",
+       "Program\n"
+       " f1: void()\n"
+       " f2: void()\n"
+       " interval:s:1\n"
+       " interval:s:1\n");
+}
+
+TEST(Parser, subprog_void_no_args)
+{
+  test("fn f(): void {}",
+       "Program\n"
+       " f: void()\n");
+}
+
+TEST(Parser, subprog_invalid_return_type)
+{
+  // Error location is incorrect: #3063
+  test_parse_failure("fn f(): nonexistent {}", R"(
+stdin:1:9-21: ERROR: syntax error, unexpected identifier, expecting struct or integer type or builtin type or sized type
+fn f(): nonexistent {}
+        ~~~~~~~~~~~~
+)");
+}
+
+TEST(Parser, subprog_one_arg)
+{
+  test("fn f($a : uint8): void {}",
+       "Program\n"
+       " f: void($a : unsigned int8)\n");
+}
+
+TEST(Parser, subprog_two_args)
+{
+  test("fn f($a : uint8, $b : uint8): void {}",
+       "Program\n"
+       " f: void($a : unsigned int8, $b : unsigned int8)\n");
+}
+
+TEST(Parser, subprog_string_arg)
+{
+  test("fn f($a : str_t[16]): void {}",
+       "Program\n"
+       " f: void($a : string[16])\n");
+}
+
+TEST(Parser, subprog_struct_arg)
+{
+  test("fn f($a: struct x): void {}",
+       "Program\n"
+       " f: void($a : struct x)\n");
+}
+
+TEST(Parser, subprog_union_arg)
+{
+  test("fn f($a : union x): void {}",
+       "Program\n"
+       " f: void($a : union x)\n");
+}
+
+TEST(Parser, subprog_enum_arg)
+{
+  test("fn f($a : enum x): void {}",
+       "Program\n"
+       " f: void($a : enum x)\n");
+}
+
+TEST(Parser, subprog_invalid_arg)
+{
+  // Error location is incorrect: #3063
+  test_parse_failure("fn f($x : invalid): void {}", R"(
+stdin:1:11-19: ERROR: syntax error, unexpected identifier, expecting struct or integer type or builtin type or sized type
+fn f($x : invalid): void {}
+          ~~~~~~~~
+)");
+}
+
+TEST(Parser, subprog_return)
+{
+  test("fn f(): void { return 1 + 1; }",
+       "Program\n"
+       " f: void()\n"
+       "  return\n"
+       "   +\n"
+       "    int: 1\n"
+       "    int: 1\n");
+}
+
+TEST(Parser, subprog_string)
+{
+  test("fn f(): str_t[16] {}",
+       "Program\n"
+       " f: string[16]()\n");
+}
+
+TEST(Parser, subprog_struct)
+{
+  test("fn f(): struct x {}",
+       "Program\n"
+       " f: struct x()\n");
+}
+
+TEST(Parser, subprog_union)
+{
+  test("fn f(): union x {}",
+       "Program\n"
+       " f: union x()\n");
+}
+
+TEST(Parser, subprog_enum)
+{
+  test("fn f(): enum x {}",
+       "Program\n"
+       " f: enum x()\n");
+}
+
+TEST(Parser, for_loop)
+{
+  test("BEGIN { for ($kv : @map) { print($kv) } }", R"(
+Program
+ BEGIN
+  for
+   decl
+    variable: $kv
+   expr
+    map: @map
+   stmts
+    call: print
+     variable: $kv
+)");
+
+  // Error location is incorrect: #3063
+  // No body
+  test_parse_failure("BEGIN { for ($kv : @map) print($kv); }", R"(
+stdin:1:27-32: ERROR: syntax error, unexpected call, expecting {
+BEGIN { for ($kv : @map) print($kv); }
+                          ~~~~~
+)");
+
+  // Map for decl
+  test_parse_failure("BEGIN { for (@kv : @map) { } }", R"(
+stdin:1:13-17: ERROR: syntax error, unexpected map, expecting variable
+BEGIN { for (@kv : @map) { } }
+            ~~~~
+)");
+}
+
 } // namespace parser
 } // namespace test
 } // namespace bpftrace

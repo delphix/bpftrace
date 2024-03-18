@@ -12,8 +12,9 @@ namespace ast {
 
 void Printer::print(Node *root)
 {
-  depth_ = 0;
+  ++depth_;
   Visit(*root);
+  --depth_;
 }
 
 std::string Printer::type(const SizedType &ty)
@@ -350,6 +351,24 @@ void Printer::visit(While &while_block)
   }
 }
 
+void Printer::visit(For &for_loop)
+{
+  std::string indent(depth_, ' ');
+  out_ << indent << "for" << std::endl;
+
+  ++depth_;
+  out_ << indent << " decl\n";
+  print(for_loop.decl);
+  out_ << indent << " expr\n";
+  print(for_loop.expr);
+
+  out_ << indent << " stmts\n";
+  for (Statement *stmt : *for_loop.stmts) {
+    print(stmt);
+  }
+  --depth_;
+}
+
 void Printer::visit(Config &config)
 {
   std::string indent(depth_, ' ');
@@ -367,6 +386,11 @@ void Printer::visit(Jump &jump)
 {
   std::string indent(depth_, ' ');
   out_ << indent << opstr(jump) << std::endl;
+  if (jump.return_value) {
+    ++depth_;
+    jump.return_value->accept(*this);
+    --depth_;
+  }
 }
 
 void Printer::visit(Predicate &pred)
@@ -401,6 +425,27 @@ void Printer::visit(Probe &probe)
   --depth_;
 }
 
+void Printer::visit(Subprog &subprog)
+{
+  std::string indent(depth_, ' ');
+  out_ << indent << subprog.name() << ": " << subprog.return_type;
+
+  out_ << "(";
+  for (size_t i = 0; i < subprog.args->size(); i++) {
+    auto &arg = subprog.args->at(i);
+    out_ << arg->name() << " : " << arg->type;
+    if (i < subprog.args->size() - 1)
+      out_ << ", ";
+  }
+  out_ << ")" << std::endl;
+
+  ++depth_;
+  for (Statement *stmt : *subprog.stmts) {
+    stmt->accept(*this);
+  }
+  --depth_;
+}
+
 void Printer::visit(Program &program)
 {
   if (program.c_definitions.size() > 0)
@@ -416,6 +461,8 @@ void Printer::visit(Program &program)
   }
 
   ++depth_;
+  for (Subprog *subprog : *program.functions)
+    subprog->accept(*this);
   for (Probe *probe : *program.probes)
     probe->accept(*this);
   --depth_;

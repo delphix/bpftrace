@@ -41,9 +41,12 @@ MAKE_ACCEPT(AttachPoint)
 MAKE_ACCEPT(If)
 MAKE_ACCEPT(Unroll)
 MAKE_ACCEPT(While)
+MAKE_ACCEPT(For)
 MAKE_ACCEPT(Config)
 MAKE_ACCEPT(Jump)
 MAKE_ACCEPT(Probe)
+MAKE_ACCEPT(SubprogArg)
+MAKE_ACCEPT(Subprog)
 MAKE_ACCEPT(Program)
 
 #undef MAKE_ACCEPT
@@ -179,6 +182,12 @@ Unroll::~Unroll()
   delete stmts;
   stmts = nullptr;
 }
+Jump::~Jump()
+{
+  if (return_value)
+    delete return_value;
+  return_value = nullptr;
+}
 Predicate::~Predicate()
 {
   delete expr;
@@ -202,11 +211,29 @@ While::~While()
   delete stmts;
 }
 
+For::~For()
+{
+  delete decl;
+  delete expr;
+  for (auto *stmt : *stmts)
+    delete stmt;
+  delete stmts;
+}
+
 Config::~Config()
 {
   for (auto *stmt : *stmts)
     delete stmt;
   delete stmts;
+}
+
+Scope::~Scope()
+{
+  if (stmts)
+    for (auto *stmt : *stmts)
+      delete stmt;
+  delete stmts;
+  stmts = nullptr;
 }
 
 Probe::~Probe()
@@ -219,16 +246,22 @@ Probe::~Probe()
 
   delete pred;
   pred = nullptr;
+}
 
-  if (stmts)
-    for (Statement *s : *stmts)
-      delete s;
-  delete stmts;
-  stmts = nullptr;
+Subprog::~Subprog()
+{
+  if (args)
+    for (SubprogArg *a : *args)
+      delete a;
+  delete args;
 }
 
 Program::~Program()
 {
+  if (functions)
+    for (Subprog *s : *functions)
+      delete s;
+  delete functions;
   if (probes)
     for (Probe *p : *probes)
       delete p;
@@ -427,17 +460,46 @@ Unroll::Unroll(Expression *expr, StatementList *stmts, location loc)
 {
 }
 
+Scope::Scope(StatementList *stmts) : stmts(stmts)
+{
+}
+
 Probe::Probe(AttachPointList *attach_points,
              Predicate *pred,
              StatementList *stmts)
-    : attach_points(attach_points), pred(pred), stmts(stmts)
+    : Scope(stmts), attach_points(attach_points), pred(pred)
+{
+}
+
+SubprogArg::SubprogArg(std::string name, SizedType type)
+    : type(std::move(type)), name_(std::move(name))
+{
+}
+
+std::string SubprogArg::name() const
+{
+  return name_;
+}
+
+Subprog::Subprog(std::string name,
+                 SizedType return_type,
+                 SubprogArgList *args,
+                 StatementList *stmts)
+    : Scope(stmts),
+      args(args),
+      return_type(std::move(return_type)),
+      name_(std::move(name))
 {
 }
 
 Program::Program(const std::string &c_definitions,
                  Config *config,
+                 SubprogList *functions,
                  ProbeList *probes)
-    : c_definitions(c_definitions), config(config), probes(probes)
+    : c_definitions(c_definitions),
+      config(config),
+      functions(functions),
+      probes(probes)
 {
 }
 
@@ -669,11 +731,27 @@ Cast::Cast(const Cast &other) : Expression(other)
 {
 }
 
-Probe::Probe(const Probe &other) : Node(other)
+SubprogArg::SubprogArg(const SubprogArg &other) : Node(other)
+{
+  name_ = other.name_;
+  type = other.type;
+}
+
+Subprog::Subprog(const Subprog &other) : Scope(other)
+{
+  name_ = other.name_;
+}
+
+Probe::Probe(const Probe &other) : Scope(static_cast<const Scope &>(other))
 {
   need_expansion = other.need_expansion;
   tp_args_structs_level = other.tp_args_structs_level;
   index_ = other.index_;
+}
+
+std::string Subprog::name() const
+{
+  return name_;
 }
 
 bool Probe::has_ap_of_probetype(ProbeType probe_type)
@@ -688,6 +766,10 @@ bool Probe::has_ap_of_probetype(ProbeType probe_type)
 }
 
 While::While(const While &other) : Statement(other)
+{
+}
+
+For::For(const For &other) : Statement(other)
 {
 }
 

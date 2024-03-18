@@ -494,12 +494,18 @@ public:
   DEFINE_ACCEPT
   DEFINE_LEAFCOPY(Jump)
 
-  Jump(JumpType ident, location loc = location()) : Statement(loc), ident(ident)
+  Jump(JumpType ident, Expression *return_value, location loc = location())
+      : Statement(loc), ident(ident), return_value(return_value)
   {
   }
-  ~Jump() = default;
+  Jump(JumpType ident, location loc = location())
+      : Statement(loc), ident(ident), return_value(nullptr)
+  {
+  }
+  ~Jump();
 
   JumpType ident = JumpType::INVALID;
+  Expression *return_value;
 
 private:
   Jump(const Jump &other) = default;
@@ -550,6 +556,25 @@ private:
   While(const While &other);
 };
 
+class For : public Statement {
+public:
+  DEFINE_ACCEPT
+  DEFINE_LEAFCOPY(For)
+
+  For(Variable *decl, Expression *expr, StatementList *stmts, location loc)
+      : Statement(loc), decl(decl), expr(expr), stmts(stmts)
+  {
+  }
+  ~For();
+
+  Variable *decl = nullptr;
+  Expression *expr = nullptr;
+  StatementList *stmts = nullptr;
+
+private:
+  For(const For &other);
+};
+
 class Config : public Statement {
 public:
   DEFINE_ACCEPT
@@ -564,6 +589,14 @@ public:
 
 private:
   Config(const Config &other);
+};
+
+class Scope : public Node {
+public:
+  Scope(StatementList *stmts);
+  virtual ~Scope() = 0;
+
+  StatementList *stmts;
 };
 
 class AttachPoint : public Node {
@@ -613,7 +646,7 @@ private:
 };
 using AttachPointList = std::vector<AttachPoint *>;
 
-class Probe : public Node {
+class Probe : public Scope {
 public:
   DEFINE_ACCEPT
   DEFINE_LEAFCOPY(Probe)
@@ -623,7 +656,6 @@ public:
 
   AttachPointList *attach_points = nullptr;
   Predicate *pred = nullptr;
-  StatementList *stmts = nullptr;
 
   std::string name() const;
   std::string args_typename() const;
@@ -642,17 +674,58 @@ private:
 };
 using ProbeList = std::vector<Probe *>;
 
+class SubprogArg : public Node {
+public:
+  DEFINE_ACCEPT
+  DEFINE_LEAFCOPY(SubprogArg)
+
+  SubprogArg(std::string name, SizedType type);
+
+  std::string name() const;
+  SizedType type;
+
+private:
+  SubprogArg(const SubprogArg &other);
+  std::string name_;
+};
+using SubprogArgList = std::vector<SubprogArg *>;
+
+class Subprog : public Scope {
+public:
+  DEFINE_ACCEPT
+  DEFINE_LEAFCOPY(Subprog)
+
+  Subprog(std::string name,
+          SizedType return_type,
+          SubprogArgList *args,
+          StatementList *stmts);
+  ~Subprog();
+
+  SubprogArgList *args = nullptr;
+  SizedType return_type;
+
+  std::string name() const;
+
+private:
+  Subprog(const Subprog &other);
+  std::string name_;
+};
+using SubprogList = std::vector<Subprog *>;
+
 class Program : public Node {
 public:
   DEFINE_ACCEPT
   DEFINE_LEAFCOPY(Program)
 
-  Program(const std::string &c_definitions, Config *config, ProbeList *probes);
-
+  Program(const std::string &c_definitions,
+          Config *config,
+          SubprogList *functions,
+          ProbeList *probes);
   ~Program();
 
   std::string c_definitions;
   Config *config = nullptr;
+  SubprogList *functions = nullptr;
   ProbeList *probes = nullptr;
 
 private:

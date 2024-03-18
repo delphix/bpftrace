@@ -102,6 +102,7 @@ void yyerror(bpftrace::Driver &driver, const char *s);
 %token <std::string> CALL_BUILTIN "call_builtin"
 %token <std::string> INT_TYPE "integer type"
 %token <std::string> BUILTIN_TYPE "builtin type"
+%token <std::string> SUBPROG "subprog"
 %token <std::string> SIZED_TYPE "sized type"
 %token <std::string> IDENT "identifier"
 %token <std::string> PATH "path"
@@ -138,14 +139,17 @@ void yyerror(bpftrace::Driver &driver, const char *s);
 %type <ast::Expression *> and_expr addi_expr primary_expr cast_expr conditional_expr equality_expr expr logical_and_expr muli_expr
 %type <ast::Expression *> logical_or_expr map_or_var or_expr postfix_expr relational_expr shift_expr tuple_access_expr unary_expr xor_expr
 %type <ast::ExpressionList *> vargs
+%type <ast::Subprog *> subprog
+%type <ast::SubprogArg *> subprog_arg
+%type <ast::SubprogArgList *> subprog_args
 %type <ast::Integer *> int
 %type <ast::Map *> map
 %type <ast::PositionalParameter *> param
 %type <ast::Predicate *> pred
 %type <ast::Probe *> probe
-%type <ast::ProbeList *> probes
+%type <std::pair<ast::ProbeList *, ast::SubprogList *>> probes_and_subprogs
 %type <ast::Config *> config
-%type <ast::Statement *> assign_stmt block_stmt expr_stmt if_stmt jump_stmt loop_stmt config_assign_stmt
+%type <ast::Statement *> assign_stmt block_stmt expr_stmt if_stmt jump_stmt loop_stmt config_assign_stmt for_stmt
 %type <ast::StatementList *> block block_or_if stmt_list config_block config_assign_stmt_list
 %type <SizedType> type int_type pointer_type struct_type
 %type <ast::Variable *> var
@@ -172,7 +176,9 @@ void yyerror(bpftrace::Driver &driver, const char *s);
 %%
 
 program:
-                c_definitions config probes END { driver.root = std::make_unique<ast::Program>($1, $2, $3); }
+                c_definitions config probes_and_subprogs END {
+                    driver.root = std::make_unique<ast::Program>($1, $2, $3.second, $3.first);
+                }
                 ;
 
 c_definitions:
@@ -186,6 +192,7 @@ type:
                 int_type { $$ = $1; }
         |       BUILTIN_TYPE {
                     static std::unordered_map<std::string, SizedType> type_map = {
+                        {"void", CreateVoid()},
                         {"min_t", CreateMin(true)},
                         {"max_t", CreateMax(true)},
                         {"sum_t", CreateSum(true)},
@@ -253,9 +260,29 @@ config:
         |        %empty                        { $$ = nullptr; }
                 ;
 
-probes:
-                probes probe { $$ = $1; $1->push_back($2); }
-        |       probe        { $$ = new ast::ProbeList; $$->push_back($1); }
+subprog:
+                SUBPROG IDENT "(" subprog_args ")" ":" type block {
+                    $$ = new ast::Subprog($2, $7, $4, $8);
+                }
+        |       SUBPROG IDENT "(" ")" ":" type block {
+                    $$ = new ast::Subprog($2, $6, new ast::SubprogArgList, $7);
+                }
+                ;
+
+subprog_args:
+                subprog_args "," subprog_arg { $1->push_back($3); $$ = $1; }
+        |       subprog_arg                  { $$ = new ast::SubprogArgList; $$->push_back($1); }
+                ;
+
+subprog_arg:
+                VAR ":" type { $$ = new ast::SubprogArg($1, $3); }
+                ;
+
+probes_and_subprogs:
+                probes_and_subprogs probe   { $$ = $1; $1.first->push_back($2); }
+        |       probes_and_subprogs subprog { $$ = $1; $1.second->push_back($2); }
+        |       probe        { $$ = { new ast::ProbeList, new ast::SubprogList}; $$.first->push_back($1); }
+        |       subprog      { $$ = { new ast::ProbeList, new ast::SubprogList}; $$.second->push_back($1); }
                 ;
 
 probe:
@@ -369,6 +396,7 @@ config_assign_stmt_list:
 block_stmt:
                 loop_stmt    { $$ = $1; }
         |       if_stmt      { $$ = $1; }
+        |       for_stmt     { $$ = $1; }
                 ;
 
 expr_stmt:
@@ -382,15 +410,20 @@ expr_stmt:
                 ;
 
 jump_stmt:
-                BREAK    { $$ = new ast::Jump(ast::JumpType::BREAK, @$); }
-        |       CONTINUE { $$ = new ast::Jump(ast::JumpType::CONTINUE, @$); }
-        |       RETURN   { $$ = new ast::Jump(ast::JumpType::RETURN, @$); }
+                BREAK       { $$ = new ast::Jump(ast::JumpType::BREAK, @$); }
+        |       CONTINUE    { $$ = new ast::Jump(ast::JumpType::CONTINUE, @$); }
+        |       RETURN      { $$ = new ast::Jump(ast::JumpType::RETURN, @$); }
+        |       RETURN expr { $$ = new ast::Jump(ast::JumpType::RETURN, $2, @$); }
                 ;
 
 loop_stmt:
                 UNROLL "(" int ")" block             { $$ = new ast::Unroll($3, $5, @1 + @4); }
         |       UNROLL "(" param ")" block           { $$ = new ast::Unroll($3, $5, @1 + @4); }
         |       WHILE  "(" expr ")" block            { $$ = new ast::While($3, $5, @1); }
+                ;
+
+for_stmt:
+                FOR "(" var ":" expr ")" block       { $$ = new ast::For($3, $5, $7, @1); }
                 ;
 
 if_stmt:
@@ -412,8 +445,8 @@ assign_stmt:
                   error(@1 + @3, "Tuples are immutable once created. Consider creating a new tuple and assigning it instead.");
                   YYERROR;
                 }
-        |       map ASSIGN expr      { $$ = new ast::AssignMapStatement($1, $3, false, @2); }
-        |       var ASSIGN expr      { $$ = new ast::AssignVarStatement($1, $3, false, @2); }
+        |       map ASSIGN expr      { $$ = new ast::AssignMapStatement($1, $3, false, @$); }
+        |       var ASSIGN expr      { $$ = new ast::AssignVarStatement($1, $3, false, @$); }
         |       map compound_op expr
                 {
                   auto b = new ast::Binop($1, $2, $3, @2);

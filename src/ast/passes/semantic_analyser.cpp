@@ -10,6 +10,7 @@
 #include "arch/arch.h"
 #include "ast/ast.h"
 #include "ast/signal_bt.h"
+#include "collect_nodes.h"
 #include "config.h"
 #include "log.h"
 #include "printf.h"
@@ -163,11 +164,11 @@ void SemanticAnalyser::builtin_args_tracepoint(AttachPoint *attach_point,
   }
 }
 
-ProbeType SemanticAnalyser::single_provider_type(void)
+ProbeType SemanticAnalyser::single_provider_type(Probe *probe)
 {
   ProbeType type = ProbeType::invalid;
 
-  for (auto &attach_point : *probe_->attach_points) {
+  for (auto &attach_point : *probe->attach_points) {
     ProbeType ap = probetype(attach_point->provider);
 
     if (type == ProbeType::invalid)
@@ -215,11 +216,14 @@ AddrSpace SemanticAnalyser::find_addrspace(ProbeType pt)
 void SemanticAnalyser::visit(Builtin &builtin)
 {
   if (builtin.ident == "ctx") {
-    ProbeType pt = probetype((*probe_->attach_points)[0]->provider);
+    auto probe = get_probe_from_scope(scope_, builtin.loc, builtin.ident);
+    if (probe == nullptr)
+      return;
+    ProbeType pt = probetype((*probe->attach_points)[0]->provider);
     libbpf::bpf_prog_type bt = progtype(pt);
-    std::string func = (*probe_->attach_points)[0]->func;
+    std::string func = (*probe->attach_points)[0]->func;
 
-    for (auto &attach_point : *probe_->attach_points) {
+    for (auto &attach_point : *probe->attach_points) {
       ProbeType pt = probetype(attach_point->provider);
       libbpf::bpf_prog_type bt2 = progtype(pt);
       if (bt != bt2)
@@ -289,12 +293,15 @@ void SemanticAnalyser::visit(Builtin &builtin)
                                                   "struct task_struct")),
                                  AddrSpace::kernel);
   } else if (builtin.ident == "retval") {
-    ProbeType type = single_provider_type();
+    auto probe = get_probe_from_scope(scope_, builtin.loc, builtin.ident);
+    if (probe == nullptr)
+      return;
+    ProbeType type = single_provider_type(probe);
 
     if (type == ProbeType::kretprobe || type == ProbeType::uretprobe) {
       builtin.type = CreateUInt64();
     } else if (type == ProbeType::kfunc || type == ProbeType::kretfunc) {
-      auto arg = bpftrace_.structs.GetProbeArg(*probe_, "$retval");
+      auto arg = bpftrace_.structs.GetProbeArg(*probe, "$retval");
       if (arg) {
         builtin.type = arg->type;
         builtin.type.is_btftype = true;
@@ -320,7 +327,10 @@ void SemanticAnalyser::visit(Builtin &builtin)
     // Case: @=comm and strncmp(@, "name")
     builtin.type.SetAS(AddrSpace::kernel);
   } else if (builtin.ident == "func") {
-    for (auto &attach_point : *probe_->attach_points) {
+    auto probe = get_probe_from_scope(scope_, builtin.loc, builtin.ident);
+    if (probe == nullptr)
+      return;
+    for (auto &attach_point : *probe->attach_points) {
       ProbeType type = probetype(attach_point->provider);
       if (type == ProbeType::kprobe || type == ProbeType::kretprobe)
         builtin.type = CreateKSym();
@@ -339,9 +349,12 @@ void SemanticAnalyser::visit(Builtin &builtin)
     }
   } else if (!builtin.ident.compare(0, 3, "arg") && builtin.ident.size() == 4 &&
              builtin.ident.at(3) >= '0' && builtin.ident.at(3) <= '9') {
-    ProbeType pt = probetype((*probe_->attach_points)[0]->provider);
+    auto probe = get_probe_from_scope(scope_, builtin.loc, builtin.ident);
+    if (probe == nullptr)
+      return;
+    ProbeType pt = probetype((*probe->attach_points)[0]->provider);
     AddrSpace addrspace = find_addrspace(pt);
-    for (auto &attach_point : *probe_->attach_points) {
+    for (auto &attach_point : *probe->attach_points) {
       ProbeType type = probetype(attach_point->provider);
       if (type != ProbeType::kprobe && type != ProbeType::uprobe &&
           type != ProbeType::usdt && type != ProbeType::rawtracepoint)
@@ -358,9 +371,12 @@ void SemanticAnalyser::visit(Builtin &builtin)
   } else if (!builtin.ident.compare(0, 4, "sarg") &&
              builtin.ident.size() == 5 && builtin.ident.at(4) >= '0' &&
              builtin.ident.at(4) <= '9') {
-    ProbeType pt = probetype((*probe_->attach_points)[0]->provider);
+    auto probe = get_probe_from_scope(scope_, builtin.loc, builtin.ident);
+    if (probe == nullptr)
+      return;
+    ProbeType pt = probetype((*probe->attach_points)[0]->provider);
     AddrSpace addrspace = find_addrspace(pt);
-    for (auto &attach_point : *probe_->attach_points) {
+    for (auto &attach_point : *probe->attach_points) {
       ProbeType type = probetype(attach_point->provider);
       if (type != ProbeType::kprobe && type != ProbeType::uprobe)
         LOG(ERROR, builtin.loc, err_)
@@ -379,8 +395,11 @@ void SemanticAnalyser::visit(Builtin &builtin)
     builtin.type = CreateUInt64();
     builtin.type.SetAS(addrspace);
   } else if (builtin.ident == "probe") {
+    auto probe = get_probe_from_scope(scope_, builtin.loc, builtin.ident);
+    if (probe == nullptr)
+      return;
     builtin.type = CreateProbe();
-    probe_->need_expansion = true;
+    probe->need_expansion = true;
   } else if (builtin.ident == "username") {
     builtin.type = CreateUsername();
   } else if (builtin.ident == "cpid") {
@@ -390,20 +409,23 @@ void SemanticAnalyser::visit(Builtin &builtin)
     }
     builtin.type = CreateUInt32();
   } else if (builtin.ident == "args") {
-    for (auto &attach_point : *probe_->attach_points) {
+    auto probe = get_probe_from_scope(scope_, builtin.loc, builtin.ident);
+    if (probe == nullptr)
+      return;
+    for (auto &attach_point : *probe->attach_points) {
       ProbeType type = probetype(attach_point->provider);
 
       if (type == ProbeType::tracepoint) {
-        probe_->need_expansion = true;
+        probe->need_expansion = true;
         builtin_args_tracepoint(attach_point, builtin);
       }
     }
 
-    ProbeType type = single_provider_type();
+    ProbeType type = single_provider_type(probe);
 
     if (type == ProbeType::kfunc || type == ProbeType::kretfunc ||
         type == ProbeType::uprobe) {
-      auto type_name = probe_->args_typename();
+      auto type_name = probe->args_typename();
       builtin.type = CreateRecord(type_name,
                                   bpftrace_.structs.Lookup(type_name));
       if (builtin.type.GetFieldCount() == 0)
@@ -483,10 +505,12 @@ void SemanticAnalyser::visit(Call &call)
     }
   }
 
-  for (auto &ap : *probe_->attach_points) {
-    if (!check_available(call, *ap)) {
-      LOG(ERROR, call.loc, err_) << call.func << " can not be used with \""
-                                 << ap->provider << "\" probes";
+  if (auto probe = dynamic_cast<Probe *>(scope_)) {
+    for (auto &ap : *probe->attach_points) {
+      if (!check_available(call, *ap)) {
+        LOG(ERROR, call.loc, err_) << call.func << " can not be used with \""
+                                   << ap->provider << "\" probes";
+      }
     }
   }
 
@@ -606,12 +630,13 @@ void SemanticAnalyser::visit(Call &call)
     call.type = CreateStats(true);
   } else if (call.func == "delete") {
     check_assignment(call, false, false, false);
-    if (check_nargs(call, 1)) {
-      auto &arg = *call.vargs->at(0);
-      if (!arg.is_map)
-        LOG(ERROR, call.loc, err_) << "delete() expects a map to be provided";
+    if (check_varargs(call, 1, std::numeric_limits<size_t>::max())) {
+      for (const auto &arg : *call.vargs) {
+        if (!arg->is_map)
+          LOG(ERROR, arg->loc, err_)
+              << "delete() only expects maps to be provided";
+      }
     }
-
     call.type = CreateNone();
   } else if (call.func == "str") {
     if (check_varargs(call, 1, 2)) {
@@ -825,9 +850,14 @@ void SemanticAnalyser::visit(Call &call)
       }
     }
     call.type = CreateUInt64();
-    ProbeType pt = single_provider_type();
-    // In case of different attach_points, Set the addrspace to none.
-    call.type.SetAS(find_addrspace(pt));
+    if (auto probe = dynamic_cast<Probe *>(scope_)) {
+      ProbeType pt = single_provider_type(probe);
+      // In case of different attach_points, Set the addrspace to none.
+      call.type.SetAS(find_addrspace(pt));
+    } else {
+      // Assume kernel space for data in subprogs
+      call.type.SetAS(AddrSpace::kernel);
+    }
   } else if (call.func == "kaddr") {
     if (check_nargs(call, 1)) {
       check_arg(call, Type::string, 0, true);
@@ -835,6 +865,10 @@ void SemanticAnalyser::visit(Call &call)
     call.type = CreateUInt64();
     call.type.SetAS(AddrSpace::kernel);
   } else if (call.func == "uaddr") {
+    auto probe = get_probe_from_scope(scope_, call.loc, call.func);
+    if (probe == nullptr)
+      return;
+
     if (!check_nargs(call, 1))
       return;
     if (!(check_arg(call, Type::string, 0, true) && check_symbol(call, 0)))
@@ -842,7 +876,7 @@ void SemanticAnalyser::visit(Call &call)
 
     std::vector<int> sizes;
     auto name = bpftrace_.get_string_literal(call.vargs->at(0));
-    for (auto &ap : *probe_->attach_points) {
+    for (auto &ap : *probe->attach_points) {
       struct symbol sym = {};
       int err = bpftrace_.resolve_uname(name, &sym, ap->target);
       if (err < 0 || sym.address == 0) {
@@ -857,9 +891,9 @@ void SemanticAnalyser::visit(Call &call)
         LOG(ERROR, call.loc, err_)
             << "Symbol size mismatch between probes. Symbol \"" << name
             << "\" has size " << sizes.at(0) << " for probe \""
-            << probe_->attach_points->at(0)->name("") << "\" but size "
+            << probe->attach_points->at(0)->name("") << "\" but size "
             << sizes.at(i) << " for probe \""
-            << probe_->attach_points->at(i)->name("") << "\"";
+            << probe->attach_points->at(i)->name("") << "\"";
       }
     }
     size_t pointee_size = 0;
@@ -921,7 +955,7 @@ void SemanticAnalyser::visit(Call &call)
     check_nargs(call, 0);
   } else if (call.func == "print") {
     check_assignment(call, false, false, false);
-    if (in_loop() && is_final_pass()) {
+    if (in_loop() && is_final_pass() && call.vargs->at(0)->is_map) {
       LOG(WARNING, call.loc, out_)
           << "Due to it's asynchronous nature using 'print()' in a loop can "
              "lead to unexpected behavior. The map will likely be updated "
@@ -1074,6 +1108,10 @@ void SemanticAnalyser::visit(Call &call)
           << "signal only accepts string literals or integers";
     }
   } else if (call.func == "path") {
+    auto probe = get_probe_from_scope(scope_, call.loc, call.func);
+    if (probe == nullptr)
+      return;
+
     if (!bpftrace_.feature_->has_d_path()) {
       LOG(ERROR, call.loc, err_)
           << "BPF_FUNC_d_path not available for your kernel version";
@@ -1098,7 +1136,7 @@ void SemanticAnalyser::visit(Call &call)
                             bpftrace_.config_.get(ConfigKeyInt::max_strlen));
     }
 
-    for (auto &attach_point : *probe_->attach_points) {
+    for (auto &attach_point : *probe->attach_points) {
       ProbeType type = probetype(attach_point->provider);
       if (type != ProbeType::kfunc && type != ProbeType::kretfunc &&
           type != ProbeType::iter)
@@ -1131,6 +1169,10 @@ void SemanticAnalyser::visit(Call &call)
     }
     call.type = CreateUInt64();
   } else if (call.func == "override") {
+    auto probe = get_probe_from_scope(scope_, call.loc, call.func);
+    if (probe == nullptr)
+      return;
+
     if (!bpftrace_.feature_->has_helper_override_return()) {
       LOG(ERROR, call.loc, err_)
           << "BPF_FUNC_override_return not available for your kernel version";
@@ -1140,7 +1182,7 @@ void SemanticAnalyser::visit(Call &call)
     if (check_varargs(call, 1, 1)) {
       check_arg(call, Type::integer, 0, false);
     }
-    for (auto &attach_point : *probe_->attach_points) {
+    for (auto &attach_point : *probe->attach_points) {
       ProbeType type = probetype(attach_point->provider);
       if (type != ProbeType::kprobe) {
         LOG(ERROR, call.loc, err_)
@@ -1343,6 +1385,24 @@ void SemanticAnalyser::check_stack_call(Call &call, bool kernel)
   call.type = CreateStack(kernel, stack_type);
 }
 
+Probe *SemanticAnalyser::get_probe_from_scope(Scope *scope,
+                                              const location &loc,
+                                              std::string name)
+{
+  auto probe = dynamic_cast<Probe *>(scope);
+  if (probe == nullptr) {
+    // Attempting to use probe-specific feature in non-probe context
+    if (name.empty()) {
+      LOG(ERROR, loc, err_) << "Feature not supported outside probe";
+    } else {
+      LOG(ERROR, loc, err_)
+          << "Builtin " << name << " not supported outside probe";
+    }
+  }
+
+  return probe;
+}
+
 void SemanticAnalyser::visit(Map &map)
 {
   MapKey key;
@@ -1406,8 +1466,8 @@ void SemanticAnalyser::visit(Map &map)
 
 void SemanticAnalyser::visit(Variable &var)
 {
-  auto search_val = variable_val_[probe_].find(var.ident);
-  if (search_val != variable_val_[probe_].end()) {
+  auto search_val = variable_val_[scope_].find(var.ident);
+  if (search_val != variable_val_[scope_].end()) {
     var.type = search_val->second;
   } else {
     LOG(ERROR, var.loc, err_)
@@ -1889,7 +1949,19 @@ void SemanticAnalyser::visit(Jump &jump)
 {
   switch (jump.ident) {
     case JumpType::RETURN:
-      // return can be used outside of loops
+      if (jump.return_value)
+        jump.return_value->accept(*this);
+      if (auto subprog = dynamic_cast<Subprog *>(scope_)) {
+        if ((subprog->return_type.IsVoidTy() !=
+             (jump.return_value == nullptr)) ||
+            (jump.return_value &&
+             jump.return_value->type != subprog->return_type)) {
+          LOG(ERROR, jump.loc, err_)
+              << "Function " << subprog->name() << " is of type "
+              << subprog->return_type << ", cannot return "
+              << (jump.return_value ? jump.return_value->type : CreateVoid());
+        }
+      }
       break;
     case JumpType::BREAK:
     case JumpType::CONTINUE:
@@ -1914,6 +1986,121 @@ void SemanticAnalyser::visit(While &while_block)
   loop_depth_++;
   accept_statements(while_block.stmts);
   loop_depth_--;
+}
+
+void SemanticAnalyser::visit(For &f)
+{
+  if (!bpftrace_.feature_->has_helper_for_each_map_elem()) {
+    LOG(ERROR, f.loc, err_)
+        << "Missing required kernel feature: for_each_map_elem";
+  }
+
+  /*
+   * For-loops are implemented using the bpf_for_each_map_elem helper function,
+   * which requires them to be rewritten into a callback style.
+   *
+   * In this first implementation, we do not allow any variables to be shared
+   * between the main probe and the loop's body. Maps are global so are not a
+   * problem.
+   *
+   * Pseudo code for the transformation we apply:
+   *
+   * Before:
+   *     PROBE {
+   *       @map[0] = 1;
+   *       for ($kv : @map) {
+   *         [LOOP BODY]
+   *       }
+   *     }
+   *
+   * After:
+   *     PROBE {
+   *       @map[0] = 1;
+   *       bpf_for_each_map_elem(@map, &map_for_each_cb, 0, 0);
+   *     }
+   *     long map_for_each_cb(bpf_map *map,
+   *                          const void *key,
+   *                          void *value,
+   *                          void *ctx) {
+   *       $kv = ((uint64)key, (uint64)value);
+   *       [LOOP BODY]
+   *     }
+   */
+
+  // Validate decl
+  const auto &decl_name = f.decl->ident;
+  if (variable_val_[scope_].find(decl_name) != variable_val_[scope_].end()) {
+    LOG(ERROR, f.decl->loc, err_)
+        << "Loop declaration shadows existing variable: " + decl_name;
+  }
+
+  // Validate expr
+  if (!f.expr->is_map) {
+    LOG(ERROR, f.expr->loc, err_) << "Loop expression must be a map";
+    return;
+  }
+  Map &map = static_cast<Map &>(*f.expr);
+
+  // Validate body
+  CollectNodes<Variable> vars_referenced;
+  for (auto *stmt : *f.stmts) {
+    vars_referenced.run(*stmt);
+  }
+  for (const Variable &var : vars_referenced.nodes()) {
+    if (variable_val_[scope_].find(var.ident) != variable_val_[scope_].end()) {
+      LOG(ERROR, var.loc, err_) << "Variables defined outside of a for-loop "
+                                   "can not be accessed in the loop's scope";
+    }
+  }
+
+  // This could be relaxed in the future:
+  CollectNodes<Jump> jumps;
+  for (auto *stmt : *f.stmts) {
+    jumps.run(*stmt);
+  }
+  for (const Jump &n : jumps.nodes()) {
+    LOG(ERROR, n.loc, err_)
+        << "'" << opstr(n) << "' statement is not allowed in a for-loop";
+  }
+
+  map.skip_key_validation = true;
+  map.accept(*this);
+
+  if (has_error())
+    return;
+
+  // Iterating over a map provides a tuple: (map_key, map_val)
+  auto *mapkey = get_map_key_type(map);
+  auto *mapval = get_map_type(map);
+
+  if (mapkey && mapkey->args_.size() == 0) {
+    LOG(ERROR, map.loc, err_)
+        << "Maps used as for-loop expressions must have keys to iterate over";
+  }
+
+  if (mapval && mapkey) {
+    auto keytype = CreateNone();
+    if (mapkey->args_.size() == 1) {
+      keytype = mapkey->args_[0];
+    } else {
+      keytype = CreateTuple(bpftrace_.structs.AddTuple(mapkey->args_));
+    }
+    f.decl->type = CreateTuple(
+        bpftrace_.structs.AddTuple({ keytype, *mapval }));
+  }
+  variable_val_[scope_][decl_name] = f.decl->type;
+
+  loop_depth_++;
+  accept_statements(f.stmts);
+  loop_depth_--;
+
+  // Decl variable is not valid beyond this for-loop
+  variable_val_[scope_].erase(decl_name);
+
+  // Variables declared in a for-loop are not valid beyond it
+  for (const Variable &var : vars_referenced.nodes()) {
+    variable_val_[scope_].erase(var.ident);
+  }
 }
 
 void SemanticAnalyser::visit(FieldAccess &acc)
@@ -1947,7 +2134,10 @@ void SemanticAnalyser::visit(FieldAccess &acc)
   }
 
   if (type.is_funcarg) {
-    auto arg = bpftrace_.structs.GetProbeArg(*probe_, acc.field);
+    auto probe = get_probe_from_scope(scope_, acc.loc);
+    if (probe == nullptr)
+      return;
+    auto arg = bpftrace_.structs.GetProbeArg(*probe, acc.field);
     if (arg) {
       acc.type = arg->type;
       acc.type.SetAS(acc.expr->type.GetAS());
@@ -1956,7 +2146,7 @@ void SemanticAnalyser::visit(FieldAccess &acc)
         if (acc.type.IsNoneTy())
           LOG(ERROR, acc.loc, err_) << acc.field << " has unsupported type";
 
-        ProbeType probetype = single_provider_type();
+        ProbeType probetype = single_provider_type(probe);
         if (probetype == ProbeType::kfunc || probetype == ProbeType::kretfunc) {
           acc.type.is_btftype = true;
         }
@@ -1999,7 +2189,11 @@ void SemanticAnalyser::visit(FieldAccess &acc)
   std::map<std::string, std::weak_ptr<const Struct>> structs;
 
   if (type.is_tparg) {
-    for (AttachPoint *attach_point : *probe_->attach_points) {
+    auto probe = get_probe_from_scope(scope_, acc.loc);
+    if (probe == nullptr)
+      return;
+
+    for (AttachPoint *attach_point : *probe->attach_points) {
       if (probetype(attach_point->provider) != ProbeType::tracepoint) {
         // The args builtin can only be used with tracepoint
         // an error message is already generated in visit(Builtin)
@@ -2116,8 +2310,13 @@ void SemanticAnalyser::visit(Cast &cast)
   // case : BEGIN { @foo = (struct Foo)0; }
   // case : profile:hz:99 $task = (struct task_struct *)curtask.
   if (cast.type.GetAS() == AddrSpace::none) {
-    ProbeType type = single_provider_type();
-    cast.type.SetAS(find_addrspace(type));
+    if (auto probe = dynamic_cast<Probe *>(scope_)) {
+      ProbeType type = single_provider_type(probe);
+      cast.type.SetAS(find_addrspace(type));
+    } else {
+      // Assume kernel space for data in subprogs
+      cast.type.SetAS(AddrSpace::kernel);
+    }
   }
 }
 
@@ -2226,11 +2425,11 @@ void SemanticAnalyser::visit(AssignVarStatement &assignment)
   assignment.expr->accept(*this);
 
   std::string var_ident = assignment.var->ident;
-  auto search = variable_val_[probe_].find(var_ident);
+  auto search = variable_val_[scope_].find(var_ident);
 
   auto &assignTy = assignment.expr->type;
 
-  if (search != variable_val_[probe_].end()) {
+  if (search != variable_val_[scope_].end()) {
     if (search->second.IsNoneTy()) {
       if (is_final_pass()) {
         LOG(ERROR, assignment.loc, err_) << "Undefined variable: " + var_ident;
@@ -2249,10 +2448,10 @@ void SemanticAnalyser::visit(AssignVarStatement &assignment)
     }
   } else {
     // This variable hasn't been seen before
-    variable_val_[probe_].insert({ var_ident, assignment.expr->type });
+    variable_val_[scope_].insert({ var_ident, assignment.expr->type });
   }
 
-  auto &storedTy = variable_val_[probe_][var_ident];
+  auto &storedTy = variable_val_[scope_][var_ident];
 
   assignment.var->type = storedTy;
 
@@ -2591,7 +2790,7 @@ void SemanticAnalyser::visit(Probe &probe)
 {
   auto aps = probe.attach_points->size();
 
-  probe_ = &probe;
+  scope_ = &probe;
 
   for (AttachPoint *ap : *probe.attach_points) {
     if (!listing_ && aps > 1 && ap->provider == "iter") {
@@ -2615,8 +2814,20 @@ void SemanticAnalyser::visit(Config &config)
   accept_statements(config.stmts);
 }
 
+void SemanticAnalyser::visit(Subprog &subprog)
+{
+  scope_ = &subprog;
+  for (SubprogArg *arg : *subprog.args) {
+    variable_val_[scope_].insert({ arg->name(), arg->type });
+  }
+  Visitor::visit(subprog);
+}
+
 void SemanticAnalyser::visit(Program &program)
 {
+  if (program.functions)
+    for (Subprog *subprog : *program.functions)
+      subprog->accept(*this);
   for (Probe *probe : *program.probes)
     probe->accept(*this);
 
@@ -2911,6 +3122,14 @@ SizedType *SemanticAnalyser::get_map_type(const Map &map)
   return &search->second;
 }
 
+MapKey *SemanticAnalyser::get_map_key_type(const Map &map)
+{
+  if (auto it = map_key_.find(map.ident); it != map_key_.end()) {
+    return &it->second;
+  }
+  return nullptr;
+}
+
 /*
  * assign_map_type
  *
@@ -2970,8 +3189,7 @@ void SemanticAnalyser::accept_statements(StatementList *stmts)
 }
 void SemanticAnalyser::update_key_type(const Map &map, const MapKey &new_key)
 {
-  auto key = map_key_.find(map.ident);
-  if (key != map_key_.end()) {
+  if (const auto &key = map_key_.find(map.ident); key != map_key_.end()) {
     bool valid = true;
     if (key->second.args_.size() == new_key.args_.size()) {
       for (size_t i = 0; i < key->second.args_.size(); i++) {
@@ -2985,18 +3203,20 @@ void SemanticAnalyser::update_key_type(const Map &map, const MapKey &new_key)
           break;
         }
       }
-    } else
+    } else {
       valid = false;
+    }
 
-    if (!valid) {
+    if (is_final_pass() && !valid) {
       LOG(ERROR, map.loc, err_)
           << "Argument mismatch for " << map.ident << ": "
           << "trying to access with arguments: " << new_key.argument_type_list()
           << " when map expects arguments: "
           << key->second.argument_type_list();
     }
-  } else
+  } else {
     map_key_.insert({ map.ident, new_key });
+  }
 }
 
 bool SemanticAnalyser::update_string_size(SizedType &type,
@@ -3044,6 +3264,12 @@ void SemanticAnalyser::resolve_struct_type(SizedType &type, const location &loc)
       pointer_level--;
     }
   }
+}
+
+bool SemanticAnalyser::has_error() const
+{
+  const auto &errors = err_.str();
+  return !errors.empty();
 }
 
 Pass CreateSemanticPass()

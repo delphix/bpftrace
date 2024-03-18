@@ -40,10 +40,13 @@ public:
   virtual void visit(Jump &jump) = 0;
   virtual void visit(Unroll &unroll) = 0;
   virtual void visit(While &while_block) = 0;
+  virtual void visit(For &for_loop) = 0;
   virtual void visit(Predicate &pred) = 0;
   virtual void visit(AttachPoint &ap) = 0;
   virtual void visit(Probe &probe) = 0;
   virtual void visit(Config &config) = 0;
+  virtual void visit(SubprogArg &subprog_arg) = 0;
+  virtual void visit(Subprog &subprog) = 0;
   virtual void visit(Program &program) = 0;
 };
 
@@ -104,11 +107,14 @@ public:
   void visit(If &if_block) override;
   void visit(Unroll &unroll) override;
   void visit(While &while_block) override;
+  void visit(For &for_loop) override;
   void visit(Jump &jump) override;
   void visit(Predicate &pred) override;
   void visit(AttachPoint &ap) override;
   void visit(Probe &probe) override;
   void visit(Config &config) override;
+  void visit(SubprogArg &subprog_arg) override;
+  void visit(Subprog &subprog) override;
   void visit(Program &program) override;
 };
 
@@ -169,10 +175,13 @@ public:
   virtual R visit(Jump &node) DEFAULT_FN;
   virtual R visit(Unroll &node) DEFAULT_FN;
   virtual R visit(While &node) DEFAULT_FN;
+  virtual R visit(For &node) DEFAULT_FN;
   virtual R visit(Predicate &node) DEFAULT_FN;
   virtual R visit(AttachPoint &node) DEFAULT_FN;
   virtual R visit(Probe &node) DEFAULT_FN;
   virtual R visit(Config &node) DEFAULT_FN;
+  virtual R visit(SubprogArg &node) DEFAULT_FN;
+  virtual R visit(Subprog &node) DEFAULT_FN;
   virtual R visit(Program &node) DEFAULT_FN;
 
   virtual R default_visitor(Node &node)
@@ -219,7 +228,10 @@ private:
     DEFINE_DISPATCH(Predicate);
     DEFINE_DISPATCH(Ternary);
     DEFINE_DISPATCH(While);
+    DEFINE_DISPATCH(For);
     DEFINE_DISPATCH(AttachPoint);
+    DEFINE_DISPATCH(SubprogArg);
+    DEFINE_DISPATCH(Subprog);
     DEFINE_DISPATCH(Probe);
     DEFINE_DISPATCH(Config);
     DEFINE_DISPATCH(Program);
@@ -269,10 +281,12 @@ public:
   Node *visit(Jump &) override;
   Node *visit(Unroll &) override;
   Node *visit(While &) override;
+  Node *visit(For &) override;
   Node *visit(Predicate &) override;
   Node *visit(AttachPoint &) override;
   Node *visit(Probe &) override;
   Node *visit(Config &) override;
+  Node *visit(Subprog &) override;
   Node *visit(Program &) override;
 
 protected:
