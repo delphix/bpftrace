@@ -161,7 +161,7 @@ private:
       int* outfd = nullptr);
   bool try_load_btf(const void* btf_data, size_t btf_size);
 
-  BTF btf_ = BTF({ "vmlinux" });
+	BTF btf_ = BTF({ "vmlinux", "zfs" });
 
   BPFnofeature no_feature_;
 };
