@@ -150,7 +150,9 @@ private:
       return std::get<T>(it->second.value);
     } catch (std::bad_variant_access const &ex) {
       // This shouldn't happen
-      throw std::runtime_error("Type mismatch for config key");
+      std::string errorMessage = std::string("Type mismatch for config key: ")+ex.what();
+
+      throw std::runtime_error(errorMessage);
     }
   }
 
