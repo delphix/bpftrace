@@ -15,10 +15,18 @@ and this project adheres to
   - [#2969](https://github.com/bpftrace/bpftrace/pull/2969)
 - Add ability to call print() with indexed maps to print single map values
   - [#3027](https://github.com/bpftrace/bpftrace/pull/3027)
+- Add LLVM 18 support
+  - [#3051](https://github.com/bpftrace/bpftrace/pull/3051)
+- Add ability to call delete() with multiple arguments
+  - [#3046](https://github.com/bpftrace/bpftrace/pull/3046)
+- Add for-each loops for iterating over map elements
+  - [#3003](https://github.com/bpftrace/bpftrace/pull/3003)
 #### Changed
 #### Deprecated
 #### Removed
 #### Fixed
+- Fix ability to interrupt bpftrace during probe attach
+  - [#3053](https://github.com/bpftrace/bpftrace/pull/3053)
 - Fix field resolution on structs with anon union as first field
   - [#2964](https://github.com/bpftrace/bpftrace/pull/2964)
 - Fix security hole checking unpacked kernel headers

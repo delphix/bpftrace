@@ -54,11 +54,14 @@ public:
   void visit(If &if_block) override;
   void visit(Unroll &unroll) override;
   void visit(While &while_block) override;
+  void visit(For &f) override;
   void visit(Jump &jump) override;
   void visit(Predicate &pred) override;
   void visit(AttachPoint &ap) override;
   void visit(Probe &probe) override;
+  void visit(Subprog &subprog) override;
   void visit(Program &program) override;
+
   AllocaInst *getHistMapKey(Map &map, Value *log2);
   int getNextIndexForProbe();
   Value *createLogicalAnd(Binop &binop);
@@ -82,6 +85,10 @@ public:
                            uint64_t max_entries,
                            const MapKey &key,
                            const SizedType &value_type);
+  AllocaInst *createTuple(
+      const SizedType &tuple_type,
+      const std::vector<std::pair<llvm::Value *, const location *>> &vals,
+      const std::string &name);
 
   void generate_ir(void);
   void generate_maps(const RequiredResources &resources);
@@ -175,7 +182,7 @@ private:
 
   // Create return instruction
   //
-  // If null, return value will depend on current attach point
+  // If null, return value will depend on current attach point (void in subprog)
   void createRet(Value *value = nullptr);
 
   // Every time we see a watchpoint that specifies a function + arg pair, we
@@ -214,6 +221,8 @@ private:
   void createIncDec(Unop &unop);
 
   Function *createMapLenCallback();
+  Function *createForEachMapCallback(const Variable &decl,
+                                     const std::vector<Statement *> &stmts);
 
   // Return a lambda that has captured-by-value CodegenLLVM's async id state
   // (ie `printf_id_`, `mapped_printf_id_`, etc.).  Running the returned lambda
@@ -248,6 +257,7 @@ private:
   int next_probe_index_ = 1;
   // Used if there are duplicate USDT entries
   int current_usdt_location_index_{ 0 };
+  bool inside_subprog_ = false;
 
   std::map<std::string, AllocaInst *> variables_;
   int printf_id_ = 0;

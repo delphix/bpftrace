@@ -56,6 +56,7 @@ public:
   void visit(Binop &binop) override;
   void visit(Unop &unop) override;
   void visit(While &while_block) override;
+  void visit(For &f) override;
   void visit(Jump &jump) override;
   void visit(Ternary &ternary) override;
   void visit(FieldAccess &acc) override;
@@ -72,6 +73,7 @@ public:
   void visit(AttachPoint &ap) override;
   void visit(Probe &probe) override;
   void visit(Config &config) override;
+  void visit(Subprog &subprog) override;
   void visit(Program &program) override;
 
   int analyse();
@@ -103,27 +105,33 @@ private:
 
   void check_stack_call(Call &call, bool kernel);
 
+  Probe *get_probe_from_scope(Scope *scope,
+                              const location &loc,
+                              std::string name = "");
+
   SizedType *get_map_type(const Map &map);
+  MapKey *get_map_key_type(const Map &map);
   void assign_map_type(const Map &map, const SizedType &type);
   void update_key_type(const Map &map, const MapKey &new_key);
   bool update_string_size(SizedType &type, const SizedType &new_type);
   void resolve_struct_type(SizedType &type, const location &loc);
 
   void builtin_args_tracepoint(AttachPoint *attach_point, Builtin &builtin);
-  ProbeType single_provider_type(void);
+  ProbeType single_provider_type(Probe *probe);
   AddrSpace find_addrspace(ProbeType pt);
 
   void binop_ptr(Binop &op);
   void binop_int(Binop &op);
   void binop_array(Binop &op);
 
+  bool has_error() const;
   bool in_loop(void)
   {
     return loop_depth_ > 0;
   };
   void accept_statements(StatementList *stmts);
 
-  Probe *probe_;
+  Scope *scope_;
 
   // Holds the function currently being visited by this SemanticAnalyser.
   std::string func_;
@@ -131,7 +139,7 @@ private:
   // SemanticAnalyser.
   int func_arg_idx_ = -1;
 
-  std::map<Probe *, std::map<std::string, SizedType>> variable_val_;
+  std::map<Scope *, std::map<std::string, SizedType>> variable_val_;
   std::map<std::string, SizedType> map_val_;
   std::map<std::string, MapKey> map_key_;
 
