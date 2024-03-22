@@ -40,7 +40,9 @@ RUN_TESTS = os.environ.get("RUN_TESTS", "1")
 RUN_MEMLEAK_TEST = os.environ.get("RUN_MEMLEAK_TEST", "0")
 CC = os.environ.get("CC", "cc")
 CXX = os.environ.get("CXX", "c++")
-RUNTIME_TEST_DISABLE = os.environ.get("RUNTIME_TEST_DISABLE", "")
+GTEST_COLOR = os.environ.get("GTEST_COLOR", "auto")
+CI = os.environ.get("CI", "false")
+RUNTIME_TEST_COLOR = os.environ.get("RUNTIME_TEST_COLOR", "auto")
 TOOLS_TEST_OLDVERSION = os.environ.get("TOOLS_TEST_OLDVERSION", "")
 TOOLS_TEST_DISABLE = os.environ.get("TOOLS_TEST_DISABLE", "")
 
@@ -127,8 +129,12 @@ def shell(
         ]
     c += cmd
 
-    # Ugly workaround for mypy not being able to infer empty dict
-    empty: Dict[str, str] = {}
+    if not env:
+        env = {}
+
+    # Nix needs to know the home dir
+    if "HOME" in os.environ:
+        env["HOME"] = os.environ["HOME"]
 
     subprocess.run(
         c,
@@ -138,7 +144,7 @@ def shell(
         # inside the nix environment cannot accidentally depend on
         # host environment. There are known very-hard-to-debug issues
         # that occur in CI when the envirionment escapes.
-        env=env if env else empty,
+        env=env,
     )
 
 
@@ -230,7 +236,11 @@ def test():
         test_one(
             "bpftrace_test",
             lambda: truthy(RUN_TESTS),
-            lambda: shell(["./tests/bpftrace_test"], cwd=Path(BUILD_DIR)),
+            lambda: shell(
+                ["./tests/bpftrace_test"],
+                cwd=Path(BUILD_DIR),
+                env={"GTEST_COLOR": GTEST_COLOR},
+            ),
         )
     )
     results.append(
@@ -241,7 +251,10 @@ def test():
                 ["./tests/runtime-tests.sh"],
                 as_root=True,
                 cwd=Path(BUILD_DIR),
-                env={"RUNTIME_TEST_DISABLE": RUNTIME_TEST_DISABLE},
+                env={
+                    "CI": CI,
+                    "RUNTIME_TEST_COLOR": RUNTIME_TEST_COLOR,
+                },
             ),
         )
     )
