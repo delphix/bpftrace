@@ -24,6 +24,10 @@ and this project adheres to
 #### Changed
 - Better error message for args in mixed probes
   - [#3047](https://github.com/bpftrace/bpftrace/pull/3047)
+- Reproducible Builds: Do not store timestamps in gzip header
+  - [#3096](https://github.com/bpftrace/bpftrace/pull/3096)
+- Replace instances of std::runtime_error with LOG(FATAL)
+  - [#3091](https://github.com/bpftrace/bpftrace/pull/3091)
 #### Deprecated
 #### Removed
 #### Fixed
