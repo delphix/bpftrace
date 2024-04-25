@@ -615,21 +615,20 @@ TEST(bpftrace, add_probes_uprobe_cpp_symbol)
     ASSERT_EQ(0, bpftrace->add_probe(*probe));
     ASSERT_EQ(3U, bpftrace->get_probes().size());
     ASSERT_EQ(0U, bpftrace->get_special_probes().size());
-    const auto orig_name = provider + ":/bin/sh:cpp_mangled";
     check_uprobe(bpftrace->get_probes().at(0),
                  "/bin/sh",
                  "_Z11cpp_mangledi",
-                 orig_name,
+                 provider + ":/bin/sh:cpp:cpp_mangled",
                  provider + ":/bin/sh:cpp:_Z11cpp_mangledi");
     check_uprobe(bpftrace->get_probes().at(1),
                  "/bin/sh",
                  "_Z11cpp_mangledv",
-                 orig_name,
+                 provider + ":/bin/sh:cpp:cpp_mangled",
                  provider + ":/bin/sh:cpp:_Z11cpp_mangledv");
     check_uprobe(bpftrace->get_probes().at(2),
                  "/bin/sh",
                  "cpp_mangled",
-                 orig_name,
+                 provider + ":/bin/sh:cpp:cpp_mangled",
                  provider + ":/bin/sh:cpp:cpp_mangled");
   }
 }
@@ -649,7 +648,7 @@ TEST(bpftrace, add_probes_uprobe_cpp_symbol_full)
   check_uprobe(bpftrace->get_probes().at(0),
                "/bin/sh",
                "_Z11cpp_mangledi",
-               "uprobe:/bin/sh:cpp_mangled(int)",
+               "uprobe:/bin/sh:cpp:cpp_mangled(int)",
                "uprobe:/bin/sh:cpp:_Z11cpp_mangledi");
 }
 
@@ -671,22 +670,22 @@ TEST(bpftrace, add_probes_uprobe_cpp_symbol_wildcard)
   check_uprobe(bpftrace->get_probes().at(0),
                "/bin/sh",
                "_Z11cpp_mangledi",
-               "uprobe:/bin/sh:cpp_man*",
+               "uprobe:/bin/sh:cpp:cpp_man*",
                "uprobe:/bin/sh:cpp:_Z11cpp_mangledi");
   check_uprobe(bpftrace->get_probes().at(1),
                "/bin/sh",
                "_Z11cpp_mangledv",
-               "uprobe:/bin/sh:cpp_man*",
+               "uprobe:/bin/sh:cpp:cpp_man*",
                "uprobe:/bin/sh:cpp:_Z11cpp_mangledv");
   check_uprobe(bpftrace->get_probes().at(2),
                "/bin/sh",
                "_Z18cpp_mangled_suffixv",
-               "uprobe:/bin/sh:cpp_man*",
+               "uprobe:/bin/sh:cpp:cpp_man*",
                "uprobe:/bin/sh:cpp:_Z18cpp_mangled_suffixv");
   check_uprobe(bpftrace->get_probes().at(3),
                "/bin/sh",
                "cpp_mangled",
-               "uprobe:/bin/sh:cpp_man*",
+               "uprobe:/bin/sh:cpp:cpp_man*",
                "uprobe:/bin/sh:cpp:cpp_mangled");
 }
 
@@ -738,26 +737,15 @@ TEST(bpftrace, add_probes_usdt_wildcard)
   ASSERT_EQ(0, bpftrace->add_probe(*probe));
   ASSERT_EQ(4U, bpftrace->get_probes().size());
   ASSERT_EQ(0U, bpftrace->get_special_probes().size());
-  check_usdt(bpftrace->get_probes().at(0),
-             "/bin/bash",
-             "prov1",
-             "tp3",
-             "usdt:/bin/bash:prov1:tp3");
-  check_usdt(bpftrace->get_probes().at(1),
-             "/bin/sh",
-             "prov1",
-             "tp1",
-             "usdt:/bin/sh:prov1:tp1");
-  check_usdt(bpftrace->get_probes().at(2),
-             "/bin/sh",
-             "prov1",
-             "tp2",
-             "usdt:/bin/sh:prov1:tp2");
-  check_usdt(bpftrace->get_probes().at(3),
-             "/bin/sh",
-             "prov2",
-             "tp",
-             "usdt:/bin/sh:prov2:tp");
+
+  const std::string orig_name = "usdt:/bin/*sh:prov*:tp*";
+  check_usdt(
+      bpftrace->get_probes().at(0), "/bin/bash", "prov1", "tp3", orig_name);
+  check_usdt(
+      bpftrace->get_probes().at(1), "/bin/sh", "prov1", "tp1", orig_name);
+  check_usdt(
+      bpftrace->get_probes().at(2), "/bin/sh", "prov1", "tp2", orig_name);
+  check_usdt(bpftrace->get_probes().at(3), "/bin/sh", "prov2", "tp", orig_name);
 }
 
 TEST(bpftrace, add_probes_usdt_wildcard_for_target)
@@ -771,31 +759,20 @@ TEST(bpftrace, add_probes_usdt_wildcard_for_target)
   ASSERT_EQ(0, bpftrace->add_probe(*probe));
   ASSERT_EQ(5U, bpftrace->get_probes().size());
   ASSERT_EQ(0U, bpftrace->get_special_probes().size());
-  check_usdt(bpftrace->get_probes().at(0),
-             "/bin/bash",
-             "prov1",
-             "tp3",
-             "usdt:/bin/bash:prov1:tp3");
-  check_usdt(bpftrace->get_probes().at(1),
-             "/bin/sh",
-             "prov1",
-             "tp1",
-             "usdt:/bin/sh:prov1:tp1");
-  check_usdt(bpftrace->get_probes().at(2),
-             "/bin/sh",
-             "prov1",
-             "tp2",
-             "usdt:/bin/sh:prov1:tp2");
-  check_usdt(bpftrace->get_probes().at(3),
-             "/bin/sh",
-             "prov2",
-             "tp",
-             "usdt:/bin/sh:prov2:tp");
+
+  const std::string orig_name = "usdt:*:prov*:tp*";
+  check_usdt(
+      bpftrace->get_probes().at(0), "/bin/bash", "prov1", "tp3", orig_name);
+  check_usdt(
+      bpftrace->get_probes().at(1), "/bin/sh", "prov1", "tp1", orig_name);
+  check_usdt(
+      bpftrace->get_probes().at(2), "/bin/sh", "prov1", "tp2", orig_name);
+  check_usdt(bpftrace->get_probes().at(3), "/bin/sh", "prov2", "tp", orig_name);
   check_usdt(bpftrace->get_probes().at(4),
              "/proc/1234/exe",
              "prov2",
              "tp4",
-             "usdt:/proc/1234/exe:prov2:tp4");
+             orig_name);
 }
 
 TEST(bpftrace, add_probes_usdt_empty_namespace)
@@ -814,7 +791,7 @@ TEST(bpftrace, add_probes_usdt_empty_namespace)
              "/bin/sh",
              "prov1",
              "tp1",
-             "usdt:/bin/sh:prov1:tp1");
+             "usdt:/bin/sh:tp1");
 }
 
 TEST(bpftrace, add_probes_usdt_empty_namespace_conflict)
