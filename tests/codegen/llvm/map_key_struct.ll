@@ -7,6 +7,7 @@ target triple = "bpf-pc-linux"
 %"struct map_t.0" = type { i8*, i8* }
 %"struct map_t.1" = type { i8*, i8*, i8*, i8* }
 
+@LICENSE = global [4 x i8] c"GPL\00", section "license"
 @AT_x = dso_local global %"struct map_t" zeroinitializer, section ".maps", !dbg !0
 @ringbuf = dso_local global %"struct map_t.0" zeroinitializer, section ".maps", !dbg !25
 @ringbuf_loss_counter = dso_local global %"struct map_t.1" zeroinitializer, section ".maps", !dbg !39
@@ -14,7 +15,7 @@ target triple = "bpf-pc-linux"
 ; Function Attrs: nounwind
 declare i64 @llvm.bpf.pseudo(i64 %0, i64 %1) #0
 
-define i64 @"kprobe:f"(i8* %0) section "s_kprobe:f_1" !dbg !56 {
+define i64 @kprobe_f_1(i8* %0) section "s_kprobe_f_1" !dbg !56 {
 entry:
   %"@x_val" = alloca i64, align 8
   %"@x_key" = alloca [4 x i8], align 1
@@ -103,7 +104,7 @@ attributes #1 = { argmemonly nofree nosync nounwind willreturn }
 !53 = !{}
 !54 = !{!0, !25, !39}
 !55 = !{i32 2, !"Debug Info Version", i32 3}
-!56 = distinct !DISubprogram(name: "kprobe_f", linkageName: "kprobe_f", scope: !2, file: !2, type: !57, flags: DIFlagPrototyped, spFlags: DISPFlagDefinition, unit: !52, retainedNodes: !60)
+!56 = distinct !DISubprogram(name: "kprobe_f_1", linkageName: "kprobe_f_1", scope: !2, file: !2, type: !57, flags: DIFlagPrototyped, spFlags: DISPFlagDefinition, unit: !52, retainedNodes: !60)
 !57 = !DISubroutineType(types: !58)
 !58 = !{!24, !59}
 !59 = !DIDerivedType(tag: DW_TAG_pointer_type, baseType: !19, size: 64)
