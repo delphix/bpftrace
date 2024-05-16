@@ -229,6 +229,10 @@ elseif(STATIC_BPF_BCC)
   target_link_libraries(runtime "-lz" "-llzma")
 endif()
 
+if (ENABLE_SYSTEMD)
+  target_link_libraries(runtime PkgConfig::libsystemd)
+endif()
+
 unset(MAIN_SRC)
 unset(BPFTRACE)
 

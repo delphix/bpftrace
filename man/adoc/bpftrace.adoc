@@ -1102,12 +1102,6 @@ For string arguments use the `str()` call to retrieve the value.
 | n/a
 | Value returned by the function being traced (kretprobe, uretprobe, kretfunc)
 
-| `sarg0`, `sarg1`, `...sargn`
-| int64
-| n/a
-| n/a
-| nth stack value of the function being traced (kprobes, uprobes)
-
 | tid
 | uint64
 | 4.2
@@ -1619,7 +1613,9 @@ This buffer can be printed in the canonical string format using the `%s` format 
 
 ----
 kprobe:arp_create {
-  printf("SRC %s, DST %s\n", macaddr(sarg0), macaddr(sarg1));
+  $stack_arg0 = *(uint8*)(reg("sp") + 8);
+  $stack_arg1 = *(uint8*)(reg("sp") + 16);
+  printf("SRC %s, DST %s\n", macaddr($stack_arg0), macaddr($stack_arg1));
 }
 
 /*
@@ -2921,7 +2917,7 @@ kprobe:tcp_reset {
 }
 ----
 
-Function arguments are available through the `argN` and `sargN` builtins, for register args and stack args respectively.
+Function arguments are available through the `argN` for register args. Arguments passed on stack are available using the stack pointer, e.g. `$stack_arg0 = *(int64*)reg("sp") + 16`.
 Whether arguments passed on stack or in a register depends on the architecture and the number or arguments used, e.g. on x86_64 the first 6 non-floating point arguments are passed in registers and all following arguments are passed on the stack.
 Note that floating point arguments are typically passed in special registers which don't count as `argN` arguments which can cause confusion.
 Consider a function with the following signature:
@@ -3809,3 +3805,29 @@ Maps are printed by reference not by value and as the value gets updated right a
 ----
 
 Therefore, when you need precise event statistics, it is recommended to use synchronous functions (e.g. count() and hist()) to ensure more reliable and accurate results.
+
+=== Systemd support
+
+To run bpftrace in the background using systemd::
+----
+# systemd-run --unit=bpftrace --service-type=notify bpftrace -e 'kprobe:do_nanosleep { printf("%d sleeping\n", pid); }'
+----
+
+In the above example, systemd-run will not finish until bpftrace has attached
+its probes, so you can be sure that all following commands will be traced. To
+stop tracing, run `systemctl stop bpftrace`.
+
+To debug early boot issues, bpftrace can be invoked via a systemd service
+ordered before the service that needs to be traced. A basic unit file to run
+bpftrace before another service looks as follows::
+----
+[Unit]
+Before=service-i-want-to-trace.service
+
+[Service]
+Type=notify
+ExecStart=bpftrace -e 'kprobe:do_nanosleep { printf("%d sleeping\n", pid); }'
+----
+
+Similarly to the systemd-run example, the service to be traced will not start
+until bpftrace started by the systemd unit has attached its probes.
