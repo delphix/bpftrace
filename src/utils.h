@@ -47,6 +47,15 @@ public:
   using std::runtime_error::runtime_error;
 };
 
+// Use this to end bpftrace execution due to a user error.
+// These should be caught at a high level only e.g. main.cpp or bpftrace.cpp
+class FatalUserException : public std::runtime_error {
+public:
+  // C++11 feature: bring base class constructor into scope to automatically
+  // forward constructor calls to base class
+  using std::runtime_error::runtime_error;
+};
+
 class StdioSilencer {
 public:
   StdioSilencer() = default;
@@ -293,7 +302,8 @@ T read_data(const void *src)
   return v;
 }
 
-uint32_t kernel_version(int attempt);
+enum KernelVersionMethod { vDSO, UTS, File, None };
+uint32_t kernel_version(KernelVersionMethod);
 
 template <typename T>
 T reduce_value(const std::vector<uint8_t> &value, int nvalues)
