@@ -9,9 +9,12 @@
 namespace bpftrace {
 namespace aot {
 
+static constexpr std::string_view AOT_SHIM_NAME = "bpftrace-aotrt";
+
 int generate(const RequiredResources &resources,
-             const BpfBytecode &bytecode,
-             const std::string &out);
+             const std::string &out,
+             void *const elf,
+             size_t elf_size);
 
 int load(BPFtrace &bpftrace, const std::string &in);
 
