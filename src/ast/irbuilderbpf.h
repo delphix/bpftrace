@@ -30,14 +30,6 @@
 #error Unsupported LLVM version
 #endif
 
-#if LLVM_VERSION_MAJOR >= 10
-#define CREATE_MEMSET(ptr, val, size, align)                                   \
-  CreateMemSet((ptr), (val), (size), MaybeAlign((align)))
-#else
-#define CREATE_MEMSET(ptr, val, size, align)                                   \
-  CreateMemSet((ptr), (val), (size), (align))
-#endif
-
 #if LLVM_VERSION_MAJOR >= 13
 #define CREATE_ATOMIC_RMW(op, ptr, val, align, order)                          \
   CreateAtomicRMW((op), (ptr), (val), MaybeAlign((align)), (order))
@@ -73,10 +65,12 @@ public:
                               llvm::Value *arraysize,
                               const std::string &name = "");
   AllocaInst *CreateAllocaBPF(int bytes, const std::string &name = "");
+  void CreateMemsetBPF(Value *ptr, Value *val, uint32_t size);
   llvm::Type *GetType(const SizedType &stype);
   llvm::ConstantInt *GetIntSameSize(uint64_t C, llvm::Value *expr);
   llvm::ConstantInt *GetIntSameSize(uint64_t C, llvm::Type *ty);
   Value *GetMapVar(const std::string &map_name);
+  Value *GetNull();
   CallInst *CreateMapLookup(Map &map,
                             Value *key,
                             const std::string &name = "lookup_elem");
@@ -89,6 +83,12 @@ public:
                              Value *key,
                              SizedType &type,
                              const location &loc);
+  Value *CreatePerCpuMapAggElems(Value *ctx,
+                                 Map &map,
+                                 Value *key,
+                                 const SizedType &type,
+                                 const location &loc,
+                                 bool is_aot);
   void CreateMapUpdateElem(Value *ctx,
                            const std::string &map_ident,
                            Value *key,
@@ -150,12 +150,7 @@ public:
                                 pid_t pid,
                                 AddrSpace as,
                                 const location &loc);
-  Value *CreateStrncmp(Value *str1,
-                       uint64_t str1_size,
-                       Value *str2,
-                       uint64_t str2_size,
-                       uint64_t n,
-                       bool inverse);
+  Value *CreateStrncmp(Value *str1, Value *str2, uint64_t n, bool inverse);
   Value *CreateStrcontains(Value *val1,
                            uint64_t str1_size,
                            Value *val2,
@@ -195,6 +190,11 @@ public:
   CallInst *CreateGetStackScratchMap(StackType stack_type,
                                      BasicBlock *failure_callback,
                                      const location &loc);
+  CallInst *CreateGetStrScratchMap(int idx,
+                                   BasicBlock *failure_callback,
+                                   const location &loc);
+  void CreateCheckSetRecursion(const location &loc, int early_exit_ret);
+  void CreateUnSetRecursion(const location &loc);
   CallInst *CreateHelperCall(libbpf::bpf_func_id func_id,
                              FunctionType *helper_type,
                              ArrayRef<Value *> args,
@@ -303,6 +303,17 @@ private:
                             Value *key,
                             PointerType *val_ptr_ty,
                             const std::string &name = "lookup_elem");
+  CallInst *createPerCpuMapLookup(
+      const std::string &map_name,
+      Value *key,
+      Value *cpu,
+      const std::string &name = "lookup_percpu_elem");
+  CallInst *createPerCpuMapLookup(
+      const std::string &map_name,
+      Value *key,
+      Value *cpu,
+      PointerType *val_ptr_ty,
+      const std::string &name = "lookup_percpu_elem");
   CallInst *createGetScratchMap(const std::string &map_name,
                                 const std::string &name,
                                 PointerType *val_ptr_ty,
@@ -320,6 +331,9 @@ private:
                              Value *data,
                              size_t size,
                              const location *loc = nullptr);
+
+  void createPerCpuSum(AllocaInst *ret, Value *cpu_value);
+  void createPerCpuMinMax(AllocaInst *ret, Value *cpu_value, bool is_max);
 
   std::map<std::string, StructType *> structs_;
 };

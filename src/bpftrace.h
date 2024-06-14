@@ -103,7 +103,9 @@ public:
   {
   }
   virtual ~BPFtrace();
-  virtual int add_probe(ast::Probe &p);
+  virtual int add_probe(const ast::AttachPoint &ap,
+                        const ast::Probe &p,
+                        int usdt_location_idx = 0);
   Probe generateWatchpointSetupProbe(const ast::AttachPoint &ap,
                                      const ast::Probe &probe);
   int num_probes() const;
@@ -156,6 +158,7 @@ public:
   std::optional<int64_t> get_int_literal(const ast::Expression *expr) const;
   std::optional<std::string> get_watchpoint_binary_path() const;
   virtual bool is_traceable_func(const std::string &func_name) const;
+  virtual int get_num_possible_cpus() const;
   virtual std::unordered_set<std::string> get_func_modules(
       const std::string &func_name) const;
   int create_pcaps(void);
@@ -166,6 +169,7 @@ public:
   bool has_btf_data() const;
   Dwarf *get_dwarf(const std::string &filename);
   Dwarf *get_dwarf(const ast::AttachPoint &attachpoint);
+  void kfunc_recursion_check(ast::Program *prog);
 
   std::string cmd_;
   bool finalize_ = false;
@@ -201,6 +205,7 @@ public:
   std::optional<struct timespec> delta_taitime_;
   static constexpr uint32_t rb_loss_cnt_key_ = 0;
   static constexpr uint64_t rb_loss_cnt_val_ = 0;
+  bool need_recursion_check_ = false;
 
   static void sort_by_key(
       std::vector<SizedType> key_args,
@@ -264,7 +269,9 @@ private:
   static uint64_t read_address_from_output(std::string output);
   std::optional<std::vector<uint8_t>> find_empty_key(const BpfMap &map) const;
   struct bcc_symbol_option &get_symbol_opts();
-  Probe generate_probe(const ast::AttachPoint &ap, const ast::Probe &p);
+  Probe generate_probe(const ast::AttachPoint &ap,
+                       const ast::Probe &p,
+                       int usdt_location_idx = 0);
   bool has_iter_ = false;
   int epollfd_ = -1;
   struct ring_buffer *ringbuf_ = nullptr;

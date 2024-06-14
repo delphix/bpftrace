@@ -214,6 +214,8 @@ NAME positional ustack
 RUN {{BPFTRACE}} -e 'u:./testprogs/uprobe_loop:uprobeFunction1 { printf("%s\n%s\n", ustack(), ustack($1)); exit(); }' 1
 EXPECT_REGEX .*uprobeFunction1\+[0-9]+\n\s+spin\+[0-9]+\n\s+main\+[0-9]+\n.*\n\n\n\s+uprobeFunction1\+[0-9]+
 TIMEOUT 5
+# Required to skip function prologue
+REQUIRES_FEATURE dwarf
 AFTER ./testprogs/uprobe_loop
 
 NAME lhist can be cleared
@@ -279,3 +281,28 @@ EXPECT stdin:1:37-41: WARNING: Can't lookup map element because it does not exis
        i:ms:100 { @[1] = 1; printf("%d\n", @[2]); exit(); }
                                            ~~~~
 TIMEOUT 1
+
+NAME per_cpu_map_count_if
+PROG i:ms:1 { @ = count(); if (@ > 5) { printf("done\n"); exit(); }}
+EXPECT done
+TIMEOUT 5
+
+NAME per_cpu_map_min_if
+PROG BEGIN { @ = 10; } i:ms:1 { @--; @mn = min(@); if (@mn < 5) { printf("done\n"); exit(); }}
+EXPECT done
+TIMEOUT 5
+
+NAME per_cpu_map_max_if
+PROG BEGIN { @ = 1; } i:ms:1 { @++; @mx = max(@); if (@mx > 5) { printf("done\n"); exit(); }}
+EXPECT done
+TIMEOUT 5
+
+NAME per_cpu_map_arithmetic
+PROG BEGIN { @a = sum(10); @b = count(); $c = @a + @b; if ($c == 11) { printf("done\n"); } exit();}
+EXPECT done
+TIMEOUT 5
+
+NAME per_cpu_map_cast
+PROG BEGIN { @a = count(); @b = sum(10); printf("%d-%d\n", (uint64)@a, (int64)@b); exit();}
+EXPECT 1-10
+TIMEOUT 5

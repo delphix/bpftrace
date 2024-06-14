@@ -269,25 +269,6 @@ static void parse_env(BPFtrace& bpftrace)
     config_setter.set(ConfigKeyInt::max_strlen, x);
   });
 
-  // in practice, the largest buffer I've seen fit into the BPF stack was 240
-  // bytes. I've set the bar lower, in case your program has a deeper stack than
-  // the one from my tests, in the hope that you'll get this instructive error
-  // instead of getting the BPF verifier's error.
-  uint64_t max_strlen = bpftrace.config_.get(ConfigKeyInt::max_strlen);
-  if (max_strlen > 200) {
-    // the verifier errors you would encounter when attempting larger
-    // allocations would be: >240=  <Looks like the BPF stack limit of 512 bytes
-    // is exceeded. Please move large on stack variables into BPF per-cpu array
-    // map.> ~1024= <A call to built-in function 'memset' is not supported.>
-    LOG(ERROR) << "'BPFTRACE_MAX_STRLEN' " << max_strlen
-               << " exceeds the current maximum of 200 bytes.\n"
-               << "This limitation is because strings are currently stored on "
-                  "the 512 byte BPF stack.\n"
-               << "Long strings will be pursued in: "
-                  "https://github.com/bpftrace/bpftrace/issues/305";
-    exit(1);
-  }
-
   if (const char* env_p = std::getenv("BPFTRACE_STR_TRUNC_TRAILER"))
     config_setter.set(ConfigKeyString::str_trunc_trailer, std::string(env_p));
 
@@ -886,6 +867,8 @@ int main(int argc, char* argv[])
       break;
   }
 
+  bpftrace.kfunc_recursion_check(ast_prog.get());
+
   auto pmresult = pm.Run(std::move(ast_prog), ctx);
   if (!pmresult.Ok())
     return 1;
@@ -907,7 +890,9 @@ int main(int argc, char* argv[])
     return err;
   }
 
-  ast::CodegenLLVM llvm(&*ast_root, bpftrace);
+  ast::CodegenLLVM llvm(&*ast_root,
+                        bpftrace,
+                        args.build_mode == BuildMode::AHEAD_OF_TIME);
   BpfBytecode bytecode;
   try {
     llvm.generate_ir();

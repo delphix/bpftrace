@@ -81,6 +81,11 @@ public:
     mock_probe_matcher = dynamic_cast<MockProbeMatcher *>(probe_matcher_.get());
   }
 
+  int get_num_possible_cpus() const override
+  {
+    return 20;
+  }
+
   MockProbeMatcher *mock_probe_matcher;
 };
 
@@ -157,6 +162,25 @@ public:
       return false;
   }
 };
+
+class MockUSDTHelper : public USDTHelper {
+public:
+  MockUSDTHelper()
+  {
+  }
+#pragma GCC diagnostic push
+#ifdef __clang__
+#pragma GCC diagnostic ignored "-Winconsistent-missing-override"
+#endif
+  MOCK_METHOD4(find,
+               std::optional<usdt_probe_entry>(int pid,
+                                               const std::string &target,
+                                               const std::string &provider,
+                                               const std::string &name));
+#pragma GCC diagnostic pop
+};
+
+std::unique_ptr<MockUSDTHelper> get_mock_usdt_helper(int num_locations);
 
 } // namespace test
 } // namespace bpftrace

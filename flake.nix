@@ -2,7 +2,7 @@
   description = "High-level tracing language for Linux eBPF";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/release-23.11";
+    nixpkgs.url = "github:NixOS/nixpkgs/release-24.05";
     flake-utils.url = "github:numtide/flake-utils";
     nix-appimage = {
       # Use fork until following PRs are in:
@@ -22,28 +22,28 @@
       (system:
         let
           # Overlay to specify build should use the specific libbpf we want
+          libbpfVersion = "1.4.2";
           libbpfOverlay =
             (self: super: {
-              libbpf_1 = super.libbpf_1.overrideAttrs (old: {
-                # 1.3 is the next release as of (11/11/23)
-                version = "1.3.0";
+              libbpf = super.libbpf.overrideAttrs (old: {
+                version = libbpfVersion;
                 src = super.fetchFromGitHub {
                   owner = "libbpf";
                   repo = "libbpf";
-                  rev = "3189f70538b50fe3d2fd63f77351991a224e435b";
+                  rev = "v${libbpfVersion}";
                   # If you don't know the hash the first time, set:
                   # hash = "";
                   # then nix will fail the build with such an error message:
                   # hash mismatch in fixed-output derivation '/nix/store/m1ga09c0z1a6n7rj8ky3s31dpgalsn0n-source':
                   # specified: sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
                   # got:    sha256-173gxk0ymiw94glyjzjizp8bv8g72gwkjhacigd1an09jshdrjb4
-                  sha256 = "sha256-nh1xs4jT/YCBq6uT4WbSJc6/BfMg1Ussd11aY1Nmlq4=";
+                  sha256 = "sha256-PlGr/qZbKnaY37wikdmX/iYtP11WHShn1I7vACUgLG0=";
                 };
               });
             });
 
           # Overlay to specify build should use the specific bcc we want
-          bccVersion = "0.27.0";
+          bccVersion = "0.30.0";
           bccOverlay =
             (self: super: {
               bcc = super.bcc.overridePythonAttrs (old: {
@@ -52,7 +52,7 @@
                   owner = "iovisor";
                   repo = "bcc";
                   rev = "v${bccVersion}";
-                  sha256 = "sha256-+RK5RZcoNHlgMOFPgygRf2h+OZGxR9gJ+fTbYjDB6Ww=";
+                  sha256 = "sha256-ngGLGfLv2prnjhgaRPf8ea3oyy4129zGodR0Yz1QtCw=";
                 };
                 # Seems like these extra tools are needed to build bcc
                 nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.python310Packages.setuptools pkgs.zip ];
@@ -71,7 +71,7 @@
 
                 src = self;
 
-                nativeBuildInputs = [ cmake ninja bison flex gcc12 clang ];
+                nativeBuildInputs = [ cmake ninja bison flex gcc clang ];
 
                 buildInputs = with llvmPackages;
                   [
@@ -80,7 +80,7 @@
                     cereal
                     elfutils
                     gtest
-                    libbpf_1
+                    libbpf
                     libbfd
                     libclang
                     libelf
@@ -88,7 +88,11 @@
                     libopcodes
                     libpcap
                     libsystemtap
-                    lldb
+                    # Temporarily disable LLDB support in CI. We're waiting on upstream
+                    # nixpkgs fixes:
+                    #     https://github.com/NixOS/nixpkgs/issues/315214
+                    #     https://github.com/NixOS/nixpkgs/pull/316045
+                    #lldb
                     llvm
                     pahole
                     xxd
@@ -137,17 +141,16 @@
           # Define package set
           packages = rec {
             # Default package is latest supported LLVM release
-            default = bpftrace-llvm17;
+            default = bpftrace-llvm18;
 
             # Support matrix of llvm versions
+            bpftrace-llvm18 = mkBpftrace pkgs.llvmPackages_18;
             bpftrace-llvm17 = mkBpftrace pkgs.llvmPackages_17;
             bpftrace-llvm16 = mkBpftrace pkgs.llvmPackages_16;
             bpftrace-llvm15 = mkBpftrace pkgs.llvmPackages_15;
             bpftrace-llvm14 = mkBpftrace pkgs.llvmPackages_14;
             bpftrace-llvm13 = mkBpftrace pkgs.llvmPackages_13;
             bpftrace-llvm12 = mkBpftrace pkgs.llvmPackages_12;
-            bpftrace-llvm11 = mkBpftrace pkgs.llvmPackages_11;
-            bpftrace-llvm10 = mkBpftrace pkgs.llvmPackages_10;
 
             # Self-contained static binary with all dependencies
             appimage = nix-appimage.mkappimage.${system} {
@@ -186,16 +189,15 @@
           };
 
           devShells = rec {
-            default = bpftrace-llvm17;
+            default = bpftrace-llvm18;
 
+            bpftrace-llvm18 = mkBpftraceDevShell self.packages.${system}.bpftrace-llvm18;
             bpftrace-llvm17 = mkBpftraceDevShell self.packages.${system}.bpftrace-llvm17;
             bpftrace-llvm16 = mkBpftraceDevShell self.packages.${system}.bpftrace-llvm16;
             bpftrace-llvm15 = mkBpftraceDevShell self.packages.${system}.bpftrace-llvm15;
             bpftrace-llvm14 = mkBpftraceDevShell self.packages.${system}.bpftrace-llvm14;
             bpftrace-llvm13 = mkBpftraceDevShell self.packages.${system}.bpftrace-llvm13;
             bpftrace-llvm12 = mkBpftraceDevShell self.packages.${system}.bpftrace-llvm12;
-            bpftrace-llvm11 = mkBpftraceDevShell self.packages.${system}.bpftrace-llvm11;
-            bpftrace-llvm10 = mkBpftraceDevShell self.packages.${system}.bpftrace-llvm10;
           };
         });
 }

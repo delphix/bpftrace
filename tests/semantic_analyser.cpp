@@ -262,6 +262,7 @@ kprobe:f { fake }
   test(feature, "k:f { jiffies }", 1);
 }
 
+#ifdef HAVE_LIBLLDB
 TEST(semantic_analyser, builtin_variables_inline)
 {
   auto bpftrace = get_mock_bpftrace();
@@ -288,6 +289,7 @@ uprobe:/bin/sh:f { args }
                    ~~~~
 )");
 }
+#endif // HAVE_LIBLLDB
 
 TEST(semantic_analyser, builtin_cpid)
 {
@@ -375,8 +377,13 @@ TEST(semantic_analyser, consistent_map_values)
 {
   test("kprobe:f { @x = 0; @x = 1; }");
   test_error("kprobe:f { @x = 0; @x = \"a\"; }", R"(
-stdin:1:20-22: ERROR: Type mismatch for @x: trying to assign value of type 'string[2]' when map already contains a value of type 'int64
+stdin:1:20-22: ERROR: Type mismatch for @x: trying to assign value of type 'string[2]' when map already contains a value of type 'int64'
 kprobe:f { @x = 0; @x = "a"; }
+                   ~~
+)");
+  test_error("kprobe:f { @x = 0; @x = *curtask; }", R"(
+stdin:1:20-22: ERROR: Type mismatch for @x: trying to assign value of type 'struct task_struct' when map already contains a value of type 'int64'
+kprobe:f { @x = 0; @x = *curtask; }
                    ~~
 )");
 }
@@ -482,17 +489,17 @@ kprobe:f { @x = pid < 10000 ? "lo" : 2 }
 TEST(semantic_analyser, mismatched_call_types)
 {
   test_error("kprobe:f { @x = 1; @x = count(); }", R"(
-stdin:1:20-22: ERROR: Type mismatch for @x: trying to assign value of type 'count' when map already contains a value of type 'int64
+stdin:1:20-22: ERROR: Type mismatch for @x: trying to assign value of type 'count' when map already contains a value of type 'int64'
 kprobe:f { @x = 1; @x = count(); }
                    ~~
 )");
   test_error("kprobe:f { @x = count(); @x = sum(pid); }", R"(
-stdin:1:26-28: ERROR: Type mismatch for @x: trying to assign value of type 'sum' when map already contains a value of type 'count
+stdin:1:26-28: ERROR: Type mismatch for @x: trying to assign value of type 'sum' when map already contains a value of type 'count'
 kprobe:f { @x = count(); @x = sum(pid); }
                          ~~
 )");
   test_error("kprobe:f { @x = 1; @x = hist(0); }", R"(
-stdin:1:20-22: ERROR: Type mismatch for @x: trying to assign value of type 'hist' when map already contains a value of type 'int64
+stdin:1:20-22: ERROR: Type mismatch for @x: trying to assign value of type 'hist' when map already contains a value of type 'int64'
 kprobe:f { @x = 1; @x = hist(0); }
                    ~~
 )");
@@ -2053,6 +2060,39 @@ TEST(semantic_analyser, map_cast_types)
        1);
 }
 
+TEST(semantic_analyser, map_aggregations_implicit_cast)
+{
+  test("kprobe:f { @ = count(); if (@ > 0) { print((1)); } }");
+  test("kprobe:f { @ = sum(5); if (@ > 0) { print((1)); } }");
+  test("kprobe:f { @ = min(5); if (@ > 0) { print((1)); } }");
+  test("kprobe:f { @ = max(5); if (@ > 0) { print((1)); } }");
+
+  test_error("kprobe:f { @ = avg(5); if (@ > 0) { print((1)); } }", R"(
+stdin:1:27-33: ERROR: Type mismatch for '>': comparing 'avg' with 'int64'
+kprobe:f { @ = avg(5); if (@ > 0) { print((1)); } }
+                          ~~~~~~
+)");
+  test_error("kprobe:f { @ = count(); @ += 5 }", R"(
+stdin:1:25-26: ERROR: Type mismatch for @: trying to assign value of type 'int64' when map already contains a value of type 'count'
+kprobe:f { @ = count(); @ += 5 }
+                        ~
+)");
+}
+
+TEST(semantic_analyser, map_aggregations_explicit_cast)
+{
+  test("kprobe:f { @ = count(); print((1, (uint16)@)); }");
+  test("kprobe:f { @ = sum(5); print((1, (uint16)@)); }");
+  test("kprobe:f { @ = min(5); print((1, (uint16)@)); }");
+  test("kprobe:f { @ = max(5); print((1, (uint16)@)); }");
+
+  test_error("kprobe:f { @ = avg(5); print((1, (uint16)@)); }", R"(
+stdin:1:34-42: ERROR: Cannot cast from "avg" to "unsigned int16"
+kprobe:f { @ = avg(5); print((1, (uint16)@)); }
+                                 ~~~~~~~~
+)");
+}
+
 TEST(semantic_analyser, variable_casts_are_local)
 {
   std::string structs =
@@ -3499,6 +3539,31 @@ TEST(semantic_analyser, for_loop_map_undefined2)
 stdin:1:33-40: ERROR: Undefined map: @undef
 BEGIN { @map[0] = 1; for ($kv : @undef) { @map[$kv.0]; } }
                                 ~~~~~~~
+)");
+}
+
+TEST(semantic_analyser, for_loop_map_restricted_types)
+{
+  test_error("BEGIN { @map[0] = avg(1); for ($kv : @map) { } }", R"(
+stdin:1:38-43: ERROR: Loop expression does not support type: avg
+BEGIN { @map[0] = avg(1); for ($kv : @map) { } }
+                                     ~~~~~
+)");
+  test_error("BEGIN { @map[0] = hist(10); for ($kv : @map) { } }", R"(
+stdin:1:40-45: ERROR: Loop expression does not support type: hist
+BEGIN { @map[0] = hist(10); for ($kv : @map) { } }
+                                       ~~~~~
+)");
+  test_error("BEGIN { @map[0] = lhist(10, 0, 10, 1); for ($kv : @map) { } }",
+             R"(
+stdin:1:51-56: ERROR: Loop expression does not support type: lhist
+BEGIN { @map[0] = lhist(10, 0, 10, 1); for ($kv : @map) { } }
+                                                  ~~~~~
+)");
+  test_error("BEGIN { @map[0] = stats(10); for ($kv : @map) { } }", R"(
+stdin:1:41-46: ERROR: Loop expression does not support type: stats
+BEGIN { @map[0] = stats(10); for ($kv : @map) { } }
+                                        ~~~~~
 )");
 }
 

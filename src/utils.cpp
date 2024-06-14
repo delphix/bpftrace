@@ -1093,6 +1093,44 @@ std::string hex_format_buffer(const char *buf,
   return std::string(s);
 }
 
+/*
+ * Attaching to these kernel functions with kfunc/fentry or kretfunc/fexit
+ * could lead to a recursive loop and kernel crash so we need additional
+ * generated BPF code to protect against this if one of these are being
+ * attached to.
+ */
+bool is_recursive_func(const std::string &func_name)
+{
+  return RECURSIVE_KERNEL_FUNCS.find(func_name) != RECURSIVE_KERNEL_FUNCS.end();
+}
+
+static bool is_bad_func(std::string &func)
+{
+  /*
+   * Certain kernel functions are known to cause system stability issues if
+   * traced (but not marked "notrace" in the kernel) so they should be filtered
+   * out as the list is built. The list of functions have been taken from the
+   * bpf kernel selftests (bpf/prog_tests/kprobe_multi_test.c).
+   */
+  static const std::unordered_set<std::string> bad_funcs = {
+    "arch_cpu_idle", "default_idle", "bpf_dispatcher_xdp_func"
+  };
+
+  static const std::vector<std::string> bad_funcs_partial = {
+    "__ftrace_invalid_address__", "rcu_"
+  };
+
+  if (bad_funcs.find(func) != bad_funcs.end())
+    return true;
+
+  for (const auto &s : bad_funcs_partial) {
+    if (!std::strncmp(func.c_str(), s.c_str(), s.length()))
+      return true;
+  }
+
+  return false;
+}
+
 FuncsModulesMap parse_traceable_funcs()
 {
 #ifdef FUZZ
@@ -1106,10 +1144,8 @@ FuncsModulesMap parse_traceable_funcs()
 
   std::ifstream available_funs(kprobe_path);
   if (available_funs.fail()) {
-    if (bt_debug != DebugLevel::kNone) {
-      std::cerr << "Error while reading traceable functions from "
-                << kprobe_path << ": " << strerror(errno);
-    }
+    LOG(V1) << "Error while reading traceable functions from " << kprobe_path
+            << ": " << strerror(errno);
     return {};
   }
 
@@ -1119,7 +1155,9 @@ FuncsModulesMap parse_traceable_funcs()
     auto func_mod = split_symbol_module(line);
     if (func_mod.second.empty())
       func_mod.second = "vmlinux";
-    result[func_mod.first].insert(func_mod.second);
+
+    if (!is_bad_func(func_mod.first))
+      result[func_mod.first].insert(func_mod.second);
   }
 
   // Filter out functions from the kprobe blacklist.
@@ -1239,6 +1277,9 @@ uint32_t kernel_version(KernelVersionMethod method)
     case None:
       return 0;
   }
+
+  // Unreachable
+  return 0;
 }
 
 std::optional<std::string> abs_path(const std::string &rel_path)

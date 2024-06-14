@@ -6,81 +6,90 @@ target triple = "bpf-pc-linux"
 %"struct map_t" = type { i8*, i8*, i8*, i8* }
 %"struct map_t.0" = type { i8*, i8* }
 %"struct map_t.1" = type { i8*, i8*, i8*, i8* }
+%"struct map_t.2" = type { i8*, i8*, i8*, i8* }
 
 @LICENSE = global [4 x i8] c"GPL\00", section "license"
 @AT_ = dso_local global %"struct map_t" zeroinitializer, section ".maps", !dbg !0
 @ringbuf = dso_local global %"struct map_t.0" zeroinitializer, section ".maps", !dbg !20
 @ringbuf_loss_counter = dso_local global %"struct map_t.1" zeroinitializer, section ".maps", !dbg !34
+@str_buffer = dso_local global %"struct map_t.2" zeroinitializer, section ".maps", !dbg !47
 
 ; Function Attrs: nounwind
 declare i64 @llvm.bpf.pseudo(i64 %0, i64 %1) #0
 
-define i64 @tracepoint_file_filename_1(i8* %0) section "s_tracepoint_file_filename_1" !dbg !51 {
+define i64 @tracepoint_file_filename_1(i8* %0) section "s_tracepoint_file_filename_1" !dbg !66 {
 entry:
   %"@_val" = alloca i64, align 8
   %"@_key" = alloca i64, align 8
   %strcmp.result = alloca i1, align 1
   %comm = alloca [16 x i8], align 1
-  %str = alloca [64 x i8], align 1
-  %strlen = alloca i64, align 8
-  %1 = bitcast i64* %strlen to i8*
+  %lookup_str_key = alloca i32, align 4
+  %1 = bitcast i32* %lookup_str_key to i8*
   call void @llvm.lifetime.start.p0i8(i64 -1, i8* %1)
-  %2 = bitcast i64* %strlen to i8*
-  call void @llvm.memset.p0i8.i64(i8* align 1 %2, i8 0, i64 8, i1 false)
-  store i64 64, i64* %strlen, align 8
-  %3 = bitcast [64 x i8]* %str to i8*
-  call void @llvm.lifetime.start.p0i8(i64 -1, i8* %3)
-  %4 = bitcast [64 x i8]* %str to i8*
-  call void @llvm.memset.p0i8.i64(i8* align 1 %4, i8 0, i64 64, i1 false)
-  %5 = ptrtoint i8* %0 to i64
-  %6 = add i64 %5, 8
-  %7 = inttoptr i64 %6 to i64*
-  %8 = load volatile i64, i64* %7, align 8
-  %9 = load i64, i64* %strlen, align 8
-  %10 = trunc i64 %9 to i32
-  %probe_read_kernel_str = call i64 inttoptr (i64 115 to i64 ([64 x i8]*, i32, i64)*)([64 x i8]* %str, i32 %10, i64 %8)
-  %11 = bitcast i64* %strlen to i8*
-  call void @llvm.lifetime.end.p0i8(i64 -1, i8* %11)
-  %12 = bitcast [16 x i8]* %comm to i8*
-  call void @llvm.lifetime.start.p0i8(i64 -1, i8* %12)
-  %13 = bitcast [16 x i8]* %comm to i8*
-  call void @llvm.memset.p0i8.i64(i8* align 1 %13, i8 0, i64 16, i1 false)
-  %get_comm = call i64 inttoptr (i64 16 to i64 ([16 x i8]*, i64)*)([16 x i8]* %comm, i64 16)
-  %14 = bitcast i1* %strcmp.result to i8*
-  call void @llvm.lifetime.start.p0i8(i64 -1, i8* %14)
-  store i1 false, i1* %strcmp.result, align 1
-  %15 = getelementptr [64 x i8], [64 x i8]* %str, i32 0, i32 0
-  %16 = load i8, i8* %15, align 1
-  %17 = getelementptr [16 x i8], [16 x i8]* %comm, i32 0, i32 0
-  %18 = load i8, i8* %17, align 1
-  %strcmp.cmp = icmp ne i8 %16, %18
-  br i1 %strcmp.cmp, label %strcmp.false, label %strcmp.loop_null_cmp
+  store i32 0, i32* %lookup_str_key, align 4
+  %lookup_str_map = call i8* inttoptr (i64 1 to i8* (%"struct map_t.2"*, i32*)*)(%"struct map_t.2"* @str_buffer, i32* %lookup_str_key)
+  %2 = bitcast i32* %lookup_str_key to i8*
+  call void @llvm.lifetime.end.p0i8(i64 -1, i8* %2)
+  %lookup_str_cond = icmp ne i8* %lookup_str_map, null
+  br i1 %lookup_str_cond, label %lookup_str_merge, label %lookup_str_failure
 
 pred_false:                                       ; preds = %strcmp.false
   ret i64 1
 
 pred_true:                                        ; preds = %strcmp.false
-  %19 = bitcast [16 x i8]* %comm to i8*
-  call void @llvm.lifetime.end.p0i8(i64 -1, i8* %19)
-  %20 = bitcast i64* %"@_key" to i8*
-  call void @llvm.lifetime.start.p0i8(i64 -1, i8* %20)
+  %3 = bitcast [16 x i8]* %comm to i8*
+  call void @llvm.lifetime.end.p0i8(i64 -1, i8* %3)
+  %4 = bitcast i64* %"@_key" to i8*
+  call void @llvm.lifetime.start.p0i8(i64 -1, i8* %4)
   store i64 0, i64* %"@_key", align 8
-  %21 = bitcast i64* %"@_val" to i8*
-  call void @llvm.lifetime.start.p0i8(i64 -1, i8* %21)
+  %5 = bitcast i64* %"@_val" to i8*
+  call void @llvm.lifetime.start.p0i8(i64 -1, i8* %5)
   store i64 1, i64* %"@_val", align 8
   %update_elem = call i64 inttoptr (i64 2 to i64 (%"struct map_t"*, i64*, i64*, i64)*)(%"struct map_t"* @AT_, i64* %"@_key", i64* %"@_val", i64 0)
-  %22 = bitcast i64* %"@_val" to i8*
-  call void @llvm.lifetime.end.p0i8(i64 -1, i8* %22)
-  %23 = bitcast i64* %"@_key" to i8*
-  call void @llvm.lifetime.end.p0i8(i64 -1, i8* %23)
+  %6 = bitcast i64* %"@_val" to i8*
+  call void @llvm.lifetime.end.p0i8(i64 -1, i8* %6)
+  %7 = bitcast i64* %"@_key" to i8*
+  call void @llvm.lifetime.end.p0i8(i64 -1, i8* %7)
   ret i64 1
 
-strcmp.false:                                     ; preds = %strcmp.done, %strcmp.loop53, %strcmp.loop49, %strcmp.loop45, %strcmp.loop41, %strcmp.loop37, %strcmp.loop33, %strcmp.loop29, %strcmp.loop25, %strcmp.loop21, %strcmp.loop17, %strcmp.loop13, %strcmp.loop9, %strcmp.loop5, %strcmp.loop1, %strcmp.loop, %entry
-  %24 = load i1, i1* %strcmp.result, align 1
-  %25 = bitcast i1* %strcmp.result to i8*
-  call void @llvm.lifetime.end.p0i8(i64 -1, i8* %25)
-  %26 = zext i1 %24 to i64
-  %predcond = icmp eq i64 %26, 0
+scratch_lookup_failure:                           ; preds = %lookup_str_failure
+  ret i64 1
+
+scratch_lookup_merge:                             ; preds = %lookup_str_merge
+  %8 = bitcast [16 x i8]* %comm to i8*
+  call void @llvm.lifetime.start.p0i8(i64 -1, i8* %8)
+  %9 = bitcast [16 x i8]* %comm to i8*
+  call void @llvm.memset.p0i8.i64(i8* align 1 %9, i8 0, i64 16, i1 false)
+  %get_comm = call i64 inttoptr (i64 16 to i64 ([16 x i8]*, i64)*)([16 x i8]* %comm, i64 16)
+  %10 = bitcast i1* %strcmp.result to i8*
+  call void @llvm.lifetime.start.p0i8(i64 -1, i8* %10)
+  store i1 false, i1* %strcmp.result, align 1
+  %11 = getelementptr i8, i8* %lookup_str_map, i32 0
+  %12 = load i8, i8* %11, align 1
+  %13 = bitcast [16 x i8]* %comm to i8*
+  %14 = getelementptr i8, i8* %13, i32 0
+  %15 = load i8, i8* %14, align 1
+  %strcmp.cmp = icmp ne i8 %12, %15
+  br i1 %strcmp.cmp, label %strcmp.false, label %strcmp.loop_null_cmp
+
+lookup_str_failure:                               ; preds = %entry
+  br label %scratch_lookup_failure
+
+lookup_str_merge:                                 ; preds = %entry
+  call void @llvm.memset.p0i8.i64(i8* align 1 %lookup_str_map, i8 0, i64 64, i1 false)
+  %16 = ptrtoint i8* %0 to i64
+  %17 = add i64 %16, 8
+  %18 = inttoptr i64 %17 to i64*
+  %19 = load volatile i64, i64* %18, align 8
+  %probe_read_kernel_str = call i64 inttoptr (i64 115 to i64 (i8*, i32, i64)*)(i8* %lookup_str_map, i32 64, i64 %19)
+  br label %scratch_lookup_merge
+
+strcmp.false:                                     ; preds = %strcmp.done, %strcmp.loop53, %strcmp.loop49, %strcmp.loop45, %strcmp.loop41, %strcmp.loop37, %strcmp.loop33, %strcmp.loop29, %strcmp.loop25, %strcmp.loop21, %strcmp.loop17, %strcmp.loop13, %strcmp.loop9, %strcmp.loop5, %strcmp.loop1, %strcmp.loop, %scratch_lookup_merge
+  %20 = load i1, i1* %strcmp.result, align 1
+  %21 = bitcast i1* %strcmp.result to i8*
+  call void @llvm.lifetime.end.p0i8(i64 -1, i8* %21)
+  %22 = zext i1 %20 to i64
+  %predcond = icmp eq i64 %22, 0
   br i1 %predcond, label %pred_false, label %pred_true
 
 strcmp.done:                                      ; preds = %strcmp.loop57, %strcmp.loop_null_cmp58, %strcmp.loop_null_cmp54, %strcmp.loop_null_cmp50, %strcmp.loop_null_cmp46, %strcmp.loop_null_cmp42, %strcmp.loop_null_cmp38, %strcmp.loop_null_cmp34, %strcmp.loop_null_cmp30, %strcmp.loop_null_cmp26, %strcmp.loop_null_cmp22, %strcmp.loop_null_cmp18, %strcmp.loop_null_cmp14, %strcmp.loop_null_cmp10, %strcmp.loop_null_cmp6, %strcmp.loop_null_cmp2, %strcmp.loop_null_cmp
@@ -88,71 +97,77 @@ strcmp.done:                                      ; preds = %strcmp.loop57, %str
   br label %strcmp.false
 
 strcmp.loop:                                      ; preds = %strcmp.loop_null_cmp
-  %27 = getelementptr [64 x i8], [64 x i8]* %str, i32 0, i32 1
-  %28 = load i8, i8* %27, align 1
-  %29 = getelementptr [16 x i8], [16 x i8]* %comm, i32 0, i32 1
-  %30 = load i8, i8* %29, align 1
-  %strcmp.cmp3 = icmp ne i8 %28, %30
+  %23 = getelementptr i8, i8* %lookup_str_map, i32 1
+  %24 = load i8, i8* %23, align 1
+  %25 = bitcast [16 x i8]* %comm to i8*
+  %26 = getelementptr i8, i8* %25, i32 1
+  %27 = load i8, i8* %26, align 1
+  %strcmp.cmp3 = icmp ne i8 %24, %27
   br i1 %strcmp.cmp3, label %strcmp.false, label %strcmp.loop_null_cmp2
 
-strcmp.loop_null_cmp:                             ; preds = %entry
-  %strcmp.cmp_null = icmp eq i8 %16, 0
+strcmp.loop_null_cmp:                             ; preds = %scratch_lookup_merge
+  %strcmp.cmp_null = icmp eq i8 %12, 0
   br i1 %strcmp.cmp_null, label %strcmp.done, label %strcmp.loop
 
 strcmp.loop1:                                     ; preds = %strcmp.loop_null_cmp2
-  %31 = getelementptr [64 x i8], [64 x i8]* %str, i32 0, i32 2
+  %28 = getelementptr i8, i8* %lookup_str_map, i32 2
+  %29 = load i8, i8* %28, align 1
+  %30 = bitcast [16 x i8]* %comm to i8*
+  %31 = getelementptr i8, i8* %30, i32 2
   %32 = load i8, i8* %31, align 1
-  %33 = getelementptr [16 x i8], [16 x i8]* %comm, i32 0, i32 2
-  %34 = load i8, i8* %33, align 1
-  %strcmp.cmp7 = icmp ne i8 %32, %34
+  %strcmp.cmp7 = icmp ne i8 %29, %32
   br i1 %strcmp.cmp7, label %strcmp.false, label %strcmp.loop_null_cmp6
 
 strcmp.loop_null_cmp2:                            ; preds = %strcmp.loop
-  %strcmp.cmp_null4 = icmp eq i8 %28, 0
+  %strcmp.cmp_null4 = icmp eq i8 %24, 0
   br i1 %strcmp.cmp_null4, label %strcmp.done, label %strcmp.loop1
 
 strcmp.loop5:                                     ; preds = %strcmp.loop_null_cmp6
-  %35 = getelementptr [64 x i8], [64 x i8]* %str, i32 0, i32 3
-  %36 = load i8, i8* %35, align 1
-  %37 = getelementptr [16 x i8], [16 x i8]* %comm, i32 0, i32 3
-  %38 = load i8, i8* %37, align 1
-  %strcmp.cmp11 = icmp ne i8 %36, %38
+  %33 = getelementptr i8, i8* %lookup_str_map, i32 3
+  %34 = load i8, i8* %33, align 1
+  %35 = bitcast [16 x i8]* %comm to i8*
+  %36 = getelementptr i8, i8* %35, i32 3
+  %37 = load i8, i8* %36, align 1
+  %strcmp.cmp11 = icmp ne i8 %34, %37
   br i1 %strcmp.cmp11, label %strcmp.false, label %strcmp.loop_null_cmp10
 
 strcmp.loop_null_cmp6:                            ; preds = %strcmp.loop1
-  %strcmp.cmp_null8 = icmp eq i8 %32, 0
+  %strcmp.cmp_null8 = icmp eq i8 %29, 0
   br i1 %strcmp.cmp_null8, label %strcmp.done, label %strcmp.loop5
 
 strcmp.loop9:                                     ; preds = %strcmp.loop_null_cmp10
-  %39 = getelementptr [64 x i8], [64 x i8]* %str, i32 0, i32 4
-  %40 = load i8, i8* %39, align 1
-  %41 = getelementptr [16 x i8], [16 x i8]* %comm, i32 0, i32 4
+  %38 = getelementptr i8, i8* %lookup_str_map, i32 4
+  %39 = load i8, i8* %38, align 1
+  %40 = bitcast [16 x i8]* %comm to i8*
+  %41 = getelementptr i8, i8* %40, i32 4
   %42 = load i8, i8* %41, align 1
-  %strcmp.cmp15 = icmp ne i8 %40, %42
+  %strcmp.cmp15 = icmp ne i8 %39, %42
   br i1 %strcmp.cmp15, label %strcmp.false, label %strcmp.loop_null_cmp14
 
 strcmp.loop_null_cmp10:                           ; preds = %strcmp.loop5
-  %strcmp.cmp_null12 = icmp eq i8 %36, 0
+  %strcmp.cmp_null12 = icmp eq i8 %34, 0
   br i1 %strcmp.cmp_null12, label %strcmp.done, label %strcmp.loop9
 
 strcmp.loop13:                                    ; preds = %strcmp.loop_null_cmp14
-  %43 = getelementptr [64 x i8], [64 x i8]* %str, i32 0, i32 5
+  %43 = getelementptr i8, i8* %lookup_str_map, i32 5
   %44 = load i8, i8* %43, align 1
-  %45 = getelementptr [16 x i8], [16 x i8]* %comm, i32 0, i32 5
-  %46 = load i8, i8* %45, align 1
-  %strcmp.cmp19 = icmp ne i8 %44, %46
+  %45 = bitcast [16 x i8]* %comm to i8*
+  %46 = getelementptr i8, i8* %45, i32 5
+  %47 = load i8, i8* %46, align 1
+  %strcmp.cmp19 = icmp ne i8 %44, %47
   br i1 %strcmp.cmp19, label %strcmp.false, label %strcmp.loop_null_cmp18
 
 strcmp.loop_null_cmp14:                           ; preds = %strcmp.loop9
-  %strcmp.cmp_null16 = icmp eq i8 %40, 0
+  %strcmp.cmp_null16 = icmp eq i8 %39, 0
   br i1 %strcmp.cmp_null16, label %strcmp.done, label %strcmp.loop13
 
 strcmp.loop17:                                    ; preds = %strcmp.loop_null_cmp18
-  %47 = getelementptr [64 x i8], [64 x i8]* %str, i32 0, i32 6
-  %48 = load i8, i8* %47, align 1
-  %49 = getelementptr [16 x i8], [16 x i8]* %comm, i32 0, i32 6
-  %50 = load i8, i8* %49, align 1
-  %strcmp.cmp23 = icmp ne i8 %48, %50
+  %48 = getelementptr i8, i8* %lookup_str_map, i32 6
+  %49 = load i8, i8* %48, align 1
+  %50 = bitcast [16 x i8]* %comm to i8*
+  %51 = getelementptr i8, i8* %50, i32 6
+  %52 = load i8, i8* %51, align 1
+  %strcmp.cmp23 = icmp ne i8 %49, %52
   br i1 %strcmp.cmp23, label %strcmp.false, label %strcmp.loop_null_cmp22
 
 strcmp.loop_null_cmp18:                           ; preds = %strcmp.loop13
@@ -160,136 +175,145 @@ strcmp.loop_null_cmp18:                           ; preds = %strcmp.loop13
   br i1 %strcmp.cmp_null20, label %strcmp.done, label %strcmp.loop17
 
 strcmp.loop21:                                    ; preds = %strcmp.loop_null_cmp22
-  %51 = getelementptr [64 x i8], [64 x i8]* %str, i32 0, i32 7
-  %52 = load i8, i8* %51, align 1
-  %53 = getelementptr [16 x i8], [16 x i8]* %comm, i32 0, i32 7
+  %53 = getelementptr i8, i8* %lookup_str_map, i32 7
   %54 = load i8, i8* %53, align 1
-  %strcmp.cmp27 = icmp ne i8 %52, %54
+  %55 = bitcast [16 x i8]* %comm to i8*
+  %56 = getelementptr i8, i8* %55, i32 7
+  %57 = load i8, i8* %56, align 1
+  %strcmp.cmp27 = icmp ne i8 %54, %57
   br i1 %strcmp.cmp27, label %strcmp.false, label %strcmp.loop_null_cmp26
 
 strcmp.loop_null_cmp22:                           ; preds = %strcmp.loop17
-  %strcmp.cmp_null24 = icmp eq i8 %48, 0
+  %strcmp.cmp_null24 = icmp eq i8 %49, 0
   br i1 %strcmp.cmp_null24, label %strcmp.done, label %strcmp.loop21
 
 strcmp.loop25:                                    ; preds = %strcmp.loop_null_cmp26
-  %55 = getelementptr [64 x i8], [64 x i8]* %str, i32 0, i32 8
-  %56 = load i8, i8* %55, align 1
-  %57 = getelementptr [16 x i8], [16 x i8]* %comm, i32 0, i32 8
-  %58 = load i8, i8* %57, align 1
-  %strcmp.cmp31 = icmp ne i8 %56, %58
+  %58 = getelementptr i8, i8* %lookup_str_map, i32 8
+  %59 = load i8, i8* %58, align 1
+  %60 = bitcast [16 x i8]* %comm to i8*
+  %61 = getelementptr i8, i8* %60, i32 8
+  %62 = load i8, i8* %61, align 1
+  %strcmp.cmp31 = icmp ne i8 %59, %62
   br i1 %strcmp.cmp31, label %strcmp.false, label %strcmp.loop_null_cmp30
 
 strcmp.loop_null_cmp26:                           ; preds = %strcmp.loop21
-  %strcmp.cmp_null28 = icmp eq i8 %52, 0
+  %strcmp.cmp_null28 = icmp eq i8 %54, 0
   br i1 %strcmp.cmp_null28, label %strcmp.done, label %strcmp.loop25
 
 strcmp.loop29:                                    ; preds = %strcmp.loop_null_cmp30
-  %59 = getelementptr [64 x i8], [64 x i8]* %str, i32 0, i32 9
-  %60 = load i8, i8* %59, align 1
-  %61 = getelementptr [16 x i8], [16 x i8]* %comm, i32 0, i32 9
-  %62 = load i8, i8* %61, align 1
-  %strcmp.cmp35 = icmp ne i8 %60, %62
+  %63 = getelementptr i8, i8* %lookup_str_map, i32 9
+  %64 = load i8, i8* %63, align 1
+  %65 = bitcast [16 x i8]* %comm to i8*
+  %66 = getelementptr i8, i8* %65, i32 9
+  %67 = load i8, i8* %66, align 1
+  %strcmp.cmp35 = icmp ne i8 %64, %67
   br i1 %strcmp.cmp35, label %strcmp.false, label %strcmp.loop_null_cmp34
 
 strcmp.loop_null_cmp30:                           ; preds = %strcmp.loop25
-  %strcmp.cmp_null32 = icmp eq i8 %56, 0
+  %strcmp.cmp_null32 = icmp eq i8 %59, 0
   br i1 %strcmp.cmp_null32, label %strcmp.done, label %strcmp.loop29
 
 strcmp.loop33:                                    ; preds = %strcmp.loop_null_cmp34
-  %63 = getelementptr [64 x i8], [64 x i8]* %str, i32 0, i32 10
-  %64 = load i8, i8* %63, align 1
-  %65 = getelementptr [16 x i8], [16 x i8]* %comm, i32 0, i32 10
-  %66 = load i8, i8* %65, align 1
-  %strcmp.cmp39 = icmp ne i8 %64, %66
+  %68 = getelementptr i8, i8* %lookup_str_map, i32 10
+  %69 = load i8, i8* %68, align 1
+  %70 = bitcast [16 x i8]* %comm to i8*
+  %71 = getelementptr i8, i8* %70, i32 10
+  %72 = load i8, i8* %71, align 1
+  %strcmp.cmp39 = icmp ne i8 %69, %72
   br i1 %strcmp.cmp39, label %strcmp.false, label %strcmp.loop_null_cmp38
 
 strcmp.loop_null_cmp34:                           ; preds = %strcmp.loop29
-  %strcmp.cmp_null36 = icmp eq i8 %60, 0
+  %strcmp.cmp_null36 = icmp eq i8 %64, 0
   br i1 %strcmp.cmp_null36, label %strcmp.done, label %strcmp.loop33
 
 strcmp.loop37:                                    ; preds = %strcmp.loop_null_cmp38
-  %67 = getelementptr [64 x i8], [64 x i8]* %str, i32 0, i32 11
-  %68 = load i8, i8* %67, align 1
-  %69 = getelementptr [16 x i8], [16 x i8]* %comm, i32 0, i32 11
-  %70 = load i8, i8* %69, align 1
-  %strcmp.cmp43 = icmp ne i8 %68, %70
+  %73 = getelementptr i8, i8* %lookup_str_map, i32 11
+  %74 = load i8, i8* %73, align 1
+  %75 = bitcast [16 x i8]* %comm to i8*
+  %76 = getelementptr i8, i8* %75, i32 11
+  %77 = load i8, i8* %76, align 1
+  %strcmp.cmp43 = icmp ne i8 %74, %77
   br i1 %strcmp.cmp43, label %strcmp.false, label %strcmp.loop_null_cmp42
 
 strcmp.loop_null_cmp38:                           ; preds = %strcmp.loop33
-  %strcmp.cmp_null40 = icmp eq i8 %64, 0
+  %strcmp.cmp_null40 = icmp eq i8 %69, 0
   br i1 %strcmp.cmp_null40, label %strcmp.done, label %strcmp.loop37
 
 strcmp.loop41:                                    ; preds = %strcmp.loop_null_cmp42
-  %71 = getelementptr [64 x i8], [64 x i8]* %str, i32 0, i32 12
-  %72 = load i8, i8* %71, align 1
-  %73 = getelementptr [16 x i8], [16 x i8]* %comm, i32 0, i32 12
-  %74 = load i8, i8* %73, align 1
-  %strcmp.cmp47 = icmp ne i8 %72, %74
+  %78 = getelementptr i8, i8* %lookup_str_map, i32 12
+  %79 = load i8, i8* %78, align 1
+  %80 = bitcast [16 x i8]* %comm to i8*
+  %81 = getelementptr i8, i8* %80, i32 12
+  %82 = load i8, i8* %81, align 1
+  %strcmp.cmp47 = icmp ne i8 %79, %82
   br i1 %strcmp.cmp47, label %strcmp.false, label %strcmp.loop_null_cmp46
 
 strcmp.loop_null_cmp42:                           ; preds = %strcmp.loop37
-  %strcmp.cmp_null44 = icmp eq i8 %68, 0
+  %strcmp.cmp_null44 = icmp eq i8 %74, 0
   br i1 %strcmp.cmp_null44, label %strcmp.done, label %strcmp.loop41
 
 strcmp.loop45:                                    ; preds = %strcmp.loop_null_cmp46
-  %75 = getelementptr [64 x i8], [64 x i8]* %str, i32 0, i32 13
-  %76 = load i8, i8* %75, align 1
-  %77 = getelementptr [16 x i8], [16 x i8]* %comm, i32 0, i32 13
-  %78 = load i8, i8* %77, align 1
-  %strcmp.cmp51 = icmp ne i8 %76, %78
+  %83 = getelementptr i8, i8* %lookup_str_map, i32 13
+  %84 = load i8, i8* %83, align 1
+  %85 = bitcast [16 x i8]* %comm to i8*
+  %86 = getelementptr i8, i8* %85, i32 13
+  %87 = load i8, i8* %86, align 1
+  %strcmp.cmp51 = icmp ne i8 %84, %87
   br i1 %strcmp.cmp51, label %strcmp.false, label %strcmp.loop_null_cmp50
 
 strcmp.loop_null_cmp46:                           ; preds = %strcmp.loop41
-  %strcmp.cmp_null48 = icmp eq i8 %72, 0
+  %strcmp.cmp_null48 = icmp eq i8 %79, 0
   br i1 %strcmp.cmp_null48, label %strcmp.done, label %strcmp.loop45
 
 strcmp.loop49:                                    ; preds = %strcmp.loop_null_cmp50
-  %79 = getelementptr [64 x i8], [64 x i8]* %str, i32 0, i32 14
-  %80 = load i8, i8* %79, align 1
-  %81 = getelementptr [16 x i8], [16 x i8]* %comm, i32 0, i32 14
-  %82 = load i8, i8* %81, align 1
-  %strcmp.cmp55 = icmp ne i8 %80, %82
+  %88 = getelementptr i8, i8* %lookup_str_map, i32 14
+  %89 = load i8, i8* %88, align 1
+  %90 = bitcast [16 x i8]* %comm to i8*
+  %91 = getelementptr i8, i8* %90, i32 14
+  %92 = load i8, i8* %91, align 1
+  %strcmp.cmp55 = icmp ne i8 %89, %92
   br i1 %strcmp.cmp55, label %strcmp.false, label %strcmp.loop_null_cmp54
 
 strcmp.loop_null_cmp50:                           ; preds = %strcmp.loop45
-  %strcmp.cmp_null52 = icmp eq i8 %76, 0
+  %strcmp.cmp_null52 = icmp eq i8 %84, 0
   br i1 %strcmp.cmp_null52, label %strcmp.done, label %strcmp.loop49
 
 strcmp.loop53:                                    ; preds = %strcmp.loop_null_cmp54
-  %83 = getelementptr [64 x i8], [64 x i8]* %str, i32 0, i32 15
-  %84 = load i8, i8* %83, align 1
-  %85 = getelementptr [16 x i8], [16 x i8]* %comm, i32 0, i32 15
-  %86 = load i8, i8* %85, align 1
-  %strcmp.cmp59 = icmp ne i8 %84, %86
+  %93 = getelementptr i8, i8* %lookup_str_map, i32 15
+  %94 = load i8, i8* %93, align 1
+  %95 = bitcast [16 x i8]* %comm to i8*
+  %96 = getelementptr i8, i8* %95, i32 15
+  %97 = load i8, i8* %96, align 1
+  %strcmp.cmp59 = icmp ne i8 %94, %97
   br i1 %strcmp.cmp59, label %strcmp.false, label %strcmp.loop_null_cmp58
 
 strcmp.loop_null_cmp54:                           ; preds = %strcmp.loop49
-  %strcmp.cmp_null56 = icmp eq i8 %80, 0
+  %strcmp.cmp_null56 = icmp eq i8 %89, 0
   br i1 %strcmp.cmp_null56, label %strcmp.done, label %strcmp.loop53
 
 strcmp.loop57:                                    ; preds = %strcmp.loop_null_cmp58
   br label %strcmp.done
 
 strcmp.loop_null_cmp58:                           ; preds = %strcmp.loop53
-  %strcmp.cmp_null60 = icmp eq i8 %84, 0
+  %strcmp.cmp_null60 = icmp eq i8 %94, 0
   br i1 %strcmp.cmp_null60, label %strcmp.done, label %strcmp.loop57
 }
 
 ; Function Attrs: argmemonly nofree nosync nounwind willreturn
 declare void @llvm.lifetime.start.p0i8(i64 immarg %0, i8* nocapture %1) #1
 
-; Function Attrs: argmemonly nofree nosync nounwind willreturn writeonly
-declare void @llvm.memset.p0i8.i64(i8* nocapture writeonly %0, i8 %1, i64 %2, i1 immarg %3) #2
-
 ; Function Attrs: argmemonly nofree nosync nounwind willreturn
 declare void @llvm.lifetime.end.p0i8(i64 immarg %0, i8* nocapture %1) #1
+
+; Function Attrs: argmemonly nofree nosync nounwind willreturn writeonly
+declare void @llvm.memset.p0i8.i64(i8* nocapture writeonly %0, i8 %1, i64 %2, i1 immarg %3) #2
 
 attributes #0 = { nounwind }
 attributes #1 = { argmemonly nofree nosync nounwind willreturn }
 attributes #2 = { argmemonly nofree nosync nounwind willreturn writeonly }
 
-!llvm.dbg.cu = !{!47}
-!llvm.module.flags = !{!50}
+!llvm.dbg.cu = !{!62}
+!llvm.module.flags = !{!65}
 
 !0 = !DIGlobalVariableExpression(var: !1, expr: !DIExpression())
 !1 = distinct !DIGlobalVariable(name: "AT_", linkageName: "global", scope: !2, file: !2, type: !3, isLocal: false, isDefinition: true)
@@ -338,14 +362,28 @@ attributes #2 = { argmemonly nofree nosync nounwind willreturn writeonly }
 !44 = !DIDerivedType(tag: DW_TAG_member, name: "key", scope: !2, file: !2, baseType: !45, size: 64, offset: 128)
 !45 = !DIDerivedType(tag: DW_TAG_pointer_type, baseType: !46, size: 64)
 !46 = !DIBasicType(name: "int32", size: 32, encoding: DW_ATE_signed)
-!47 = distinct !DICompileUnit(language: DW_LANG_C, file: !2, producer: "bpftrace", isOptimized: false, runtimeVersion: 0, emissionKind: LineTablesOnly, enums: !48, globals: !49)
-!48 = !{}
-!49 = !{!0, !20, !34}
-!50 = !{i32 2, !"Debug Info Version", i32 3}
-!51 = distinct !DISubprogram(name: "tracepoint_file_filename_1", linkageName: "tracepoint_file_filename_1", scope: !2, file: !2, type: !52, flags: DIFlagPrototyped, spFlags: DISPFlagDefinition, unit: !47, retainedNodes: !56)
-!52 = !DISubroutineType(types: !53)
-!53 = !{!18, !54}
-!54 = !DIDerivedType(tag: DW_TAG_pointer_type, baseType: !55, size: 64)
-!55 = !DIBasicType(name: "int8", size: 8, encoding: DW_ATE_signed)
-!56 = !{!57}
-!57 = !DILocalVariable(name: "ctx", arg: 1, scope: !51, file: !2, type: !54)
+!47 = !DIGlobalVariableExpression(var: !48, expr: !DIExpression())
+!48 = distinct !DIGlobalVariable(name: "str_buffer", linkageName: "global", scope: !2, file: !2, type: !49, isLocal: false, isDefinition: true)
+!49 = !DICompositeType(tag: DW_TAG_structure_type, scope: !2, file: !2, size: 256, elements: !50)
+!50 = !{!51, !43, !44, !56}
+!51 = !DIDerivedType(tag: DW_TAG_member, name: "type", scope: !2, file: !2, baseType: !52, size: 64)
+!52 = !DIDerivedType(tag: DW_TAG_pointer_type, baseType: !53, size: 64)
+!53 = !DICompositeType(tag: DW_TAG_array_type, baseType: !8, size: 192, elements: !54)
+!54 = !{!55}
+!55 = !DISubrange(count: 6, lowerBound: 0)
+!56 = !DIDerivedType(tag: DW_TAG_member, name: "value", scope: !2, file: !2, baseType: !57, size: 64, offset: 192)
+!57 = !DIDerivedType(tag: DW_TAG_pointer_type, baseType: !58, size: 64)
+!58 = !DICompositeType(tag: DW_TAG_array_type, baseType: !59, size: 512, elements: !60)
+!59 = !DIBasicType(name: "int8", size: 8, encoding: DW_ATE_signed)
+!60 = !{!61}
+!61 = !DISubrange(count: 64, lowerBound: 0)
+!62 = distinct !DICompileUnit(language: DW_LANG_C, file: !2, producer: "bpftrace", isOptimized: false, runtimeVersion: 0, emissionKind: LineTablesOnly, enums: !63, globals: !64)
+!63 = !{}
+!64 = !{!0, !20, !34, !47}
+!65 = !{i32 2, !"Debug Info Version", i32 3}
+!66 = distinct !DISubprogram(name: "tracepoint_file_filename_1", linkageName: "tracepoint_file_filename_1", scope: !2, file: !2, type: !67, flags: DIFlagPrototyped, spFlags: DISPFlagDefinition, unit: !62, retainedNodes: !70)
+!67 = !DISubroutineType(types: !68)
+!68 = !{!18, !69}
+!69 = !DIDerivedType(tag: DW_TAG_pointer_type, baseType: !59, size: 64)
+!70 = !{!71}
+!71 = !DILocalVariable(name: "ctx", arg: 1, scope: !66, file: !2, type: !69)

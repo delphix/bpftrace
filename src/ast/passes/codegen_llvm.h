@@ -28,7 +28,11 @@ using CallArgs = std::vector<std::tuple<FormatString, std::vector<Field>>>;
 
 class CodegenLLVM : public Visitor {
 public:
-  explicit CodegenLLVM(Node *root, BPFtrace &bpftrace);
+  explicit CodegenLLVM(Node *root, BPFtrace &bpftrace, bool is_aot = false);
+  explicit CodegenLLVM(Node *root,
+                       BPFtrace &bpftrace,
+                       bool is_aot,
+                       std::unique_ptr<USDTHelper> usdt_helper);
 
   void visit(Integer &integer) override;
   void visit(PositionalParameter &param) override;
@@ -91,6 +95,8 @@ public:
       const std::string &name);
 
   void generate_ir(void);
+  libbpf::bpf_map_type get_map_type(const SizedType &val_type,
+                                    const MapKey &key);
   void generate_maps(const RequiredResources &resources);
   void optimize(void);
   bool verify(void);
@@ -152,6 +158,12 @@ private:
                      std::optional<int> usdt_location_index = std::nullopt,
                      bool dummy = false);
 
+  // Generate a probe and register it to the BPFtrace class.
+  void add_probe(AttachPoint &ap,
+                 Probe &probe,
+                 const std::string &name,
+                 FunctionType *func_type);
+
   [[nodiscard]] ScopedExprDeleter accept(Node *node);
   [[nodiscard]] std::tuple<Value *, ScopedExprDeleter> getMapKey(Map &map);
   AllocaInst *getMultiMapKey(Map &map, const std::vector<Value *> &extra_keys);
@@ -183,6 +195,7 @@ private:
   //
   // If null, return value will depend on current attach point (void in subprog)
   void createRet(Value *value = nullptr);
+  int getReturnValueForProbe(ProbeType probe_type);
 
   // Every time we see a watchpoint that specifies a function + arg pair, we
   // generate a special "setup" probe that:
@@ -220,7 +233,8 @@ private:
   void createIncDec(Unop &unop);
 
   Function *createMapLenCallback();
-  Function *createForEachMapCallback(const Variable &decl,
+  Function *createForEachMapCallback(Map &map,
+                                     const Variable &decl,
                                      const std::vector<Statement *> &stmts);
   Function *createMurmurHash2Func();
 
@@ -230,15 +244,19 @@ private:
   // first called.
   std::function<void()> create_reset_ids();
 
+  bool canAggPerCpuMapElems(const SizedType &val_type, const MapKey &key);
+
   Node *root_ = nullptr;
 
   BPFtrace &bpftrace_;
+  std::unique_ptr<USDTHelper> usdt_helper_;
   std::unique_ptr<LLVMContext> context_;
   std::unique_ptr<TargetMachine> target_machine_;
   std::unique_ptr<Module> module_;
   IRBuilderBPF b_;
 
   DIBuilderBPF debug_;
+  bool is_aot_;
 
   const DataLayout &datalayout() const
   {
@@ -258,8 +276,11 @@ private:
   // Used if there are duplicate USDT entries
   int current_usdt_location_index_{ 0 };
   bool inside_subprog_ = false;
+  bool need_recursion_check_ = false;
 
   std::map<std::string, AllocaInst *> variables_;
+
+  // NB: ensure all IDs are saved/restored in create_reset_ids()
   int printf_id_ = 0;
   int mapped_printf_id_ = 0;
   int time_id_ = 0;
@@ -271,6 +292,7 @@ private:
   uint64_t watchpoint_id_ = 0;
   int cgroup_path_id_ = 0;
   int skb_output_id_ = 0;
+  int str_id_ = 0;
 
   std::unordered_map<std::string, libbpf::bpf_map_type> map_types_;
 

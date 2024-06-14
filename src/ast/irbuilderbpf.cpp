@@ -2,6 +2,7 @@
 
 #include <iostream>
 #include <sstream>
+#include <thread>
 
 #include <llvm/IR/DataLayout.h>
 #include <llvm/IR/Module.h>
@@ -13,6 +14,14 @@
 #include "bpftrace.h"
 #include "log.h"
 #include "utils.h"
+
+#if LLVM_VERSION_MAJOR >= 10
+#define CREATE_MEMSET(ptr, val, size, align)                                   \
+  CreateMemSet((ptr), (val), (size), MaybeAlign((align)))
+#else
+#define CREATE_MEMSET(ptr, val, size, align)                                   \
+  CreateMemSet((ptr), (val), (size), (align))
+#endif
 
 namespace libbpf {
 #include "libbpf/bpf.h"
@@ -177,7 +186,7 @@ AllocaInst *IRBuilderBPF::CreateAllocaBPFInit(const SizedType &stype,
     alloca = CreateAlloca(ty, nullptr, name);
     CreateLifetimeStart(alloca);
     if (needMemcpy(stype)) {
-      CREATE_MEMSET(alloca, getInt8(0), stype.GetSize(), 1);
+      CreateMemsetBPF(alloca, getInt8(0), stype.GetSize());
     } else {
       CreateStore(ConstantInt::get(ty, 0), alloca);
     }
@@ -197,6 +206,49 @@ AllocaInst *IRBuilderBPF::CreateAllocaBPF(int bytes, const std::string &name)
 {
   llvm::Type *ty = ArrayType::get(getInt8Ty(), bytes);
   return CreateAllocaBPF(ty, name);
+}
+
+void IRBuilderBPF::CreateMemsetBPF(Value *ptr, Value *val, uint32_t size)
+{
+  if (size > 512 && bpftrace_.feature_->has_helper_probe_read_kernel()) {
+    // Note we are "abusing" bpf_probe_read_kernel() by reading from NULL
+    // which triggers a call into the kernel-optimized memset().
+    //
+    // Upstream blesses this trick so we should be able to count on them
+    // to maintain these semantics.
+    //
+    // Also note we are avoiding a call to CreateProbeRead(), as it wraps
+    // calls to probe read helpers with the -kk error reporting feature.
+    // The call here will always fail and we want it that way. So avoid
+    // reporting errors to the user.
+    auto probe_read_id = libbpf::BPF_FUNC_probe_read_kernel;
+    FunctionType *proberead_func_type = FunctionType::get(
+        getInt64Ty(),
+        { ptr->getType(), getInt32Ty(), GetNull()->getType() },
+        false);
+    PointerType *proberead_func_ptr_type = PointerType::get(proberead_func_type,
+                                                            0);
+    Constant *proberead_func = ConstantExpr::getCast(Instruction::IntToPtr,
+                                                     getInt64(probe_read_id),
+                                                     proberead_func_ptr_type);
+    createCall(proberead_func_type,
+               proberead_func,
+               { ptr, getInt32(size), GetNull() },
+               probeReadHelperName(probe_read_id));
+  } else {
+    // Use unrolled memset for memsets less than 512 bytes mostly for
+    // correctness.
+    //
+    // It appears that helper based memsets obscure LLVM stack optimizer view
+    // into memory usage such that programs that were below stack limit with
+    // builtin memsets will bloat with helper based memsets enough to where
+    // LLVM BPF backend will barf.
+    //
+    // So only use helper based memset when we really need it. And that's when
+    // we're memset()ing off-stack. We know it's off stack b/c 512 is program
+    // stack limit.
+    CREATE_MEMSET(ptr, val, getInt64(size), 1);
+  }
 }
 
 llvm::ConstantInt *IRBuilderBPF::GetIntSameSize(uint64_t C, llvm::Type *ty)
@@ -292,6 +344,13 @@ Value *IRBuilderBPF::GetMapVar(const std::string &map_name)
   return module_.getGlobalVariable(bpf_map_name(map_name));
 }
 
+Value *IRBuilderBPF::GetNull()
+{
+  return ConstantExpr::getCast(Instruction::IntToPtr,
+                               getInt64(0),
+                               GET_PTR_TY());
+}
+
 CallInst *IRBuilderBPF::CreateMapLookup(Map &map,
                                         Value *key,
                                         const std::string &name)
@@ -326,6 +385,35 @@ CallInst *IRBuilderBPF::createMapLookup(const std::string &map_name,
   return createCall(lookup_func_type, lookup_func, { map_ptr, key }, name);
 }
 
+CallInst *IRBuilderBPF::createPerCpuMapLookup(const std::string &map_name,
+                                              Value *key,
+                                              Value *cpu,
+                                              const std::string &name)
+{
+  return createPerCpuMapLookup(map_name, key, cpu, GET_PTR_TY(), name);
+}
+
+CallInst *IRBuilderBPF::createPerCpuMapLookup(const std::string &map_name,
+                                              Value *key,
+                                              Value *cpu,
+                                              PointerType *val_ptr_ty,
+                                              const std::string &name)
+{
+  Value *map_ptr = GetMapVar(map_name);
+  // void *map_lookup_percpu_elem(struct bpf_map * map, void * key, u32 cpu)
+  // Return: Map value or NULL
+
+  assert(key->getType()->isPointerTy());
+  FunctionType *lookup_func_type = FunctionType::get(
+      val_ptr_ty, { map_ptr->getType(), key->getType(), getInt32Ty() }, false);
+  PointerType *lookup_func_ptr_type = PointerType::get(lookup_func_type, 0);
+  Constant *lookup_func = ConstantExpr::getCast(
+      Instruction::IntToPtr,
+      getInt64(libbpf::BPF_FUNC_map_lookup_percpu_elem),
+      lookup_func_ptr_type);
+  return createCall(lookup_func_type, lookup_func, { map_ptr, key, cpu }, name);
+}
+
 CallInst *IRBuilderBPF::CreateGetJoinMap(BasicBlock *failure_callback,
                                          const location &loc)
 {
@@ -343,6 +431,18 @@ CallInst *IRBuilderBPF::CreateGetStackScratchMap(StackType stack_type,
                              GetType(value_type)->getPointerTo(),
                              loc,
                              failure_callback);
+}
+
+CallInst *IRBuilderBPF::CreateGetStrScratchMap(int idx,
+                                               BasicBlock *failure_callback,
+                                               const location &loc)
+{
+  return createGetScratchMap(to_string(MapType::StrBuffer),
+                             "str",
+                             GET_PTR_TY(),
+                             loc,
+                             failure_callback,
+                             idx);
 }
 
 // createGetScratchMap will jump to failure_callback if it cannot find the map
@@ -368,10 +468,9 @@ CallInst *IRBuilderBPF::createGetScratchMap(const std::string &map_name,
       module_.getContext(), "lookup_" + name + "_failure", parent);
   BasicBlock *lookup_merge_block = BasicBlock::Create(
       module_.getContext(), "lookup_" + name + "_merge", parent);
-  Value *condition = CreateICmpNE(
-      CreateIntCast(call, GET_PTR_TY(), true),
-      ConstantExpr::getCast(Instruction::IntToPtr, getInt64(0), GET_PTR_TY()),
-      "lookup_" + name + "_cond");
+  Value *condition = CreateICmpNE(CreateIntCast(call, GET_PTR_TY(), true),
+                                  GetNull(),
+                                  "lookup_" + name + "_cond");
   CreateCondBr(condition, lookup_merge_block, lookup_failure_block);
 
   SetInsertPoint(lookup_failure_block);
@@ -415,10 +514,9 @@ Value *IRBuilderBPF::CreateMapLookupElem(Value *ctx,
                                                       parent);
 
   AllocaInst *value = CreateAllocaBPF(type, "lookup_elem_val");
-  Value *condition = CreateICmpNE(
-      CreateIntCast(call, GET_PTR_TY(), true),
-      ConstantExpr::getCast(Instruction::IntToPtr, getInt64(0), GET_PTR_TY()),
-      "map_lookup_cond");
+  Value *condition = CreateICmpNE(CreateIntCast(call, GET_PTR_TY(), true),
+                                  GetNull(),
+                                  "map_lookup_cond");
   CreateCondBr(condition, lookup_success_block, lookup_failure_block);
 
   SetInsertPoint(lookup_success_block);
@@ -434,7 +532,7 @@ Value *IRBuilderBPF::CreateMapLookupElem(Value *ctx,
 
   SetInsertPoint(lookup_failure_block);
   if (needMemcpy(type))
-    CREATE_MEMSET(value, getInt8(0), type.GetSize(), 1);
+    CreateMemsetBPF(value, getInt8(0), type.GetSize());
   else
     CreateStore(getInt64(0), value);
   CreateHelperError(ctx, getInt32(0), libbpf::BPF_FUNC_map_lookup_elem, loc);
@@ -448,6 +546,181 @@ Value *IRBuilderBPF::CreateMapLookupElem(Value *ctx,
   Value *ret = CreateLoad(getInt64Ty(), value);
   CreateLifetimeEnd(value);
   return ret;
+}
+
+Value *IRBuilderBPF::CreatePerCpuMapAggElems(Value *ctx,
+                                             Map &map,
+                                             Value *key,
+                                             const SizedType &type,
+                                             const location &loc,
+                                             bool is_aot)
+{
+  /*
+   * int ret = 0;
+   * int i = 0;
+   * while (i < nr_cpus) {
+   *   int * cpu_value = map_lookup_percpu_elem(map, key, i);
+   *   if (cpu_value == NULL) {
+   *     if (i == 0)
+   *        log_error("Key not found")
+   *     else
+   *        debug("No cpu found for cpu id: %lu", i) // Mostly for AOT
+   *     break;
+   *   }
+   *   // Get the sum, min, or max value
+   *   i++;
+   * }
+   * return ret;
+   */
+
+  assert(ctx && ctx->getType() == GET_PTR_TY());
+
+  const std::string &map_name = map.ident;
+
+  AllocaInst *ret = CreateAllocaBPF(getInt64Ty(), "ret");
+  AllocaInst *i = CreateAllocaBPF(getInt32Ty(), "i");
+
+  // Set a large upper bound if we don't know the number of cpus
+  // when generating the instructions
+  int nr_cpus = is_aot ? 1024 : bpftrace_.get_num_possible_cpus();
+
+  CreateStore(getInt32(0), i);
+  CreateStore(getInt64(0), ret);
+
+  Function *parent = GetInsertBlock()->getParent();
+  BasicBlock *while_cond = BasicBlock::Create(module_.getContext(),
+                                              "while_cond",
+                                              parent);
+  BasicBlock *while_body = BasicBlock::Create(module_.getContext(),
+                                              "while_body",
+                                              parent);
+  BasicBlock *while_end = BasicBlock::Create(module_.getContext(),
+                                             "while_end",
+                                             parent);
+  CreateBr(while_cond);
+  SetInsertPoint(while_cond);
+  // TODO: after full libbpf support update the number of cpus from userspace
+  // dynamically using a global mutable variable and the skeleton
+  auto *cond = CreateICmp(CmpInst::ICMP_ULT,
+                          CreateLoad(getInt32Ty(), i),
+                          getInt32(nr_cpus),
+                          "num_cpu.cmp");
+  CreateCondBr(cond, while_body, while_end);
+
+  SetInsertPoint(while_body);
+
+  CallInst *call = createPerCpuMapLookup(map_name,
+                                         key,
+                                         CreateLoad(getInt32Ty(), i));
+
+  Function *lookup_parent = GetInsertBlock()->getParent();
+  BasicBlock *lookup_success_block = BasicBlock::Create(module_.getContext(),
+                                                        "lookup_success",
+                                                        lookup_parent);
+  BasicBlock *lookup_failure_block = BasicBlock::Create(module_.getContext(),
+                                                        "lookup_failure",
+                                                        lookup_parent);
+  Value *condition = CreateICmpNE(CreateIntCast(call, GET_PTR_TY(), true),
+                                  GetNull(),
+                                  "map_lookup_cond");
+  CreateCondBr(condition, lookup_success_block, lookup_failure_block);
+
+  SetInsertPoint(lookup_success_block);
+  // createMapLookup  returns an u8*
+  auto *cast = CreatePointerCast(call, getInt64Ty()->getPointerTo(), "cast");
+
+  if (type.IsSumTy() || type.IsCountTy()) {
+    createPerCpuSum(ret, cast);
+  } else if (type.IsMaxTy()) {
+    createPerCpuMinMax(ret, cast, true);
+  } else if (type.IsMinTy()) {
+    createPerCpuMinMax(ret, cast, false);
+  } else {
+    LOG(BUG) << "Unsupported map aggregation type: " << type;
+  }
+
+  // ++i;
+  CreateStore(CreateAdd(CreateLoad(getInt32Ty(), i), getInt32(1)), i);
+
+  CreateBr(while_cond);
+  SetInsertPoint(lookup_failure_block);
+
+  Function *error_parent = GetInsertBlock()->getParent();
+  BasicBlock *error_success_block = BasicBlock::Create(module_.getContext(),
+                                                       "error_success",
+                                                       error_parent);
+  BasicBlock *error_failure_block = BasicBlock::Create(module_.getContext(),
+                                                       "error_failure",
+                                                       error_parent);
+
+  // If the CPU is 0 and the map lookup fails it means the key doesn't exist
+  Value *error_condition = CreateICmpEQ(CreateLoad(getInt32Ty(), i),
+                                        getInt32(0),
+                                        "error_lookup_cond");
+  CreateCondBr(error_condition, error_success_block, error_failure_block);
+
+  SetInsertPoint(error_success_block);
+
+  CreateHelperError(
+      ctx, getInt32(0), libbpf::BPF_FUNC_map_lookup_percpu_elem, loc);
+  CreateBr(while_end);
+
+  SetInsertPoint(error_failure_block);
+
+  // This should only get triggered in the AOT case
+  CreateDebugOutput("No cpu found for cpu id: %lu",
+                    std::vector<Value *>{ CreateLoad(getInt32Ty(), i) },
+                    loc);
+
+  CreateBr(while_end);
+
+  SetInsertPoint(while_end);
+
+  CreateLifetimeEnd(i);
+  Value *ret_reg = CreateLoad(getInt64Ty(), ret);
+  CreateLifetimeEnd(ret);
+  return ret_reg;
+}
+
+void IRBuilderBPF::createPerCpuSum(AllocaInst *ret, Value *cpu_value)
+{
+  CreateStore(CreateAdd(CreateLoad(getInt64Ty(), cpu_value),
+                        CreateLoad(getInt64Ty(), ret)),
+              ret);
+}
+
+void IRBuilderBPF::createPerCpuMinMax(AllocaInst *ret,
+                                      Value *cpu_value,
+                                      bool is_max)
+{
+  Function *parent = GetInsertBlock()->getParent();
+  BasicBlock *success_block = BasicBlock::Create(module_.getContext(),
+                                                 "min_max_success",
+                                                 parent);
+  BasicBlock *merge_block = BasicBlock::Create(module_.getContext(),
+                                               "min_max_merge",
+                                               parent);
+  Value *condition;
+
+  if (is_max) {
+    condition = CreateICmpSGT(CreateLoad(getInt64Ty(), cpu_value),
+                              CreateLoad(getInt64Ty(), ret),
+                              "max_cond");
+  } else {
+    condition = CreateICmpSLT(CreateLoad(getInt64Ty(), cpu_value),
+                              CreateLoad(getInt64Ty(), ret),
+                              "min_cond");
+  }
+  CreateCondBr(condition, success_block, merge_block);
+
+  SetInsertPoint(success_block);
+
+  // ret = cpu_value;
+  CreateStore(CreateLoad(getInt64Ty(), cpu_value), ret);
+
+  CreateBr(merge_block);
+
+  SetInsertPoint(merge_block);
 }
 
 void IRBuilderBPF::CreateMapUpdateElem(Value *ctx,
@@ -541,6 +814,127 @@ void IRBuilderBPF::CreateForEachMapElem(Value *ctx,
                                 /*flags=*/getInt64(0) },
                               "for_each_map_elem");
   CreateHelperErrorCond(ctx, call, libbpf::BPF_FUNC_for_each_map_elem, loc);
+}
+
+void IRBuilderBPF::CreateCheckSetRecursion(const location &loc,
+                                           int early_exit_ret)
+{
+  const std::string map_ident = to_string(MapType::RecursionPrevention);
+
+  AllocaInst *key = CreateAllocaBPF(getInt32Ty(), "lookup_key");
+  CreateStore(getInt32(0), key);
+
+  CallInst *call = createMapLookup(map_ident, key);
+
+  Function *parent = GetInsertBlock()->getParent();
+  BasicBlock *lookup_success_block = BasicBlock::Create(module_.getContext(),
+                                                        "lookup_success",
+                                                        parent);
+  BasicBlock *lookup_failure_block = BasicBlock::Create(module_.getContext(),
+                                                        "lookup_failure",
+                                                        parent);
+  BasicBlock *merge_block = BasicBlock::Create(module_.getContext(),
+                                               "lookup_merge",
+                                               parent);
+
+  // Make the verifier happy with a null check even though the value should
+  // never be null for key 0.
+  Value *condition = CreateICmpNE(
+      CreateIntCast(call, GET_PTR_TY(), true),
+      ConstantExpr::getCast(Instruction::IntToPtr, getInt64(0), GET_PTR_TY()),
+      "map_lookup_cond");
+  CreateCondBr(condition, lookup_success_block, lookup_failure_block);
+
+  SetInsertPoint(lookup_success_block);
+
+  CreateLifetimeEnd(key);
+
+  // createMapLookup  returns an u8*
+  auto *cast = CreatePointerCast(call, getInt64Ty(), "cast");
+
+  Value *prev_value = CREATE_ATOMIC_RMW(AtomicRMWInst::BinOp::Xchg,
+                                        cast,
+                                        getInt64(1),
+                                        8,
+                                        AtomicOrdering::SequentiallyConsistent);
+
+  Function *set_parent = GetInsertBlock()->getParent();
+  BasicBlock *value_is_set_block = BasicBlock::Create(module_.getContext(),
+                                                      "value_is_set",
+                                                      set_parent);
+  Value *set_condition = CreateICmpEQ(prev_value,
+                                      getInt64(0),
+                                      "value_set_condition");
+  CreateCondBr(set_condition, merge_block, value_is_set_block);
+
+  SetInsertPoint(value_is_set_block);
+  /*
+   * The counter is set, we need to exit early from the probe.
+   * Most of the time this will happen for the functions that can lead
+   * to a crash e.g. "queued_spin_lock_slowpath" but it can also happen
+   * for nested probes e.g. "page_fault_user" -> "print".
+   */
+  CreateRet(getInt64(early_exit_ret));
+
+  SetInsertPoint(lookup_failure_block);
+
+  CreateDebugOutput(
+      "Value for per-cpu map key 0 is null. This shouldn't happen.",
+      std::vector<Value *>{},
+      loc);
+  CreateRet(getInt64(0));
+
+  SetInsertPoint(merge_block);
+}
+
+void IRBuilderBPF::CreateUnSetRecursion(const location &loc)
+{
+  const std::string map_ident = to_string(MapType::RecursionPrevention);
+
+  AllocaInst *key = CreateAllocaBPF(getInt32Ty(), "lookup_key");
+  CreateStore(getInt32(0), key);
+
+  CallInst *call = createMapLookup(map_ident, key);
+
+  Function *parent = GetInsertBlock()->getParent();
+  BasicBlock *lookup_success_block = BasicBlock::Create(module_.getContext(),
+                                                        "lookup_success",
+                                                        parent);
+  BasicBlock *lookup_failure_block = BasicBlock::Create(module_.getContext(),
+                                                        "lookup_failure",
+                                                        parent);
+  BasicBlock *merge_block = BasicBlock::Create(module_.getContext(),
+                                               "lookup_merge",
+                                               parent);
+
+  // Make the verifier happy with a null check even though the value should
+  // never be null for key 0.
+  Value *condition = CreateICmpNE(
+      CreateIntCast(call, GET_PTR_TY(), true),
+      ConstantExpr::getCast(Instruction::IntToPtr, getInt64(0), GET_PTR_TY()),
+      "map_lookup_cond");
+  CreateCondBr(condition, lookup_success_block, lookup_failure_block);
+
+  SetInsertPoint(lookup_success_block);
+
+  CreateLifetimeEnd(key);
+
+  // createMapLookup  returns an u8*
+  auto *cast = CreatePointerCast(call, getInt64Ty(), "cast");
+  CreateStore(getInt64(0), cast);
+
+  CreateBr(merge_block);
+
+  SetInsertPoint(lookup_failure_block);
+
+  CreateDebugOutput(
+      "Value for per-cpu map key 0 is null. This shouldn't happen.",
+      std::vector<Value *>{},
+      loc);
+
+  CreateBr(merge_block);
+
+  SetInsertPoint(merge_block);
 }
 
 void IRBuilderBPF::CreateProbeRead(Value *ctx,
@@ -772,9 +1166,7 @@ std::optional<std::string> ValToString(Value *val)
 }
 
 Value *IRBuilderBPF::CreateStrncmp(Value *str1,
-                                   uint64_t str1_size,
                                    Value *str2,
-                                   uint64_t str2_size,
                                    uint64_t n,
                                    bool inverse)
 {
@@ -829,9 +1221,10 @@ Value *IRBuilderBPF::CreateStrncmp(Value *str1,
     if (literal1)
       l = getInt8(literal1->c_str()[i]);
     else {
-      auto *ptr_l = CreateGEP(ArrayType::get(getInt8Ty(), str1_size),
-                              str1,
-                              { getInt32(0), getInt32(i) });
+      auto *ptr_l = CreateGEP(getInt8Ty(),
+                              CreatePointerCast(str1,
+                                                getInt8Ty()->getPointerTo()),
+                              { getInt32(i) });
       l = CreateLoad(getInt8Ty(), ptr_l);
     }
 
@@ -839,9 +1232,10 @@ Value *IRBuilderBPF::CreateStrncmp(Value *str1,
     if (literal2)
       r = getInt8(literal2->c_str()[i]);
     else {
-      auto *ptr_r = CreateGEP(ArrayType::get(getInt8Ty(), str2_size),
-                              str2,
-                              { getInt32(0), getInt32(i) });
+      auto *ptr_r = CreateGEP(getInt8Ty(),
+                              CreatePointerCast(str2,
+                                                getInt8Ty()->getPointerTo()),
+                              { getInt32(i) });
       r = CreateLoad(getInt8Ty(), ptr_r);
     }
 
@@ -1478,10 +1872,9 @@ void IRBuilderBPF::CreateAtomicIncCounter(const std::string &map_name,
                                                       "lookup_merge",
                                                       parent);
 
-  Value *condition = CreateICmpNE(
-      CreateIntCast(call, GET_PTR_TY(), true),
-      ConstantExpr::getCast(Instruction::IntToPtr, getInt64(0), GET_PTR_TY()),
-      "map_lookup_cond");
+  Value *condition = CreateICmpNE(CreateIntCast(call, GET_PTR_TY(), true),
+                                  GetNull(),
+                                  "map_lookup_cond");
   CreateCondBr(condition, lookup_success_block, lookup_failure_block);
 
   SetInsertPoint(lookup_success_block);
@@ -1535,10 +1928,9 @@ void IRBuilderBPF::CreateMapElemAdd(Value *ctx,
                                                       parent);
 
   AllocaInst *value = CreateAllocaBPF(type, "lookup_elem_val");
-  Value *condition = CreateICmpNE(
-      CreateIntCast(call, GET_PTR_TY(), true),
-      ConstantExpr::getCast(Instruction::IntToPtr, getInt64(0), GET_PTR_TY()),
-      "map_lookup_cond");
+  Value *condition = CreateICmpNE(CreateIntCast(call, GET_PTR_TY(), true),
+                                  GetNull(),
+                                  "map_lookup_cond");
   CreateCondBr(condition, lookup_success_block, lookup_failure_block);
 
   SetInsertPoint(lookup_success_block);
@@ -1597,7 +1989,7 @@ void IRBuilderBPF::CreateDebugOutput(std::string fmt_str,
                                                      true);
   AllocaInst *fmt = CreateAllocaBPF(
       ArrayType::get(getInt8Ty(), fmt_str.length() + 1), "fmt_str");
-  CREATE_MEMSET(fmt, getInt8(0), fmt_str.length() + 1, 1);
+  CreateMemsetBPF(fmt, getInt8(0), fmt_str.length() + 1);
   CreateStore(const_str, fmt);
   CreateTracePrintk(CreatePointerCast(fmt, getInt8Ty()->getPointerTo()),
                     getInt32(fmt_str.length() + 1),
@@ -1985,7 +2377,7 @@ void IRBuilderBPF::CreateProbeRead(Value *ctx,
 #endif
 
   if (ptr_size != type.GetSize())
-    CREATE_MEMSET(dst, getInt8(0), type.GetSize(), 1);
+    CreateMemsetBPF(dst, getInt8(0), type.GetSize());
 
   CreateProbeRead(ctx, dst, getInt32(ptr_size), src, as, loc);
 }

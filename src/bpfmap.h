@@ -72,6 +72,8 @@ enum class MapType {
   MappedPrintfData,
   Ringbuf,
   RingbufLossCounter,
+  StrBuffer,
+  RecursionPrevention,
 };
 
 std::string to_string(MapType t);

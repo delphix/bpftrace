@@ -13,7 +13,7 @@
 
 // Taken from libbpf
 #define BTF_INFO_ENC(kind, kind_flag, vlen)                                    \
-  ((!!(kind_flag) << 31) | ((kind) << 24) | ((vlen)&BTF_MAX_VLEN))
+  ((!!(kind_flag) << 31) | ((kind) << 24) | ((vlen) & BTF_MAX_VLEN))
 #define BTF_TYPE_ENC(name, info, size_or_type) (name), (info), (size_or_type)
 #define BTF_INT_ENC(encoding, bits_offset, nr_bits)                            \
   ((encoding) << 24 | (bits_offset) << 16 | (nr_bits))

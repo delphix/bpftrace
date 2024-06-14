@@ -434,7 +434,7 @@ void SemanticAnalyser::visit(Builtin &builtin)
       ProbeType type = probetype(attach_point->provider);
 
       if (type == ProbeType::tracepoint) {
-        probe->need_expansion = true;
+        attach_point->expansion = ExpansionType::FULL;
         builtin_args_tracepoint(attach_point, builtin);
       }
     }
@@ -1796,7 +1796,8 @@ void SemanticAnalyser::visit(Binop &binop)
     return;
   }
 
-  if (lht.IsIntTy() && rht.IsIntTy()) {
+  if ((lht.IsCastableMapTy() || lht.IsIntTy()) &&
+      (rht.IsCastableMapTy() || rht.IsIntTy())) {
     binop_int(binop);
   } else if (lht.IsArrayTy() && rht.IsArrayTy()) {
     binop_array(binop);
@@ -2079,6 +2080,12 @@ void SemanticAnalyser::visit(For &f)
   }
   Map &map = static_cast<Map &>(*f.expr);
 
+  if (!map.type.IsMapIterableTy()) {
+    LOG(ERROR, f.expr->loc, err_)
+        << "Loop expression does not support type: " << map.type;
+    return;
+  }
+
   // Validate body
   CollectNodes<Variable> vars_referenced;
   for (auto *stmt : *f.stmts) {
@@ -2333,7 +2340,7 @@ void SemanticAnalyser::visit(Cast &cast)
   }
 
   if ((cast.type.IsIntTy() && !rhs.IsIntTy() && !rhs.IsPtrTy() &&
-       !rhs.IsCtxAccess() && !(rhs.IsArrayTy())) ||
+       !rhs.IsCtxAccess() && !rhs.IsArrayTy() && !rhs.IsCastableMapTy()) ||
       // casting from/to int arrays must respect the size
       (cast.type.IsArrayTy() &&
        (!rhs.IsIntTy() || cast.type.GetSize() != rhs.GetSize())) ||
@@ -2392,7 +2399,7 @@ void SemanticAnalyser::visit(AssignMapStatement &assignment)
   const std::string &map_ident = assignment.map->ident;
   auto type = assignment.expr->type;
 
-  if (type.IsRecordTy()) {
+  if (type.IsRecordTy() && map_val_[map_ident].IsRecordTy()) {
     std::string ty = assignment.expr->type.GetName();
     std::string stored_ty = map_val_[map_ident].GetName();
     if (!stored_ty.empty() && stored_ty != ty) {
@@ -2400,7 +2407,7 @@ void SemanticAnalyser::visit(AssignMapStatement &assignment)
           << "Type mismatch for " << map_ident << ": "
           << "trying to assign value of type '" << ty
           << "' when map already contains a value of type '" << stored_ty
-          << "''";
+          << "'";
     } else {
       map_val_[map_ident] = assignment.expr->type;
       map_val_[map_ident].is_internal = true;
@@ -2499,7 +2506,8 @@ void SemanticAnalyser::visit(AssignVarStatement &assignment)
       LOG(ERROR, assignment.loc, err_)
           << "Type mismatch for " << var_ident << ": "
           << "trying to assign value of type '" << assignTy.GetName()
-          << "' when variable already contains a value of type '" << storedTy;
+          << "' when variable already contains a value of type '" << storedTy
+          << "'";
     }
   } else if (assignTy.IsStringTy()) {
     auto var_size = storedTy.GetSize();
@@ -3195,7 +3203,7 @@ void SemanticAnalyser::assign_map_type(const Map &map, const SizedType &type)
       LOG(ERROR, map.loc, err_)
           << "Type mismatch for " << map_ident << ": "
           << "trying to assign value of type '" << type
-          << "' when map already contains a value of type '" << *maptype;
+          << "' when map already contains a value of type '" << *maptype << "'";
     }
 
     if (maptype->IsStringTy() || maptype->IsTupleTy())

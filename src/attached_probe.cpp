@@ -33,17 +33,6 @@
 
 namespace bpftrace {
 
-/*
- * Kernel functions that are unsafe to trace are excluded in the Kernel with
- * `notrace`. However, the ones below are not excluded.
- */
-const std::set<std::string> banned_kretprobes = {
-  "_raw_spin_lock",
-  "_raw_spin_lock_irqsave",
-  "_raw_spin_unlock_irqrestore",
-  "queued_spin_lock_slowpath",
-};
-
 bpf_probe_attach_type attachtype(ProbeType t)
 {
   // clang-format off
@@ -64,7 +53,7 @@ bpf_probe_attach_type attachtype(ProbeType t)
 libbpf::bpf_prog_type progtype(ProbeType t)
 {
   switch (t) {
-    // clang-format off
+      // clang-format off
     case ProbeType::special:    return libbpf::BPF_PROG_TYPE_RAW_TRACEPOINT; break;
     case ProbeType::kprobe:     return libbpf::BPF_PROG_TYPE_KPROBE; break;
     case ProbeType::kretprobe:  return libbpf::BPF_PROG_TYPE_KPROBE; break;
@@ -93,7 +82,7 @@ libbpf::bpf_prog_type progtype(ProbeType t)
 std::string progtypeName(libbpf::bpf_prog_type t)
 {
   switch (t) {
-    // clang-format off
+      // clang-format off
     case libbpf::BPF_PROG_TYPE_KPROBE:     return "BPF_PROG_TYPE_KPROBE";     break;
     case libbpf::BPF_PROG_TYPE_TRACEPOINT: return "BPF_PROG_TYPE_TRACEPOINT"; break;
     case libbpf::BPF_PROG_TYPE_PERF_EVENT: return "BPF_PROG_TYPE_PERF_EVENT"; break;
@@ -101,14 +90,6 @@ std::string progtypeName(libbpf::bpf_prog_type t)
     // clang-format on
     default:
       LOG(BUG) << "invalid program type: " << t;
-  }
-}
-
-void check_banned_kretprobes(std::string const &kprobe_name)
-{
-  if (banned_kretprobes.find(kprobe_name) != banned_kretprobes.end()) {
-    throw FatalUserException("kretprobe:" + kprobe_name +
-                             " can't be used as it might lock up your system.");
   }
 }
 
@@ -191,7 +172,6 @@ AttachedProbe::AttachedProbe(Probe &probe,
       attach_kprobe(safe_mode);
       break;
     case ProbeType::kretprobe:
-      check_banned_kretprobes(probe_.attach_point);
       attach_kprobe(safe_mode);
       break;
     case ProbeType::tracepoint:
@@ -699,7 +679,7 @@ void maybe_throw_helper_verifier_error(std::string_view log,
                     exception_msg_suffix;
   throw HelperVerifierError(msg, static_cast<libbpf::bpf_func_id>(func_id));
 }
-}
+} // namespace
 
 void AttachedProbe::load_prog(BPFfeature &feature)
 {
@@ -1298,7 +1278,7 @@ void AttachedProbe::attach_usdt(int pid, BPFfeature &feature)
   }
 
   // Resolve location of usdt probe
-  auto u = USDTHelper::find(pid, probe_.path, probe_.ns, probe_.attach_point);
+  auto u = usdt_helper.find(pid, probe_.path, probe_.ns, probe_.attach_point);
   if (!u.has_value())
     throw FatalUserException("Failed to find usdt probe: " + eventname());
   probe_.path = u->path;

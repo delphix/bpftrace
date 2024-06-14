@@ -5,7 +5,7 @@ namespace bpftrace {
 std::string logtype_str(LogType t)
 {
   switch (t) {
-    // clang-format off
+      // clang-format off
     case LogType::DEBUG   : return "";
     case LogType::V1      : return "";
     case LogType::WARNING : return "WARNING: ";

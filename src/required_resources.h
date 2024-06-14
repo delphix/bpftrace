@@ -117,6 +117,7 @@ public:
   bool needs_elapsed_map = false;
   bool needs_data_map = false;
   bool needs_perf_event_map = false;
+  uint32_t str_buffers = 0;
 
   // Probe metadata
   //
@@ -127,7 +128,7 @@ public:
   std::vector<Probe> watchpoint_probes;
 
   // List of probes using userspace symbol resolution
-  std::unordered_set<ast::Probe *> probes_using_usym;
+  std::unordered_set<const ast::Probe *> probes_using_usym;
 
 private:
   friend class cereal::access;
