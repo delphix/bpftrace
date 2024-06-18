@@ -741,13 +741,9 @@ std::tuple<std::string, std::string> get_kernel_dirs(
 
   // if one of source/ or build/ is not present - try to use the other one for
   // both.
-  if (!is_dir(ksrc)) {
-    ksrc = "";
-  }
-  if (!is_dir(kobj)) {
-    kobj = "";
-  }
-  if (ksrc.empty() && kobj.empty()) {
+  auto has_ksrc = is_dir(ksrc);
+  auto has_kobj = is_dir(kobj);
+  if (!has_ksrc && !has_kobj) {
     LOG(WARNING) << "Could not find kernel headers in " << ksrc << " or "
                  << kobj
                  << ". To specify a particular path to kernel headers, set the "
@@ -758,9 +754,9 @@ std::tuple<std::string, std::string> get_kernel_dirs(
                     "file at /sys/kernel/kheaders.tar.xz";
     return std::make_tuple("", "");
   }
-  if (ksrc.empty()) {
+  if (!has_ksrc) {
     ksrc = kobj;
-  } else if (kobj.empty()) {
+  } else if (!has_kobj) {
     kobj = ksrc;
   }
 
@@ -1387,7 +1383,7 @@ std::map<uintptr_t, elf_symbol, std::greater<>> get_symbol_table_for_elf(
   };
   struct bcc_symbol_option option;
   memset(&option, 0, sizeof(option));
-  option.use_symbol_type = BCC_SYM_ALL_TYPES;
+  option.use_symbol_type = BCC_SYM_ALL_TYPES ^ (1 << STT_NOTYPE);
   bcc_elf_foreach_sym(
       elf_file.c_str(), sym_resolve_callback, &option, &symbol_table);
 
