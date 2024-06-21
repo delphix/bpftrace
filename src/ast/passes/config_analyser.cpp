@@ -92,8 +92,23 @@ void ConfigAnalyser::set_user_symbol_cache_type_config(
     return;
   }
 
-  config_setter_.set_user_symbol_cache_type(
-      dynamic_cast<String *>(assignment.expr)->str);
+  auto val = dynamic_cast<String *>(assignment.expr)->str;
+  if (!config_setter_.set_user_symbol_cache_type(val))
+    LOG(ERROR, assignment.expr->loc, err_);
+}
+
+void ConfigAnalyser::set_missing_probes_config(
+    AssignConfigVarStatement &assignment)
+{
+  auto &assignTy = assignment.expr->type;
+  if (!assignTy.IsStringTy()) {
+    log_type_error(assignTy, Type::string, assignment);
+    return;
+  }
+
+  auto val = dynamic_cast<String *>(assignment.expr)->str;
+  if (!config_setter_.set_missing_probes_config(val))
+    LOG(ERROR, assignment.expr->loc, err_);
 }
 
 void ConfigAnalyser::visit(Integer &integer)
@@ -150,6 +165,9 @@ void ConfigAnalyser::visit(AssignConfigVarStatement &assignment)
           [&, this](ConfigKeyStackMode) { set_stack_mode_config(assignment); },
           [&, this](ConfigKeyUserSymbolCacheType) {
             set_user_symbol_cache_type_config(assignment);
+          },
+          [&, this](ConfigKeyMissingProbes) {
+            set_missing_probes_config(assignment);
           } },
       configKey);
 }
