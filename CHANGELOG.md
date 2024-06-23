@@ -9,6 +9,17 @@ and this project adheres to
 ## Unreleased
 
 #### Added
+#### Changed
+#### Deprecated
+#### Removed
+#### Fixed
+#### Security
+#### Docs
+#### Tools
+
+## [0.21.0] 2024-06-21
+
+#### Added
 - Add `lazy_symbolication` config option
   - [#2958](https://github.com/bpftrace/bpftrace/pull/2958)
 - Add ability to list all probes in a program
@@ -53,6 +64,7 @@ and this project adheres to
   - [#3228](https://github.com/bpftrace/bpftrace/pull/3228)
   - [#3237](https://github.com/bpftrace/bpftrace/pull/3237)
   - [#3245](https://github.com/bpftrace/bpftrace/pull/3245)
+  - [#3249](https://github.com/bpftrace/bpftrace/pull/3249)
 #### Deprecated
 - Deprecate `sarg` builtin
   - [#3095](https://github.com/bpftrace/bpftrace/pull/3095)
