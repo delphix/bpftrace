@@ -13,6 +13,7 @@
 #include <link.h>
 #include <map>
 #include <memory>
+#include <optional>
 #include <regex>
 #include <sstream>
 #include <string>
@@ -702,8 +703,8 @@ bool is_dir(const std::string &path)
   return std_filesystem::is_directory(buf, ec);
 }
 
-// get_kernel_dirs returns {ksrc, kobj} - directories for pristine and
-// generated kernel sources.
+// get_kernel_dirs fills {ksrc, kobj} - directories for pristine and
+// generated kernel sources - and returns if they were found.
 //
 // When the kernel was built in its source tree ksrc == kobj, however when
 // the kernel was build in a different directory than its source, ksrc != kobj.
@@ -716,43 +717,40 @@ bool is_dir(const std::string &path)
 //
 //   /lib/modules/`uname -r`/build/
 //
-// {"", ""} is returned if no trace of kernel headers was found at all.
-// Both ksrc and kobj are guaranteed to be != "", if at least some trace of
-// kernel sources was found.
-std::tuple<std::string, std::string> get_kernel_dirs(
-    const struct utsname &utsname)
+// false is returned if no trace of kernel headers was found at all, with the
+// guessed location set anyway for later warning.
+//
+// Both ksrc and kobj are guaranteed to be != ""
+bool get_kernel_dirs(const struct utsname &utsname,
+                     std::string &ksrc,
+                     std::string &kobj)
 {
-#ifdef KERNEL_HEADERS_DIR
-  return { KERNEL_HEADERS_DIR, KERNEL_HEADERS_DIR };
-#endif
+  ksrc = kobj = std::string(KERNEL_HEADERS_DIR);
+  if (!ksrc.empty())
+    return true;
 
   const char *kpath_env = ::getenv("BPFTRACE_KERNEL_SOURCE");
   if (kpath_env) {
+    ksrc = std::string(kpath_env);
     const char *kpath_build_env = ::getenv("BPFTRACE_KERNEL_BUILD");
-    if (!kpath_build_env) {
-      kpath_build_env = kpath_env;
+    if (kpath_build_env) {
+      kobj = std::string(kpath_build_env);
+    } else {
+      kobj = ksrc;
     }
-    return std::make_tuple(kpath_env, kpath_build_env);
+    return true;
   }
 
   std::string kdir = std::string("/lib/modules/") + utsname.release;
-  auto ksrc = kdir + "/source";
-  auto kobj = kdir + "/build";
+  ksrc = kdir + "/source";
+  kobj = kdir + "/build";
 
   // if one of source/ or build/ is not present - try to use the other one for
   // both.
   auto has_ksrc = is_dir(ksrc);
   auto has_kobj = is_dir(kobj);
   if (!has_ksrc && !has_kobj) {
-    LOG(WARNING) << "Could not find kernel headers in " << ksrc << " or "
-                 << kobj
-                 << ". To specify a particular path to kernel headers, set the "
-                    "env variables BPFTRACE_KERNEL_SOURCE and, optionally, "
-                    "BPFTRACE_KERNEL_BUILD if the kernel was built in a "
-                    "different directory than its source. To create kernel "
-                    "headers run 'modprobe kheaders', which will create a tar "
-                    "file at /sys/kernel/kheaders.tar.xz";
-    return std::make_tuple("", "");
+    return false;
   }
   if (!has_ksrc) {
     ksrc = kobj;
@@ -760,7 +758,7 @@ std::tuple<std::string, std::string> get_kernel_dirs(
     kobj = ksrc;
   }
 
-  return std::make_tuple(ksrc, kobj);
+  return true;
 }
 
 const std::string &is_deprecated(const std::string &str)
@@ -868,6 +866,70 @@ std::vector<std::string> resolve_binary_path(const std::string &cmd, int pid)
 }
 
 /*
+Check whether 'path' refers to a ELF file. Errors are swallowed silently and
+result in return of 'nullopt'. On success, the ELF type (e.g., ET_DYN) is
+returned.
+*/
+static std::optional<int> is_elf(const std::string &path)
+{
+  int fd;
+  Elf *elf;
+  void *ret;
+  GElf_Ehdr ehdr;
+  std::optional<int> result = {};
+
+  if (elf_version(EV_CURRENT) == EV_NONE) {
+    return result;
+  }
+
+  fd = open(path.c_str(), O_RDONLY, 0);
+  if (fd < 0) {
+    return result;
+  }
+
+  elf = elf_begin(fd, ELF_C_READ, NULL);
+  if (elf == NULL) {
+    goto err_close;
+  }
+
+  if (elf_kind(elf) != ELF_K_ELF) {
+    goto err_close;
+  }
+
+  ret = (void *)gelf_getehdr(elf, &ehdr);
+  if (ret == NULL) {
+    goto err_end;
+  }
+
+  result = ehdr.e_type;
+
+err_end:
+  (void)elf_end(elf);
+err_close:
+  (void)close(fd);
+  return result;
+}
+
+static bool has_exec_permission(const std::string &path)
+{
+  using std::filesystem::perms;
+
+  auto perms = std::filesystem::status(path).permissions();
+  return (perms & perms::owner_exec) != perms::none;
+}
+
+/*
+Check whether 'path' refers to an executable ELF file.
+*/
+bool is_exe(const std::string &path)
+{
+  if (auto e_type = is_elf(path)) {
+    return e_type == ET_EXEC && has_exec_permission(path);
+  }
+  return false;
+}
+
+/*
 Private interface to resolve_binary_path, used for the exposed variants above,
 allowing for a PID whose mount namespace should be optionally considered.
 */
@@ -891,9 +953,14 @@ static std::vector<std::string> resolve_binary_path(const std::string &cmd,
       rel_path = path_for_pid_mountns(pid, path);
     else
       rel_path = path;
-    if (bcc_elf_is_exe(rel_path.c_str()) ||
-        bcc_elf_is_shared_obj(rel_path.c_str()))
-      valid_executable_paths.push_back(rel_path);
+
+    // Both executables and shared objects are game.
+    if (auto e_type = is_elf(rel_path)) {
+      if ((e_type == ET_EXEC && has_exec_permission(rel_path)) ||
+          e_type == ET_DYN) {
+        valid_executable_paths.push_back(rel_path);
+      }
+    }
   }
 
   return valid_executable_paths;
@@ -1071,7 +1138,8 @@ std::string hex_format_buffer(const char *buf,
                               bool escape_hex)
 {
   // Allow enough space for every byte to be sanitized in the form "\x00"
-  char s[size * 4 + 1];
+  std::string str(size * 4 + 1, '\0');
+  char *s = str.data();
 
   size_t offset = 0;
   for (size_t i = 0; i < size; i++)
@@ -1084,9 +1152,9 @@ std::string hex_format_buffer(const char *buf,
                         i == size - 1 ? "%02x" : "%02x ",
                         ((const uint8_t *)buf)[i]);
 
-  s[offset] = '\0';
-
-  return std::string(s);
+  // Fit return value to actual length
+  str.resize(offset);
+  return str;
 }
 
 /*

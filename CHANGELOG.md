@@ -10,6 +10,10 @@ and this project adheres to
 
 #### Added
 #### Changed
+- Stream output when printing maps
+  - [#3264](https://github.com/bpftrace/bpftrace/pull/3264)
+- Only print kernel headers not found message if parsing fails
+  - [#3265](https://github.com/bpftrace/bpftrace/pull/3265)
 #### Deprecated
 #### Removed
 #### Fixed
