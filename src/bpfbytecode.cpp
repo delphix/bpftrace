@@ -1,6 +1,7 @@
 #include "bpfbytecode.h"
 
 #include "log.h"
+#include "utils.h"
 
 #include <bpf/bpf.h>
 #include <bpf/btf.h>
@@ -18,9 +19,13 @@ BpfBytecode::BpfBytecode(const void *elf, size_t elf_size)
 
   struct bpf_map *m;
   bpf_map__for_each (m, bpf_object_.get()) {
-    auto name = bpftrace_map_name(bpf_map__name(m));
-    auto map = BpfMap(m);
-    maps_.emplace(name, map);
+    maps_.emplace(bpftrace_map_name(bpf_map__name(m)), m);
+  }
+
+  struct bpf_program *p;
+  bpf_object__for_each_program(p, bpf_object_.get())
+  {
+    programs_.emplace(bpf_program__name(p), p);
   }
 }
 
@@ -44,11 +49,65 @@ const std::vector<uint8_t> &BpfBytecode::getSection(
   return sections_.at(name);
 }
 
+const BpfProgram &BpfBytecode::getProgramForProbe(const Probe &probe) const
+{
+  auto usdt_location_idx = (probe.type == ProbeType::usdt)
+                               ? std::make_optional<int>(
+                                     probe.usdt_location_idx)
+                               : std::nullopt;
+
+  auto prog = programs_.find(
+      get_function_name_for_probe(probe.name, probe.index, usdt_location_idx));
+  if (prog == programs_.end()) {
+    prog = programs_.find(get_function_name_for_probe(probe.orig_name,
+                                                      probe.index,
+                                                      usdt_location_idx));
+  }
+
+  if (prog == programs_.end()) {
+    std::stringstream msg;
+    if (probe.name != probe.orig_name)
+      msg << "Code not generated for probe: " << probe.name
+          << " from: " << probe.orig_name;
+    else
+      msg << "Code not generated for probe: " << probe.name;
+    throw std::runtime_error(msg.str());
+  }
+
+  return prog->second;
+}
+
+BpfProgram &BpfBytecode::getProgramForProbe(const Probe &probe)
+{
+  return const_cast<BpfProgram &>(
+      const_cast<const BpfBytecode *>(this)->getProgramForProbe(probe));
+}
+
+void BpfBytecode::load_progs(const RequiredResources &resources,
+                             BTF &btf,
+                             BPFfeature &feature)
+{
+  load_progs(resources.probes, btf, feature);
+  load_progs(resources.special_probes, btf, feature);
+  load_progs(resources.watchpoint_probes, btf, feature);
+}
+
+void BpfBytecode::load_progs(const std::vector<Probe> &probes,
+                             BTF &btf,
+                             BPFfeature &feature)
+{
+  for (auto &probe : probes) {
+    auto &program = getProgramForProbe(probe);
+    program.assemble(*this);
+    program.load(probe, *this, btf, feature);
+  }
+}
+
 bool BpfBytecode::create_maps()
 {
   int failed_maps = 0;
   for (auto &map : maps_) {
-    LIBBPF_OPTS(bpf_map_create_opts, opts);
+    BPFTRACE_LIBBPF_OPTS(bpf_map_create_opts, opts);
     map.second.fd = bpf_map_create(static_cast<::bpf_map_type>(
                                        map.second.type()),
                                    map.second.bpf_name().c_str(),

@@ -153,12 +153,11 @@ int AttachedProbe::detach_raw_tracepoint(void)
 }
 
 AttachedProbe::AttachedProbe(Probe &probe,
-                             BpfProgram &&prog,
+                             const BpfProgram &prog,
                              bool safe_mode,
                              BPFtrace &bpftrace)
-    : probe_(probe), prog_(std::move(prog)), bpftrace_(bpftrace)
+    : probe_(probe), progfd_(prog.fd()), bpftrace_(bpftrace)
 {
-  load_prog(*bpftrace.feature_);
   LOG(V1) << "Attaching " << probe_.orig_name;
   switch (probe_.type) {
     case ProbeType::special:
@@ -204,13 +203,12 @@ AttachedProbe::AttachedProbe(Probe &probe,
 }
 
 AttachedProbe::AttachedProbe(Probe &probe,
-                             BpfProgram &&prog,
+                             const BpfProgram &prog,
                              int pid,
                              BPFtrace &bpftrace,
                              bool safe_mode)
-    : probe_(probe), prog_(std::move(prog)), bpftrace_(bpftrace)
+    : probe_(probe), progfd_(prog.fd()), bpftrace_(bpftrace)
 {
-  load_prog(*bpftrace_.feature_);
   switch (probe_.type) {
     case ProbeType::usdt:
       attach_usdt(pid, *bpftrace_.feature_);
@@ -927,7 +925,7 @@ void AttachedProbe::load_prog(BPFfeature &feature)
 
 void AttachedProbe::attach_multi_kprobe(void)
 {
-  DECLARE_LIBBPF_OPTS(bpf_link_create_opts, opts);
+  BPFTRACE_LIBBPF_OPTS(bpf_link_create_opts, opts);
   std::vector<const char *> syms;
   unsigned int i = 0;
 
@@ -1133,7 +1131,7 @@ void AttachedProbe::attach_multi_uprobe(int pid)
       probe_.path, probe_.name, probe_.funcs, syms, offsets);
 
   // Attach uprobe through uprobe_multi link
-  DECLARE_LIBBPF_OPTS(bpf_link_create_opts, opts);
+  BPFTRACE_LIBBPF_OPTS(bpf_link_create_opts, opts);
 
   opts.uprobe_multi.path = probe_.path.c_str();
   opts.uprobe_multi.offsets = offsets.data();
