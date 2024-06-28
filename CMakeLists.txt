@@ -65,6 +65,7 @@ endif()
 
 add_compile_options("-Wall")
 add_compile_options("-Wextra")
+# Is this needed?
 add_compile_options("-Wundef")
 add_compile_options("-Wpointer-arith")
 add_compile_options("-Wcast-align")
