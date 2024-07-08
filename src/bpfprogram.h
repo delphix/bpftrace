@@ -1,28 +1,31 @@
 #pragma once
 
-#include "bpfbytecode.h"
+#include "bpffeature.h"
+#include "btf.h"
+#include "config.h"
+#include "types.h"
 
-#include <cstdint>
-#include <optional>
-#include <string>
-#include <tuple>
-#include <vector>
+#include <bpf/libbpf.h>
 
 namespace bpftrace {
 
+class BpfBytecode;
 class BPFtrace;
 
+// This class abstracts a single BPF program by encapsulating libbpf's
+// 'struct bpf_prog'.
 class BpfProgram {
 public:
-  static std::optional<BpfProgram> CreateFromBytecode(
-      const BpfBytecode &bytecode,
-      const std::string &name);
+  explicit BpfProgram(struct bpf_program *bpf_prog, size_t log_size);
 
-  void assemble();
+  void set_prog_type(const Probe &probe, BPFfeature &feature);
+  void set_expected_attach_type(const Probe &probe, BPFfeature &feature);
+  void set_attach_target(const Probe &probe, BTF &btf, const Config &config);
+  void set_no_autoattach();
 
-  const std::vector<uint8_t> &getCode();
-  const std::vector<uint8_t> &getBTF();
-  const std::vector<uint8_t> &getFuncInfos();
+  int fd() const;
+  struct bpf_program *bpf_prog() const;
+  char *log_buf() const;
 
   BpfProgram(const BpfProgram &) = delete;
   BpfProgram &operator=(const BpfProgram &) = delete;
@@ -30,26 +33,9 @@ public:
   BpfProgram &operator=(BpfProgram &&) = delete;
 
 private:
-  explicit BpfProgram(const BpfBytecode &bytecode, const std::string &name);
+  struct bpf_program *bpf_prog_;
 
-  void relocateInsns();
-  void relocateSection(const std::string &relsecname, bpf_insn *);
-  void relocateFuncInfos();
-  void appendFileFuncInfos(const struct btf_ext_info_sec *src,
-                           size_t func_info_rec_size,
-                           size_t insn_offset);
-
-  const BpfBytecode &bytecode_;
-  std::string name_;
-  std::vector<uint8_t> code_;
-  // Offset in code_ where the .text begins (if .text was appended)
-  size_t text_offset_ = 0;
-
-  // Storage for kernel bpf_func_infos.
-  // Note that ELF bpf_func_infos  store byte offsets from the section
-  // start in insn_off, while the kernel expects _instruction_ offsets
-  // from the beginning of the program code (i.e. what's in code_).
-  std::vector<uint8_t> func_infos_;
+  std::unique_ptr<char[]> log_buf_;
 };
 
 } // namespace bpftrace

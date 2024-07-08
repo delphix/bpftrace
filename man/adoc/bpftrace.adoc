@@ -70,15 +70,16 @@ To avoid a race condition when using 'USDTs', the child is stopped after 'execve
 The child PID is available to programs as the 'cpid' builtin.
 The child process runs with the same privileges as bpftrace itself (usually root).
 
-=== *-d*
+=== *-d STAGE*
 
 Enable debug mode.
 For more details see the <<Debug Output>> section.
 
-=== *-dd*
+=== *--dry-run*
 
-Enable verbose debug mode.
-For more details see the <<Debug Output>> section.
+Terminate execution right after attaching all the probes. Useful for testing
+that the script can be parsed, loaded, and attached, without actually running
+it.
 
 === *-e* _PROGRAM_
 
@@ -500,7 +501,7 @@ Identifiers must match the following regular expression: `[_a-zA-Z][_a-zA-Z0-9]*
 
 === Literals
 
-Integer, char, and string literals are supported.
+Integer and string literals are supported.
 
 Integer literals can be defined in the following formats:
 
@@ -519,11 +520,17 @@ To improve the readability of big literals an underscore `_` can be used as fiel
 Integer suffixes as found in the C language are parsed by bpftrace to ensure compatibility with C headers/definitions but they're not used as size specifiers.
 `123UL`, `123U` and `123LL` all result in the same integer type with a value of `123`.
 
-Character literals can be defined by enclosing the character in single quotes e.g. `$c = 'c';`.
+Character literals are not supported at this time, and the corresponding ASCII code must be used instead:
+
+----
+BEGIN {
+  printf("Echo A: %c\n", 65);
+}
+----
 
 String literals can be defined by enclosing the character string in double quotes e.g. `$str = "Hello world";`.
 
-Characters and strings support the following escape sequences:
+Strings support the following escape sequences:
 
 [cols="~,~"]
 |===
@@ -2383,7 +2390,10 @@ i:s:1 {
 ----
 
 Internally this keeps two values in the map: value count and running total.
-The average is computed in user-space when printing by dividing the total by the count.
+The average is computed in user-space when printing by dividing the total by the
+count. However, you can get the average in kernel space in expressions like
+`if (@y == 5)` but this is expensive as bpftrace needs to iterate over all the 
+cpus to collect and sum BOTH count and total.
 
 [#map-functions-clear]
 === clear
@@ -3512,52 +3522,38 @@ See src/attached_probe.cpp:find_vmlinux() for details.
 
 === Debug Output
 
-The `-d` option produces debug output and does not run the program. This is mostly useful for debugging issues with bpftrace itself.
-You can also use `-dd` to produce a more verbose debug output, which will also print unoptimized IR.
+The `-d STAGE` option produces debug output. It prints the output of the
+bpftrace execution stage given by the _STAGE_ argument. The option can be used
+multiple times (with different stage names) and the special value `all` prints
+the output of all the supported stages.
 
 Note: This is primarily used for bpftrace developers.
 
-The output begins with `Program` and then an abstract syntax tree (AST) representation of the program.
+The supported options are:
 
-----
-# bpftrace -d -e 'tracepoint:syscalls:sys_enter_nanosleep { printf("%s is sleeping.\n", comm); }'
-Program
- tracepoint:syscalls:sys_enter_nanosleep
-  call: printf
-   string: %s is sleeping.\n
-   builtin: comm
-[...]
-----
+[cols="~,~"]
+|===
 
-Continued:
+| `ast`
+| Prints the Abstract Syntax Tree (AST) after every pass.
 
-----
-[...]
-%printf_t = type { i64, [16 x i8] }
-[...]
-define i64 @"tracepoint:syscalls:sys_enter_nanosleep"(i8*) local_unnamed_addr section "s_tracepoint:syscalls:sys_enter_nanosleep" {
-entry:
-  %comm = alloca [16 x i8], align 1
-  %printf_args = alloca %printf_t, align 8
-  %1 = bitcast %printf_t* %printf_args to i8*
-  call void @llvm.lifetime.start.p0i8(i64 -1, i8* nonnull %1)
-  %2 = getelementptr inbounds [16 x i8], [16 x i8]* %comm, i64 0, i64 0
-  %3 = bitcast %printf_t* %printf_args to i8*
-  call void @llvm.memset.p0i8.i64(i8* nonnull %3, i8 0, i64 24, i32 8, i1 false)
-  call void @llvm.lifetime.start.p0i8(i64 -1, i8* nonnull %2)
-  call void @llvm.memset.p0i8.i64(i8* nonnull %2, i8 0, i64 16, i32 1, i1 false)
-  %get_comm = call i64 inttoptr (i64 16 to i64 (i8*, i64)*)([16 x i8]* nonnull %comm, i64 16)
-  %4 = getelementptr inbounds %printf_t, %printf_t* %printf_args, i64 0, i32 1, i64 0
-  call void @llvm.memcpy.p0i8.p0i8.i64(i8* nonnull %4, i8* nonnull %2, i64 16, i32 1, i1 false)
-  %pseudo = call i64 @llvm.bpf.pseudo(i64 1, i64 1)
-  %get_cpu_id = call i64 inttoptr (i64 8 to i64 ()*)()
-  %perf_event_output = call i64 inttoptr (i64 25 to i64 (i8*, i8*, i64, i8*, i64)*)(i8* %0, i64 %pseudo, i64 %get_cpu_id, %printf_t* nonnull %printf_args, i64 24)
-  call void @llvm.lifetime.end.p0i8(i64 -1, i8* nonnull %1)
-  ret i64 0
-[...]
-----
+| `codegen`
+| Prints the unoptimized LLVM IR as produced by `CodegenLLVM`.
 
-This section shows the llvm intermediate representation (IR) assembly, which is then compiled into BPF.
+| `codegen-opt`
+| Prints the optimized LLVM IR, i.e. the code which will be compiled into BPF
+bytecode.
+
+| `libbpf`
+| Captures and prints libbpf log for all libbpf operations that bpftrace uses.
+
+| `verifier`
+| Captures and prints the BPF verifier log.
+
+| `all`
+| Prints the output of all of the above stages.
+
+|===
 
 === Listing Probes
 
@@ -3653,44 +3649,17 @@ The `-v` option prints more information about the program as it is run:
 
 ----
 # bpftrace -v -e 'tracepoint:syscalls:sys_enter_nanosleep { printf("%s is sleeping.\n", comm); }'
+AST node count: 7
 Attaching 1 probe...
 
-The verifier log:
-0: (bf) r6 = r1
-1: (b7) r1 = 0
-2: (7b) *(u64 *)(r10 -24) = r1
-3: (7b) *(u64 *)(r10 -32) = r1
-4: (7b) *(u64 *)(r10 -40) = r1
-5: (7b) *(u64 *)(r10 -8) = r1
-6: (7b) *(u64 *)(r10 -16) = r1
-7: (bf) r1 = r10
-8: (07) r1 += -16
-9: (b7) r2 = 16
-10: (85) call bpf_get_current_comm#16
-11: (79) r1 = *(u64 *)(r10 -16)
-12: (7b) *(u64 *)(r10 -32) = r1
-13: (79) r1 = *(u64 *)(r10 -8)
-14: (7b) *(u64 *)(r10 -24) = r1
-15: (18) r7 = 0xffff9044e65f1000
-17: (85) call bpf_get_smp_processor_id#8
-18: (bf) r4 = r10
-19: (07) r4 += -40
-20: (bf) r1 = r6
-21: (bf) r2 = r7
-22: (bf) r3 = r0
-23: (b7) r5 = 24
-24: (85) call bpf_perf_event_output#25
-25: (b7) r0 = 0
-26: (95) exit
-processed 26 insns (limit 131072), stack depth 40
+load tracepoint:syscalls:sys_enter_nanosleep, with BTF, with func_infos: Success
 
+Program ID: 111
 Attaching tracepoint:syscalls:sys_enter_nanosleep
 iscsid is sleeping.
 iscsid is sleeping.
 [...]
 ----
-
-This includes `The verifier log:` and then the log message from the in-kernel verifier.
 
 == Advanced Topics
 
