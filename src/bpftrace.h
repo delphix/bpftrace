@@ -228,7 +228,7 @@ public:
 
 private:
   int run_special_probe(std::string name,
-                        const BpfBytecode &bytecode,
+                        BpfBytecode &bytecode,
                         void (*trigger)(void));
   void *ksyms_{ nullptr };
   // note: exe_sym_ is used when layout is same for all instances of program
@@ -242,7 +242,7 @@ private:
 
   std::vector<std::unique_ptr<AttachedProbe>> attach_usdt_probe(
       Probe &probe,
-      BpfProgram &&program,
+      const BpfProgram &program,
       int pid,
       bool file_activation);
   int setup_output();

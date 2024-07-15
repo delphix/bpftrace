@@ -10,6 +10,7 @@
 #include "btf.h"
 #include "config.h"
 #include "types.h"
+#include "usdt.h"
 
 #include <bcc/libbpf.h>
 
@@ -22,11 +23,11 @@ std::string progtypeName(libbpf::bpf_prog_type t);
 class AttachedProbe {
 public:
   AttachedProbe(Probe &probe,
-                BpfProgram &&prog,
+                const BpfProgram &prog,
                 bool safe_mode,
                 BPFtrace &bpftrace);
   AttachedProbe(Probe &probe,
-                BpfProgram &&prog,
+                const BpfProgram &prog,
                 int pid,
                 BPFtrace &bpftrace,
                 bool safe_mode = true);
@@ -81,7 +82,6 @@ private:
   void cache_progfd(void);
 
   Probe &probe_;
-  BpfProgram prog_;
   std::vector<int> perf_event_fds_;
   bool close_progfd_ = true;
   int progfd_ = -1;
