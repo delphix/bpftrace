@@ -197,12 +197,21 @@ void test(std::string_view input, std::string_view expected_ast)
   Driver driver(*bpftrace);
   test(*bpftrace, true, driver, input, 0, {}, true, false);
 
-  if (!expected_ast.empty() && expected_ast[0] == '\n')
+  if (expected_ast[0] == '\n')
     expected_ast.remove_prefix(1); // Remove initial '\n'
 
   std::ostringstream out;
   ast::Printer printer(out);
   printer.print(driver.root.get());
+
+  if (expected_ast[0] == '*' && expected_ast[expected_ast.size() - 1] == '*') {
+    // Remove globs from beginning and end
+    expected_ast.remove_prefix(1);
+    expected_ast.remove_suffix(1);
+    EXPECT_THAT(out.str(), HasSubstr(expected_ast));
+    return;
+  }
+
   EXPECT_EQ(expected_ast, out.str());
 }
 
@@ -2066,11 +2075,12 @@ TEST(semantic_analyser, map_aggregations_implicit_cast)
   test("kprobe:f { @ = sum(5); if (@ > 0) { print((1)); } }");
   test("kprobe:f { @ = min(5); if (@ > 0) { print((1)); } }");
   test("kprobe:f { @ = max(5); if (@ > 0) { print((1)); } }");
+  test("kprobe:f { @ = avg(5); if (@ > 0) { print((1)); } }");
 
-  test_error("kprobe:f { @ = avg(5); if (@ > 0) { print((1)); } }", R"(
-stdin:1:27-33: ERROR: Type mismatch for '>': comparing 'avg' with 'int64'
-kprobe:f { @ = avg(5); if (@ > 0) { print((1)); } }
-                          ~~~~~~
+  test_error("kprobe:f { @ = hist(5); if (@ > 0) { print((1)); } }", R"(
+stdin:1:28-34: ERROR: Type mismatch for '>': comparing 'hist' with 'int64'
+kprobe:f { @ = hist(5); if (@ > 0) { print((1)); } }
+                           ~~~~~~
 )");
   test_error("kprobe:f { @ = count(); @ += 5 }", R"(
 stdin:1:25-26: ERROR: Type mismatch for @: trying to assign value of type 'int64' when map already contains a value of type 'count'
@@ -2085,11 +2095,12 @@ TEST(semantic_analyser, map_aggregations_explicit_cast)
   test("kprobe:f { @ = sum(5); print((1, (uint16)@)); }");
   test("kprobe:f { @ = min(5); print((1, (uint16)@)); }");
   test("kprobe:f { @ = max(5); print((1, (uint16)@)); }");
+  test("kprobe:f { @ = avg(5); print((1, (uint16)@)); }");
 
-  test_error("kprobe:f { @ = avg(5); print((1, (uint16)@)); }", R"(
-stdin:1:34-42: ERROR: Cannot cast from "avg" to "unsigned int16"
-kprobe:f { @ = avg(5); print((1, (uint16)@)); }
-                                 ~~~~~~~~
+  test_error("kprobe:f { @ = hist(5); print((1, (uint16)@)); }", R"(
+stdin:1:35-43: ERROR: Cannot cast from "hist" to "unsigned int16"
+kprobe:f { @ = hist(5); print((1, (uint16)@)); }
+                                  ~~~~~~~~
 )");
 }
 
@@ -3592,10 +3603,9 @@ stdin:4:11-15: ERROR: Loop declaration shadows existing variable: $kv
 )");
 }
 
-TEST(semantic_analyser, for_loop_variables)
+TEST(semantic_analyser, for_loop_variables_read_only)
 {
-  // Read-only
-  test_error(R"(
+  test(R"(
     BEGIN {
       $var = 0;
       @map[0] = 1;
@@ -3604,31 +3614,17 @@ TEST(semantic_analyser, for_loop_variables)
       }
       print($var);
     })",
-             R"(
-stdin:5:9-19: ERROR: Variables defined outside of a for-loop can not be accessed in the loop's scope
-        print($var);
-        ~~~~~~~~~~
-)");
+       R"(*
+  for
+   ctx
+    $var :: [int64 *, AS(bpf)]
+   decl
+*)");
+}
 
-  // Modified after loop
-  test_error(R"(
-    BEGIN {
-      $var = 0;
-      @map[0] = 1;
-      for ($kv : @map) {
-        print($var);
-      }
-      $var = 1;
-      print($var);
-    })",
-             R"(
-stdin:5:9-19: ERROR: Variables defined outside of a for-loop can not be accessed in the loop's scope
-        print($var);
-        ~~~~~~~~~~
-)");
-
-  // Modified during loop
-  test_error(R"(
+TEST(semantic_analyser, for_loop_variables_modified_during_loop)
+{
+  test(R"(
     BEGIN {
       $var = 0;
       @map[0] = 1;
@@ -3637,13 +3633,17 @@ stdin:5:9-19: ERROR: Variables defined outside of a for-loop can not be accessed
       }
       print($var);
     })",
-             R"(
-stdin:5:9-13: ERROR: Variables defined outside of a for-loop can not be accessed in the loop's scope
-        $var++;
-        ~~~~
-)");
+       R"(*
+  for
+   ctx
+    $var :: [int64 *, AS(bpf)]
+   decl
+*)");
+}
 
-  // Created in loop
+TEST(semantic_analyser, for_loop_variables_created_in_loop)
+{
+  // $var should not appear in ctx
   test(R"(
     BEGIN {
       @map[0] = 1;
@@ -3651,7 +3651,33 @@ stdin:5:9-13: ERROR: Variables defined outside of a for-loop can not be accessed
         $var = 2;
         print($var);
       }
-    })");
+    })",
+       R"(*
+  for
+   decl
+*)");
+}
+
+TEST(semantic_analyser, for_loop_variables_multiple)
+{
+  test(R"(
+    BEGIN {
+      @map[0] = 1;
+      $var1 = 123;
+      $var2 = "abc";
+      $var3 = "def";
+      for ($kv : @map) {
+        $var1 = 456;
+        print($var3);
+      }
+    })",
+       R"(*
+  for
+   ctx
+    $var1 :: [int64 *, AS(bpf)]
+    $var3 :: [string[4] *, AS(bpf)]
+   decl
+*)");
 }
 
 TEST(semantic_analyser, for_loop_variables_created_in_loop_used_after)
@@ -3764,20 +3790,6 @@ TEST(semantic_analyser, for_loop_no_ctx_access)
 stdin:1:45-49: ERROR: 'arg0' builtin is not allowed in a for-loop
 kprobe:f { @map[0] = 1; for ($kv : @map) { arg0 } }
                                             ~~~~
-)");
-}
-
-TEST(semantic_analyser, for_loop_multiple_probes)
-{
-  test_error(R"(
-      BEGIN { @map[0] = 1 }
-      k:f1 { for ($kv : @map) { print($kv); } }
-      k:f2 { for ($kv : @map) { print($kv); } }
-  )",
-             R"(
-stdin:3:14-17: ERROR: Currently, for-loops can be used only in a single probe.
-      k:f2 { for ($kv : @map) { print($kv); } }
-             ~~~
 )");
 }
 

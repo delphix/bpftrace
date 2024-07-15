@@ -11,6 +11,7 @@
 #include <llvm/IR/Module.h>
 #include <llvm/Support/raw_os_ostream.h>
 
+#include "ast/async_ids.h"
 #include "ast/dibuilderbpf.h"
 #include "ast/irbuilderbpf.h"
 #include "ast/visitors.h"
@@ -28,10 +29,9 @@ using CallArgs = std::vector<std::tuple<FormatString, std::vector<Field>>>;
 
 class CodegenLLVM : public Visitor {
 public:
-  explicit CodegenLLVM(Node *root, BPFtrace &bpftrace, bool is_aot = false);
+  explicit CodegenLLVM(Node *root, BPFtrace &bpftrace);
   explicit CodegenLLVM(Node *root,
                        BPFtrace &bpftrace,
-                       bool is_aot,
                        std::unique_ptr<USDTHelper> usdt_helper);
 
   void visit(Integer &integer) override;
@@ -76,13 +76,13 @@ public:
   void DumpIR(std::ostream &out);
   void DumpIR(const std::string filename);
   void createFormatStringCall(Call &call,
-                              int &id,
+                              int id,
                               CallArgs &call_args,
                               const std::string &call_name,
                               AsyncAction async_action);
 
   void createPrintMapCall(Call &call);
-  void createPrintNonMapCall(Call &call, int &id);
+  void createPrintNonMapCall(Call &call, int id);
 
   void createMapDefinition(const std::string &name,
                            libbpf::bpf_map_type map_type,
@@ -98,6 +98,7 @@ public:
   libbpf::bpf_map_type get_map_type(const SizedType &val_type,
                                     const MapKey &key);
   void generate_maps(const RequiredResources &resources);
+  void generate_global_vars(const RequiredResources &resources);
   void optimize(void);
   bool verify(void);
   BpfBytecode emit(void);
@@ -233,16 +234,10 @@ private:
   void createIncDec(Unop &unop);
 
   Function *createMapLenCallback();
-  Function *createForEachMapCallback(Map &map,
-                                     const Variable &decl,
-                                     const std::vector<Statement *> &stmts);
+  Function *createForEachMapCallback(const For &f, llvm::Type *ctx_t);
   Function *createMurmurHash2Func();
 
-  // Return a lambda that has captured-by-value CodegenLLVM's async id state
-  // (ie `printf_id_`, `mapped_printf_id_`, etc.).  Running the returned lambda
-  // will restore `CodegenLLVM`s async id state back to when this function was
-  // first called.
-  std::function<void()> create_reset_ids();
+  Value *createFmtString(int print_id);
 
   bool canAggPerCpuMapElems(const SizedType &val_type, const MapKey &key);
 
@@ -253,10 +248,10 @@ private:
   std::unique_ptr<LLVMContext> context_;
   std::unique_ptr<TargetMachine> target_machine_;
   std::unique_ptr<Module> module_;
+  AsyncIds async_ids_;
   IRBuilderBPF b_;
 
   DIBuilderBPF debug_;
-  bool is_aot_;
 
   const DataLayout &datalayout() const
   {
@@ -277,21 +272,11 @@ private:
   int current_usdt_location_index_{ 0 };
   bool inside_subprog_ = false;
 
-  std::map<std::string, AllocaInst *> variables_;
-
-  // NB: ensure all IDs are saved/restored in create_reset_ids()
-  int printf_id_ = 0;
-  int mapped_printf_id_ = 0;
-  int time_id_ = 0;
-  int cat_id_ = 0;
-  int strftime_id_ = 0;
-  uint64_t join_id_ = 0;
-  int system_id_ = 0;
-  int non_map_print_id_ = 0;
-  uint64_t watchpoint_id_ = 0;
-  int cgroup_path_id_ = 0;
-  int skb_output_id_ = 0;
-  int str_id_ = 0;
+  struct VariableLLVM {
+    llvm::Value *value;
+    llvm::Type *type;
+  };
+  std::unordered_map<std::string, VariableLLVM> variables_;
 
   std::unordered_map<std::string, libbpf::bpf_map_type> map_types_;
 

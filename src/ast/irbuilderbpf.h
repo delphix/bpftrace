@@ -8,6 +8,7 @@
 #include <optional>
 
 #include "ast/ast.h"
+#include "ast/async_ids.h"
 #include "bpftrace.h"
 #include "types.h"
 
@@ -51,7 +52,10 @@ using namespace llvm;
 
 class IRBuilderBPF : public IRBuilder<> {
 public:
-  IRBuilderBPF(LLVMContext &context, Module &module, BPFtrace &bpftrace);
+  IRBuilderBPF(LLVMContext &context,
+               Module &module,
+               BPFtrace &bpftrace,
+               AsyncIds &async_ids);
 
   AllocaInst *CreateAllocaBPF(llvm::Type *ty, const std::string &name = "");
   AllocaInst *CreateAllocaBPF(const SizedType &stype,
@@ -87,8 +91,7 @@ public:
                                  Map &map,
                                  Value *key,
                                  const SizedType &type,
-                                 const location &loc,
-                                 bool is_aot);
+                                 const location &loc);
   void CreateMapUpdateElem(Value *ctx,
                            const std::string &map_ident,
                            Value *key,
@@ -279,7 +282,6 @@ public:
   // both branches here:
   // BEGIN { if (nsecs > 0) { $a = 1 } else { $a = 2 } print($a); exit() }
   void hoist(const std::function<void()> &functor);
-  int helper_error_id_ = 0;
 
   // Returns the integer type used to represent pointers in traced code.
   llvm::Type *getPointerStorageTy(AddrSpace as);
@@ -287,6 +289,7 @@ public:
 private:
   Module &module_;
   BPFtrace &bpftrace_;
+  AsyncIds &async_ids_;
 
   Value *CreateUSDTReadArgument(Value *ctx,
                                 struct bcc_usdt_argument *argument,

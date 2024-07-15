@@ -9,18 +9,38 @@ and this project adheres to
 ## Unreleased
 
 #### Added
+- Add `--dry-run` CLI option
+  - [#3203](https://github.com/bpftrace/bpftrace/pull/3203)
+- Enable avg map reads in kernel space (implicit casting)
+  - [#3268](https://github.com/bpftrace/bpftrace/pull/3268)
+- Enable for-loops in multiple probes
+  - [#3285](https://github.com/bpftrace/bpftrace/pull/3285)
+- For-loops: Allow sharing variables between the main probe and the loop's body
+  - [#3014](https://github.com/bpftrace/bpftrace/pull/3014)
 #### Changed
 - Stream output when printing maps
   - [#3264](https://github.com/bpftrace/bpftrace/pull/3264)
 - Only print kernel headers not found message if parsing fails
   - [#3265](https://github.com/bpftrace/bpftrace/pull/3265)
+- Add mandatory "stage" argument to the `-d` CLI option
+  - [#3203](https://github.com/bpftrace/bpftrace/pull/3203)
+- Allow simultaneous use of `-v` and `-d`
+  - [#3203](https://github.com/bpftrace/bpftrace/pull/3203)
+- Remove length limitations for the `buf` builtin function
+  - [#3249](https://github.com/bpftrace/bpftrace/pull/3249)
 #### Deprecated
 #### Removed
+- Remove the `-dd` CLI option
+  - [#3203](https://github.com/bpftrace/bpftrace/pull/3203)
 #### Fixed
-- Fix incorrect buf() size calculation which could lead to verifier errors
-  - [#3281](https://github.com/bpftrace/bpftrace/pull/3281)
+- Fix segfault for multi-tracepoint probes
+  - [#3274](https://github.com/bpftrace/bpftrace/pull/3274)
+- Fix verifier error from misaligned stack access when using strings as map keys
+  - [#3294](https://github.com/bpftrace/bpftrace/issues/3294)
 #### Security
 #### Docs
+- Remove mention of unsupported character literals
+  - [#3283](https://github.com/bpftrace/bpftrace/pull/3283)
 #### Tools
 
 ## [0.21.0] 2024-06-21
@@ -70,7 +90,6 @@ and this project adheres to
   - [#3228](https://github.com/bpftrace/bpftrace/pull/3228)
   - [#3237](https://github.com/bpftrace/bpftrace/pull/3237)
   - [#3245](https://github.com/bpftrace/bpftrace/pull/3245)
-  - [#3249](https://github.com/bpftrace/bpftrace/pull/3249)
 #### Deprecated
 - Deprecate `sarg` builtin
   - [#3095](https://github.com/bpftrace/bpftrace/pull/3095)
