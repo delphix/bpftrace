@@ -134,6 +134,9 @@ std::string addrspacestr(AddrSpace as)
     case AddrSpace::user:
       return "user";
       break;
+    case AddrSpace::bpf:
+      return "bpf";
+      break;
     case AddrSpace::none:
       return "none";
       break;
@@ -435,8 +438,8 @@ SizedType CreateKSym()
 
 SizedType CreateBuffer(size_t size)
 {
-  auto metadata_headroom_bits = sizeof(AsyncEvent::Buf) * 8;
-  return SizedType(Type::buffer, size + metadata_headroom_bits);
+  auto metadata_headroom_bytes = sizeof(AsyncEvent::Buf);
+  return SizedType(Type::buffer, size + metadata_headroom_bytes);
 }
 
 SizedType CreateTimestamp()

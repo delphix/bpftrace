@@ -1,6 +1,7 @@
 #include "resource_analyser.h"
 
 #include "bpftrace.h"
+#include "globalvars.h"
 #include "log.h"
 #include "struct.h"
 
@@ -37,7 +38,6 @@ ResourceAnalyser::ResourceAnalyser(Node *root, std::ostream &out)
 std::optional<RequiredResources> ResourceAnalyser::analyse()
 {
   Visit(*root_);
-  prepare_mapped_printf_ids();
 
   if (!err_.str().empty()) {
     out_ << err_.str();
@@ -100,14 +100,12 @@ void ResourceAnalyser::visit(Call &call)
     if (call.func == "printf") {
       if (probe_ != nullptr &&
           single_provider_type_postsema(probe_) == ProbeType::iter) {
-        resources_.mapped_printf_args.emplace_back(fmtstr, args);
-        resources_.needs_data_map = true;
+        resources_.bpf_print_fmts.push_back(fmtstr);
       } else {
         resources_.printf_args.emplace_back(fmtstr, args);
       }
     } else if (call.func == "debugf") {
-      resources_.mapped_printf_args.emplace_back(fmtstr, args);
-      resources_.needs_data_map = true;
+      resources_.bpf_print_fmts.push_back(fmtstr);
     } else if (call.func == "system") {
       resources_.system_args.emplace_back(fmtstr, args);
     } else {
@@ -118,6 +116,9 @@ void ResourceAnalyser::visit(Call &call)
                                         : " ";
     resources_.join_args.push_back(delim);
     resources_.needs_join_map = true;
+  } else if (call.func == "count" || call.func == "sum" || call.func == "min" ||
+             call.func == "max" || call.func == "avg") {
+    resources_.needed_global_vars.insert(bpftrace::globalvars::NUM_CPUS);
   } else if (call.func == "hist") {
     auto &map_info = resources_.maps_info[call.map->ident];
     int bits = static_cast<Integer *>(call.vargs->at(1))->n;
@@ -211,18 +212,6 @@ void ResourceAnalyser::visit(Map &map)
   auto &map_info = resources_.maps_info[map.ident];
   map_info.value_type = map.type;
   map_info.key = map.key_type;
-}
-
-void ResourceAnalyser::prepare_mapped_printf_ids()
-{
-  int idx = 0;
-
-  for (auto &arg : resources_.mapped_printf_args) {
-    assert(resources_.needs_data_map);
-    auto len = std::get<0>(arg).size();
-    resources_.mapped_printf_ids.push_back({ idx, len + 1 });
-    idx += len + 1;
-  }
 }
 
 bool ResourceAnalyser::uses_usym_table(const std::string &fun)

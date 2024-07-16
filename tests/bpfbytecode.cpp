@@ -10,7 +10,7 @@ namespace bpftrace {
 namespace test {
 namespace bpfbytecode {
 
-BpfBytecode codegen(const std::string &input)
+BpfBytecode codegen(std::string_view input)
 {
   auto bpftrace = get_mock_bpftrace();
 
@@ -24,12 +24,21 @@ BpfBytecode codegen(const std::string &input)
   return codegen.compile();
 }
 
-TEST(bpfbytecode, populate_sections)
+TEST(bpfbytecode, create_programs)
 {
-  auto bytecode = codegen("kprobe:foo { 1 } kprobe:bar { 1 }");
+  auto bytecode = codegen("kprobe:foo { 1 }");
 
-  EXPECT_TRUE(bytecode.hasSection("s_kprobe_foo_1"));
-  EXPECT_TRUE(bytecode.hasSection("s_kprobe_bar_2"));
+  Probe foo;
+  foo.type = ProbeType::kprobe;
+  foo.name = "kprobe:foo";
+  foo.index = 1;
+
+  auto &program = bytecode.getProgramForProbe(foo);
+
+  EXPECT_EQ(std::string_view{ bpf_program__name(program.bpf_prog()) },
+            "kprobe_foo_1");
+  EXPECT_EQ(std::string_view{ bpf_program__section_name(program.bpf_prog()) },
+            "s_kprobe_foo_1");
 }
 
 } // namespace bpfbytecode

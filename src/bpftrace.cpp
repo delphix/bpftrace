@@ -46,9 +46,10 @@
 
 namespace bpftrace {
 
-DebugLevel bt_debug = DebugLevel::kNone;
+std::set<DebugStage> bt_debug = {};
 bool bt_quiet = false;
 bool bt_verbose = false;
+bool dry_run = false;
 volatile sig_atomic_t BPFtrace::exitsig_recv = false;
 volatile sig_atomic_t BPFtrace::sigusr1_recv = false;
 
@@ -671,7 +672,7 @@ void perf_event_lost(void *cb_cookie, uint64_t lost)
 
 std::vector<std::unique_ptr<AttachedProbe>> BPFtrace::attach_usdt_probe(
     Probe &probe,
-    BpfProgram &&program,
+    const BpfProgram &program,
     int pid,
     bool file_activation)
 {
@@ -680,7 +681,7 @@ std::vector<std::unique_ptr<AttachedProbe>> BPFtrace::attach_usdt_probe(
   if (feature_->has_uprobe_refcnt() ||
       !(file_activation && probe.path.size())) {
     ret.emplace_back(
-        std::make_unique<AttachedProbe>(probe, std::move(program), pid, *this));
+        std::make_unique<AttachedProbe>(probe, program, pid, *this));
     return ret;
   }
 
@@ -733,8 +734,8 @@ std::vector<std::unique_ptr<AttachedProbe>> BPFtrace::attach_usdt_probe(
         throw FatalUserException("failed to parse pid=" + pid_str);
       }
 
-      ret.emplace_back(std::make_unique<AttachedProbe>(
-          probe, std::move(program), pid_parsed, *this));
+      ret.emplace_back(
+          std::make_unique<AttachedProbe>(probe, program, pid_parsed, *this));
       break;
     }
   }
@@ -750,52 +751,13 @@ std::vector<std::unique_ptr<AttachedProbe>> BPFtrace::attach_probe(
     const BpfBytecode &bytecode)
 {
   std::vector<std::unique_ptr<AttachedProbe>> ret;
-  // use the single-probe program if it exists (as is the case with wildcards
-  // and the name builtin, which must be expanded into separate programs per
-  // probe), else try to find a the program based on the original probe name
-  // that includes wildcards.
-  auto usdt_location_idx = (probe.type == ProbeType::usdt)
-                               ? std::make_optional<int>(
-                                     probe.usdt_location_idx)
-                               : std::nullopt;
-
-  auto name = get_function_name_for_probe(probe.name,
-                                          probe.index,
-                                          usdt_location_idx);
-  auto orig_name = get_function_name_for_probe(probe.orig_name,
-                                               probe.index,
-                                               usdt_location_idx);
-
-  auto program = BpfProgram::CreateFromBytecode(bytecode, name);
-  if (!program) {
-    auto orig_program = BpfProgram::CreateFromBytecode(bytecode, orig_name);
-    if (orig_program)
-      program.emplace(std::move(*orig_program));
-  }
-
-  if (!program) {
-    if (probe.name != probe.orig_name)
-      LOG(ERROR) << "Code not generated for probe: " << probe.name
-                 << " from: " << probe.orig_name;
-    else
-      LOG(ERROR) << "Code not generated for probe: " << probe.name;
-    return ret;
-  }
 
   try {
-    program->assemble();
-  } catch (const std::exception &ex) {
-    LOG(ERROR) << "Failed to assemble program for probe: " << probe.name << ", "
-               << ex.what();
-    return ret;
-  }
-
-  try {
+    auto &program = bytecode.getProgramForProbe(probe);
     pid_t pid = child_ ? child_->pid() : this->pid();
 
     if (probe.type == ProbeType::usdt) {
-      auto aps = attach_usdt_probe(
-          probe, std::move(*program), pid, usdt_file_activation_);
+      auto aps = attach_usdt_probe(probe, program, pid, usdt_file_activation_);
       for (auto &ap : aps)
         ret.emplace_back(std::move(ap));
 
@@ -803,27 +765,21 @@ std::vector<std::unique_ptr<AttachedProbe>> BPFtrace::attach_probe(
     } else if (probe.type == ProbeType::uprobe ||
                probe.type == ProbeType::uretprobe) {
       ret.emplace_back(std::make_unique<AttachedProbe>(
-          probe, std::move(*program), pid, *this, safe_mode_));
+          probe, program, pid, *this, safe_mode_));
       return ret;
     } else if (probe.type == ProbeType::watchpoint ||
                probe.type == ProbeType::asyncwatchpoint) {
-      ret.emplace_back(std::make_unique<AttachedProbe>(
-          probe, std::move(*program), pid, *this));
+      ret.emplace_back(
+          std::make_unique<AttachedProbe>(probe, program, pid, *this));
       return ret;
     } else {
-      ret.emplace_back(std::make_unique<AttachedProbe>(
-          probe, std::move(*program), safe_mode_, *this));
+      ret.emplace_back(
+          std::make_unique<AttachedProbe>(probe, program, safe_mode_, *this));
       return ret;
     }
   } catch (const EnospcException &e) {
     // Caller will handle
     throw e;
-  } catch (const HelperVerifierError &e) {
-    if (helper_use_loc_.find(e.func_id) != helper_use_loc_.end()) {
-      LOG(ERROR, helper_use_loc_[e.func_id], std::cerr) << e.what();
-    } else {
-      LOG(ERROR) << e.what();
-    }
   } catch (const std::exception &e) {
     LOG(ERROR) << e.what();
     ret.clear();
@@ -861,7 +817,7 @@ bool attach_reverse(const Probe &p)
 }
 
 int BPFtrace::run_special_probe(std::string name,
-                                const BpfBytecode &bytecode,
+                                BpfBytecode &bytecode,
                                 trigger_fn_t trigger)
 {
   for (auto probe = resources.special_probes.rbegin();
@@ -968,31 +924,22 @@ int BPFtrace::run(BpfBytecode bytecode)
   if (err)
     return err;
 
-  bytecode.set_map_ids(resources);
-  if (!bytecode.create_maps())
-    return 1;
-
-  if (bytecode.hasMap(MapType::MappedPrintfData)) {
-    const auto &map = bytecode.getMap(MapType::MappedPrintfData);
-    uint32_t idx = 0;
-    std::vector<uint8_t> formats(map.value_size(), 0);
-    for (auto &arg : resources.mapped_printf_args) {
-      auto str = std::get<0>(arg).c_str();
-      auto len = std::get<0>(arg).size();
-      memcpy(&formats.data()[idx], str, len);
-      idx += len + 1;
-    }
-
-    // store the data in map
-    uint32_t id = 0;
-    if (bpf_update_elem(map.fd, &id, formats.data(), 0) < 0) {
-      perror("Failed to write printf data to data map");
-      return -1;
-    }
-  }
-
   bytecode_ = std::move(bytecode);
-  bytecode_.fixupBTF(*feature_);
+  bytecode_.set_map_ids(resources);
+
+  try {
+    bytecode_.load_progs(resources, *btf_, *feature_, config_);
+  } catch (const HelperVerifierError &e) {
+    if (helper_use_loc_.find(e.func_id) != helper_use_loc_.end()) {
+      LOG(ERROR, helper_use_loc_[e.func_id], std::cerr) << e.what();
+    } else {
+      LOG(ERROR) << e.what();
+    }
+    return -1;
+  } catch (const std::runtime_error &e) {
+    LOG(ERROR) << e.what();
+    return -1;
+  }
 
   err = setup_output();
   if (err)
@@ -1004,8 +951,8 @@ int BPFtrace::run(BpfBytecode bytecode)
     auto nsec = 1000000000ULL * ts.tv_sec + ts.tv_nsec;
     uint64_t key = 0;
 
-    if (bpf_update_elem(bytecode_.getMap(MapType::Elapsed).fd, &key, &nsec, 0) <
-        0) {
+    if (bpf_update_elem(
+            bytecode_.getMap(MapType::Elapsed).fd(), &key, &nsec, 0) < 0) {
       perror("Failed to write start time to elapsed map");
       return -1;
     }
@@ -1093,6 +1040,9 @@ int BPFtrace::run(BpfBytecode bytecode)
                  << strerror(-err);
 #endif
 
+  if (dry_run)
+    exitsig_recv = true;
+
   if (has_iter_) {
     int err = run_iter();
     if (err)
@@ -1173,7 +1123,7 @@ int BPFtrace::setup_perf_events()
     int reader_fd = perf_reader_fd((perf_reader *)reader);
 
     bpf_update_elem(
-        bytecode_.getMap(MapType::PerfEvent).fd, &cpu, &reader_fd, 0);
+        bytecode_.getMap(MapType::PerfEvent).fd(), &cpu, &reader_fd, 0);
     if (epoll_ctl(epollfd_, EPOLL_CTL_ADD, reader_fd, &ev) == -1) {
       LOG(ERROR) << "Failed to add perf reader to epoll";
       return -1;
@@ -1185,12 +1135,12 @@ int BPFtrace::setup_perf_events()
 void BPFtrace::setup_ringbuf()
 {
   ringbuf_ = static_cast<struct ring_buffer *>(ring_buffer__new(
-      bytecode_.getMap(MapType::Ringbuf).fd, ringbuf_printer, this, nullptr));
+      bytecode_.getMap(MapType::Ringbuf).fd(), ringbuf_printer, this, nullptr));
 }
 
 int BPFtrace::setup_event_loss()
 {
-  if (bpf_update_elem(bytecode_.getMap(MapType::EventLossCounter).fd,
+  if (bpf_update_elem(bytecode_.getMap(MapType::EventLossCounter).fd(),
                       const_cast<uint32_t *>(&event_loss_cnt_key_),
                       const_cast<uint64_t *>(&event_loss_cnt_val_),
                       0)) {
@@ -1297,7 +1247,7 @@ int BPFtrace::poll_perf_events()
 void BPFtrace::handle_event_loss()
 {
   uint64_t current_value = 0;
-  if (bpf_lookup_elem(bytecode_.getMap(MapType::EventLossCounter).fd,
+  if (bpf_lookup_elem(bytecode_.getMap(MapType::EventLossCounter).fd(),
                       const_cast<uint32_t *>(&event_loss_cnt_key_),
                       &current_value)) {
     LOG(ERROR) << "fail to get event loss counter";
@@ -1342,13 +1292,13 @@ int BPFtrace::clear_map(const BpfMap &map)
 
   // snapshot keys, then operate on them
   std::vector<std::vector<uint8_t>> keys;
-  while (bpf_get_next_key(map.fd, old_key.data(), key.data()) == 0) {
+  while (bpf_get_next_key(map.fd(), old_key.data(), key.data()) == 0) {
     keys.push_back(key);
     old_key = key;
   }
 
   for (auto &key : keys) {
-    int err = bpf_delete_elem(map.fd, key.data());
+    int err = bpf_delete_elem(map.fd(), key.data());
     if (err && err != -ENOENT) {
       LOG(ERROR) << "failed to look up elem: " << err;
       return -1;
@@ -1371,7 +1321,7 @@ int BPFtrace::zero_map(const BpfMap &map)
 
   // snapshot keys, then operate on them
   std::vector<std::vector<uint8_t>> keys;
-  while (bpf_get_next_key(map.fd, old_key.data(), key.data()) == 0) {
+  while (bpf_get_next_key(map.fd(), old_key.data(), key.data()) == 0) {
     keys.push_back(key);
     old_key = key;
   }
@@ -1379,7 +1329,7 @@ int BPFtrace::zero_map(const BpfMap &map)
   int value_size = map.value_size() * nvalues;
   std::vector<uint8_t> zero(value_size, 0);
   for (auto &key : keys) {
-    int err = bpf_update_elem(map.fd, key.data(), zero.data(), BPF_EXIST);
+    int err = bpf_update_elem(map.fd(), key.data(), zero.data(), BPF_EXIST);
 
     if (err && err != -ENOENT) {
       LOG(ERROR) << "failed to look up elem: " << err;
@@ -1410,9 +1360,9 @@ int BPFtrace::print_map(const BpfMap &map, uint32_t top, uint32_t div)
   std::vector<std::pair<std::vector<uint8_t>, std::vector<uint8_t>>>
       values_by_key;
 
-  while (bpf_get_next_key(map.fd, old_key.data(), key.data()) == 0) {
+  while (bpf_get_next_key(map.fd(), old_key.data(), key.data()) == 0) {
     auto value = std::vector<uint8_t>(map.value_size() * nvalues);
-    int err = bpf_lookup_elem(map.fd, key.data(), value.data());
+    int err = bpf_lookup_elem(map.fd(), key.data(), value.data());
     if (err == -ENOENT) {
       // key was removed by the eBPF program during bpf_get_next_key() and
       // bpf_lookup_elem(), let's skip this key
@@ -1476,7 +1426,7 @@ int BPFtrace::print_map_hist(const BpfMap &map, uint32_t top, uint32_t div)
   std::map<std::vector<uint8_t>, std::vector<uint64_t>> values_by_key;
 
   const auto &map_info = resources.maps_info.at(map.name());
-  while (bpf_get_next_key(map.fd, old_key.data(), key.data()) == 0) {
+  while (bpf_get_next_key(map.fd(), old_key.data(), key.data()) == 0) {
     auto key_prefix = std::vector<uint8_t>(map_info.key.size());
     uint64_t bucket = read_data<uint64_t>(key.data() + map_info.key.size());
 
@@ -1484,7 +1434,7 @@ int BPFtrace::print_map_hist(const BpfMap &map, uint32_t top, uint32_t div)
       key_prefix.at(i) = key.at(i);
 
     auto value = std::vector<uint8_t>(map.value_size() * nvalues);
-    int err = bpf_lookup_elem(map.fd, key.data(), value.data());
+    int err = bpf_lookup_elem(map.fd(), key.data(), value.data());
     if (err == -ENOENT) {
       // key was removed by the eBPF program during bpf_get_next_key() and
       // bpf_lookup_elem(), let's skip this key
@@ -1542,7 +1492,7 @@ int BPFtrace::print_map_stats(const BpfMap &map, uint32_t top, uint32_t div)
   std::map<std::vector<uint8_t>, std::vector<int64_t>> values_by_key;
 
   const auto &map_key = resources.maps_info.at(map.name()).key;
-  while (bpf_get_next_key(map.fd, old_key.data(), key.data()) == 0) {
+  while (bpf_get_next_key(map.fd(), old_key.data(), key.data()) == 0) {
     auto key_prefix = std::vector<uint8_t>(map_key.size());
     uint64_t bucket = read_data<uint64_t>(key.data() + map_key.size());
 
@@ -1550,7 +1500,7 @@ int BPFtrace::print_map_stats(const BpfMap &map, uint32_t top, uint32_t div)
       key_prefix.at(i) = key.at(i);
 
     auto value = std::vector<uint8_t>(map.value_size() * nvalues);
-    int err = bpf_lookup_elem(map.fd, key.data(), value.data());
+    int err = bpf_lookup_elem(map.fd(), key.data(), value.data());
     if (err == -ENOENT) {
       // key was removed by the eBPF program during bpf_get_next_key() and
       // bpf_lookup_elem(), let's skip this key
@@ -1618,17 +1568,17 @@ std::optional<std::vector<uint8_t>> BPFtrace::find_empty_key(
   int value_size = map.value_size() * nvalues;
   auto value = std::vector<uint8_t>(value_size);
 
-  if (bpf_lookup_elem(map.fd, key.data(), value.data()))
+  if (bpf_lookup_elem(map.fd(), key.data(), value.data()))
     return key;
 
   for (auto &elem : key)
     elem = 0xff;
-  if (bpf_lookup_elem(map.fd, key.data(), value.data()))
+  if (bpf_lookup_elem(map.fd(), key.data(), value.data()))
     return key;
 
   for (auto &elem : key)
     elem = 0x55;
-  if (bpf_lookup_elem(map.fd, key.data(), value.data()))
+  if (bpf_lookup_elem(map.fd(), key.data(), value.data()))
     return key;
 
   LOG(ERROR) << "Failed to get key for map '" << map.name();
@@ -1645,7 +1595,7 @@ std::string BPFtrace::get_stack(int64_t stackid,
 {
   struct stack_key stack_key = { stackid, nr_stack_frames };
   auto stack_trace = std::vector<uint64_t>(stack_type.limit);
-  int err = bpf_lookup_elem(bytecode_.getMap(stack_type.name()).fd,
+  int err = bpf_lookup_elem(bytecode_.getMap(stack_type.name()).fd(),
                             &stack_key,
                             stack_trace.data());
   if (err) {
@@ -2228,11 +2178,6 @@ struct bcc_symbol_option &BPFtrace::get_symbol_opts()
   };
 
   return symopts;
-}
-
-int BPFtrace::get_num_possible_cpus() const
-{
-  return libbpf_num_possible_cpus();
 }
 
 /*
