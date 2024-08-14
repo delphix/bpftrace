@@ -150,7 +150,6 @@
             bpftrace-llvm15 = mkBpftrace pkgs.llvmPackages_15;
             bpftrace-llvm14 = mkBpftrace pkgs.llvmPackages_14;
             bpftrace-llvm13 = mkBpftrace pkgs.llvmPackages_13;
-            bpftrace-llvm12 = mkBpftrace pkgs.llvmPackages_12;
 
             # Self-contained static binary with all dependencies
             appimage = nix-appimage.mkappimage.${system} {
@@ -161,7 +160,9 @@
               # Exclude the following groups to reduce appimage size:
               #
               # *.a: Static archives are not necessary at runtime
-              # *.pyc, *.py, *.whl: bpftrace does not use python at runtime
+              # *.h: Header files are not necessary at runtime (some ARM headers for clang are large)
+              # *.pyc, *.whl: bpftrace does not use python at runtime (with exception
+              #               of stdlib for unfortunate lldb python bindings)
               # libLLVM-11.so: Appimage uses the latest llvm we support, so not llvm11
               #
               # The basic process to identify large and useless files is to:
@@ -174,8 +175,8 @@
               # ```
               exclude = [
                 "... *.a"
+                "... *.h"
                 "... *.pyc"
-                "... *.py"
                 "... *.whl"
                 "... libLLVM-11.so"
               ];
@@ -197,7 +198,6 @@
             bpftrace-llvm15 = mkBpftraceDevShell self.packages.${system}.bpftrace-llvm15;
             bpftrace-llvm14 = mkBpftraceDevShell self.packages.${system}.bpftrace-llvm14;
             bpftrace-llvm13 = mkBpftraceDevShell self.packages.${system}.bpftrace-llvm13;
-            bpftrace-llvm12 = mkBpftraceDevShell self.packages.${system}.bpftrace-llvm12;
           };
         });
 }
