@@ -16,6 +16,14 @@
 #include "log.h"
 #include "utils.h"
 
+#if LLVM_VERSION_MAJOR >= 10
+#define CREATE_MEMSET(ptr, val, size, align)                                   \
+  CreateMemSet((ptr), (val), (size), MaybeAlign((align)))
+#else
+#define CREATE_MEMSET(ptr, val, size, align)                                   \
+  CreateMemSet((ptr), (val), (size), (align))
+#endif
+
 namespace libbpf {
 #include "libbpf/bpf.h"
 } // namespace libbpf
@@ -244,7 +252,7 @@ void IRBuilderBPF::CreateMemsetBPF(Value *ptr, Value *val, uint32_t size)
     // So only use helper based memset when we really need it. And that's when
     // we're memset()ing off-stack. We know it's off stack b/c 512 is program
     // stack limit.
-    CreateMemSet(ptr, val, getInt64(size), MaybeAlign(1));
+    CREATE_MEMSET(ptr, val, getInt64(size), 1);
   }
 }
 
@@ -344,7 +352,11 @@ CallInst *IRBuilderBPF::createCall(FunctionType *callee_type,
                                    ArrayRef<Value *> args,
                                    const Twine &Name)
 {
+#if LLVM_VERSION_MAJOR >= 11
   return CreateCall(callee_type, callee, args, Name);
+#else
+  return CreateCall(callee, args, Name);
+#endif
 }
 
 Value *IRBuilderBPF::GetMapVar(const std::string &map_name)
@@ -2434,7 +2446,11 @@ StoreInst *IRBuilderBPF::createAlignedStore(Value *val,
                                             Value *ptr,
                                             unsigned int align)
 {
+#if LLVM_VERSION_MAJOR < 10
+  return CreateAlignedStore(val, ptr, align);
+#else
   return CreateAlignedStore(val, ptr, MaybeAlign(align));
+#endif
 }
 
 void IRBuilderBPF::CreateProbeRead(Value *ctx,
