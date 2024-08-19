@@ -45,7 +45,7 @@ jobs:
           ENABLE_SKB_OUTPUT: OFF
         - TYPE: Debug
           NAME: alpine
-          LLVM_VERSION: 10
+          LLVM_VERSION: 12
           STATIC_LINKING: ON
           STATIC_LIBC: ON
           EMBED_BUILD_LLVM: OFF
@@ -60,7 +60,7 @@ jobs:
           ENABLE_SKB_OUTPUT: OFF
         - TYPE: Release
           NAME: alpine
-          LLVM_VERSION: 10
+          LLVM_VERSION: 12
           STATIC_LINKING: ON
           STATIC_LIBC: ON
           EMBED_BUILD_LLVM: OFF
