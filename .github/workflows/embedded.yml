@@ -55,7 +55,7 @@ jobs:
           TOOLS_TEST_OLDVERSION: tcpdrop.bt
           BASE: alpine
           DISTRO: alpine
-          ALPINE_VERSION: 3.12
+          ALPINE_VERSION: 3.15
           VENDOR_GTEST: ON
           ENABLE_SKB_OUTPUT: OFF
         - TYPE: Release
@@ -70,7 +70,7 @@ jobs:
           TOOLS_TEST_OLDVERSION: tcpdrop.bt
           BASE: alpine
           DISTRO: alpine
-          ALPINE_VERSION: 3.12
+          ALPINE_VERSION: 3.15
           VENDOR_GTEST: ON
           ENABLE_SKB_OUTPUT: OFF
     steps:
